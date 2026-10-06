@@ -1,11 +1,13 @@
 from datetime import datetime
 from typing import Annotated
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag
+from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
+from dropgrid.domain.grid_parser import ParseGridResult
+from dropgrid.integrations.vk.errors import VKInputError
+from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
 
 Name = Annotated[str, Field(min_length=1, max_length=200, strict=True)]
 
@@ -74,17 +76,33 @@ class GridRead(Output):
 
 class GridDetail(GridRead):
     communities: list[CommunityRead]
+    community_count: int
+    categories: list["CategoryCount"]
 
 
 class GridText(Input):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     text: str = Field(max_length=200_000)
 
 
 class GridImport(GridText):
     name: Name
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def clean_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class GridImportRead(BaseModel):
+    grid: GridRead
+    preview: ParseGridResult
+
 
 class CampaignCreate(Input):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     name: Name
     grid_id: UUID
     track_url: str = Field(min_length=1, max_length=2048)
@@ -93,26 +111,37 @@ class CampaignCreate(Input):
     caption: str | None = Field(default=None, max_length=10_000)
     publication_check_hours: int = Field(default=72, gt=0, le=2**31 - 1)
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def clean_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
     @field_validator("track_url")
     @classmethod
     def vk_track_url(cls, value: str) -> str:
-        parsed = urlsplit(value)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or parsed.netloc.lower() not in {"vk.com", "vk.ru", "www.vk.com", "www.vk.ru"}
-            or not parsed.path.strip("/")
-        ):
-            raise ValueError("Expected an HTTP(S) VK track URL")
+        try:
+            parse_vk_audio_reference(value)
+        except VKInputError:
+            raise ValueError(
+                "Expected a VK audio link, for example https://vk.ru/audio1_2"
+            ) from None
         return value
 
 
 class CampaignPatch(Input):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     name: Name | None = None
     track_url: str | None = Field(default=None, min_length=1, max_length=2048)
     track_owner_id: int | None = Field(default=None, ge=-(2**63), le=2**63 - 1)
     track_audio_id: int | None = Field(default=None, gt=0, le=2**63 - 1)
     caption: str | None = Field(default=None, max_length=10_000)
     publication_check_hours: int | None = Field(default=None, gt=0, le=2**31 - 1)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def clean_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @field_validator("track_url")
     @classmethod
@@ -156,3 +185,68 @@ class AccountValidationRead(BaseModel):
     account: AccountRead
     valid: bool
     error: dict[str, object] | None = None
+
+
+class CategoryCount(BaseModel):
+    category: str | None
+    count: int
+
+
+class GridSummary(GridRead):
+    community_count: int
+    category_count: int
+
+
+class GridCommunityPage(BaseModel):
+    items: list[CommunityRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class CampaignSummary(CampaignRead):
+    grid_name: str
+    community_count: int
+    submission_count: int
+
+
+class CampaignStats(BaseModel):
+    total: int
+    statuses: dict[SubmissionStatus, int]
+
+
+class SubmissionRead(BaseModel):
+    id: UUID
+    community: CommunityRead
+    category: str | None
+    account_id: UUID | None
+    account_name: str | None
+    media_asset_id: UUID | None
+    media_label: str | None
+    status: SubmissionStatus
+    attempt_count: int
+    error_code: str | None
+    error_message: str | None
+    published_post_url: str | None
+
+
+class SubmissionPage(BaseModel):
+    items: list[SubmissionRead]
+    total: int
+    page: int
+    page_size: int
+
+
+class DashboardRead(BaseModel):
+    counts: dict[str, int]
+    campaign_statuses: dict[CampaignStatus, int]
+    recent_campaigns: list[CampaignSummary]
+
+
+class TrackInput(Input):
+    track_url: str = Field(min_length=1, max_length=2048)
+
+
+class TrackRead(BaseModel):
+    owner_id: int
+    audio_id: int

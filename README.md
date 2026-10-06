@@ -11,7 +11,8 @@ DropGrid — фундамент системы управления кампан
 - Чистые normalization/parser с построчными ошибками; preview и импорт сеток.
 - Идемпотентный prepare, создающий Submission без отправки контента.
 - Отдельные worker heartbeat и Telegram `/start`, `/help`, `/status`.
-- React/TypeScript Dashboard, Accounts, Grids, Campaigns (списки с пагинацией).
+- React/TypeScript workflow: Dashboard с counts, импорт/preview сеток, черновики,
+  Prepare, статистика и submissions с фильтрами/пагинацией; Accounts, Communities, Media.
 - Docker Compose, тесты на настоящем PostgreSQL, Ruff, strict mypy, pre-commit, CI.
 - Async VK user-token client, read operations, typed attachments/audio parser,
   isolated wall photo upload и guarded single-target diagnostic CLI.
@@ -129,7 +130,10 @@ curl -X POST http://localhost:8000/api/v1/grids/import \
 `POST /grids` создаёт пустую сетку; `POST /grids/import` создаёт новую сетку,
 переиспользует Community и возвращает grid + preview/errors. Валидные строки
 импортируются несмотря на ошибки других строк; если валидных нет — 422 без записи.
-GET `/grids/{id}` включает сообщества.
+GET `/grids/{id}` включает ограниченный список сообществ и summary категорий;
+`GET /grids/{id}/communities` даёт пагинацию с категориями GridCommunity.
+Полный browser workflow: [docs/web-workflow.md](docs/web-workflow.md).
+**Prepare does not contact VK.**
 
 Создайте campaign через `POST /api/v1/campaigns` с name, grid_id, track_url;
 `publication_check_hours` по умолчанию 72, меняется для конкретной кампании.
@@ -166,6 +170,7 @@ TEST_DATABASE_URL=postgresql+asyncpg://dropgrid:dropgrid@localhost:5432/dropgrid
 cd frontend
 npm ci
 npm run typecheck
+npm run test
 npm run build
 # from backend (installs repository-wide Git hooks):
 uv run pre-commit install
