@@ -36,6 +36,7 @@ files = ["src/dropgrid"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = ["integration: requires TEST_DATABASE_URL pointing to an isolated PostgreSQL database"]
 
 # asyncpg has no bundled type information; ORM APIs remain strictly checked.

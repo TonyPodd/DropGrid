@@ -14,6 +14,15 @@ from dropgrid.api.dependencies import database
 from dropgrid.api.routes import router
 from dropgrid.config import Settings
 from dropgrid.db.session import Database
+from dropgrid.integrations.vk.client import VKClient
+from dropgrid.integrations.vk.credentials import DevelopmentTokenProvider
+from dropgrid.integrations.vk.errors import (
+    VKAuthenticationError,
+    VKCredentialUnavailableError,
+    VKError,
+    VKPermissionError,
+    VKRateLimitError,
+)
 from dropgrid.logging import configure_logging
 from dropgrid.services.catalog import ConflictError, InvalidGridError, NotFoundError
 
@@ -27,9 +36,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         configure_logging()
         app.state.database = Database(config)
+        app.state.vk_client = VKClient(config)
+        app.state.token_provider = DevelopmentTokenProvider(config)
         try:
             yield
         finally:
+            await app.state.vk_client.aclose()
             await app.state.database.close()
 
     app = FastAPI(title="DropGrid", version="0.1.0", lifespan=lifespan)
@@ -81,5 +93,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def unavailable(request: Request, exc: Exception) -> JSONResponse:
         logger.warning("Database operation failed")
         return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
+
+    @app.exception_handler(VKError)
+    async def vk_failure(request: Request, exc: VKError) -> JSONResponse:
+        status = 502
+        if isinstance(exc, VKAuthenticationError):
+            status = 401
+        elif isinstance(exc, VKRateLimitError):
+            status = 429
+        elif isinstance(exc, VKPermissionError):
+            status = 403
+        elif isinstance(exc, VKCredentialUnavailableError):
+            status = 503
+        return JSONResponse(
+            status_code=status,
+            content={
+                "detail": {
+                    **exc.as_dict(),
+                    "kind": type(exc).__name__,
+                }
+            },
+        )
 
     return app

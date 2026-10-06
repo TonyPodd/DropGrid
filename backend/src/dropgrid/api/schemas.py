@@ -146,3 +146,13 @@ class PrepareRead(BaseModel):
     campaign_id: UUID
     created: int
     total: int
+
+
+class CommunityResolveInput(Input):
+    account_id: UUID
+
+
+class AccountValidationRead(BaseModel):
+    account: AccountRead
+    valid: bool
+    error: dict[str, object] | None = None

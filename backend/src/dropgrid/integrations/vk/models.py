@@ -1,0 +1,88 @@
+import re
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from dropgrid.integrations.vk.errors import VKInputError
+
+
+@dataclass(frozen=True)
+class VKAttachment:
+    type: Literal["photo", "audio"]
+    owner_id: int
+    media_id: int
+    access_key: str | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if (
+            self.type not in {"photo", "audio"}
+            or type(self.owner_id) is not int
+            or not 0 < abs(self.owner_id) <= 2**63 - 1
+            or type(self.media_id) is not int
+            or not 0 < self.media_id <= 2**63 - 1
+        ):
+            raise VKInputError("attachment", "Invalid attachment identity")
+        if self.access_key is not None and not re.fullmatch(
+            r"[A-Za-z0-9_-]{1,256}", self.access_key
+        ):
+            raise VKInputError("attachment", "Invalid attachment access key")
+
+    def serialize(self) -> str:
+        key = f"_{self.access_key}" if self.access_key else ""
+        return f"{self.type}{self.owner_id}_{self.media_id}{key}"
+
+
+class ResponseModel(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+
+class VKUser(ResponseModel):
+    id: int = Field(gt=0)
+    first_name: str = ""
+    last_name: str = ""
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
+
+
+class VKCommunity(ResponseModel):
+    id: int = Field(gt=0)
+    name: str = ""
+    screen_name: str | None = None
+    is_closed: int = 0
+    deactivated: str | None = None
+    is_member: int = 0
+    is_admin: int = 0
+
+
+class WallPosts(ResponseModel):
+    count: int = Field(ge=0)
+    items: list[dict[str, Any]]
+
+
+class WallPostReceipt(ResponseModel):
+    # Schema does not promise a positive identifier for every accepted wall.post.
+    post_id: int = Field(ge=0)
+
+
+class WallUploadServer(ResponseModel):
+    upload_url: str = Field(repr=False)
+    album_id: int
+    user_id: int
+
+
+class WallUploadResult(ResponseModel):
+    server: int
+    photo: str = Field(min_length=1, repr=False)
+    hash: str = Field(min_length=1, repr=False)
+
+
+class SavedPhoto(ResponseModel):
+    id: int = Field(gt=0)
+    owner_id: int
+    access_key: str | None = Field(default=None, repr=False)
+
+    def attachment(self) -> VKAttachment:
+        return VKAttachment("photo", self.owner_id, self.id, self.access_key)

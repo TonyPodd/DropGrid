@@ -48,3 +48,37 @@ Submissions retain account/media references and timestamps for future audit hist
 No raw tokens belong in API payloads, error_message or error_code. Integration test
 fixtures TRUNCATE their database: use TEST_DATABASE_URL only with a dedicated test
 DB. Health returns generic state and does not expose DB credentials/errors.
+
+
+## VK integration safeguards
+
+VK API requests use POST form fields, including access_token, never query tokens.
+HTTP client connection/timeout/API errors are replaced with typed local messages;
+raw messages/request_params/CAPTCHA/upload capabilities are discarded. Success responses that
+echo the supplied access token are rejected before serialization. Retry logs
+include only whitelisted method/timing/code/attempt fields. No raw exception chaining
+or third-party HTTPX/httpcore URL logging. External body tracing is not supported.
+
+Writes, including upload-server retrieval and photo saving, default disabled via
+VK_WRITE_ENABLED. Generic unknown methods fail closed. The single-target live
+CLI additionally checks VK_TEST_ALLOWED_COMMUNITY_IDS before any network/file/token
+access. Exact positive IDs only, no wildcards. Writes are not retried: ambiguous
+network outcomes need manual reconciliation. CAPTCHA and security validation stop
+immediately. No campaign sending/monitoring was connected to worker.
+
+DevelopmentTokenProvider binds VK_TEST_ACCESS_TOKEN to exactly VK_TEST_ACCOUNT_ID,
+requires APP_ENV=development, and fails in production. No plaintext DB storage or
+pretend encryption. Compose delivers these variables only to API, not worker/bot/
+frontend. `--token` CLI arguments are rejected without echo. Use only user-authorized
+user tokens obtained through official OAuth; no browser token extraction or token
+selling/generation sites. [VK contract and live-test limitations](vk-integration.md).
+
+Multipart uploads use a separate HTTP session, omit API credentials, validate HTTPS
+VK host suffixes and refuse redirects. Local JPEG/PNG size/MIME/signature policy is
+not a guarantee that VK will accept the file. Upload URLs/hashes/access keys are
+capabilities: keep them out of logs and public API responses. The photo pipeline has
+no public endpoint. Typed upload models hide capabilities in repr.
+
+Offline tests forbid real HTTP transports; mocked tests exercise hostile error
+messages, credential-bearing upload URLs, invalid providers and both write guards.
+Live tests remain manual and opt-in. Do not expose unauthenticated DropGrid API.

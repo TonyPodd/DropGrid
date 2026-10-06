@@ -4,15 +4,17 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
-from dropgrid.api.dependencies import Limit, Offset, Session
+from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens
 from dropgrid.api.schemas import (
     AccountCreate,
     AccountPatch,
     AccountRead,
+    AccountValidationRead,
     CampaignCreate,
     CampaignPatch,
     CampaignRead,
     CommunityRead,
+    CommunityResolveInput,
     GridCreate,
     GridDetail,
     GridImport,
@@ -22,7 +24,7 @@ from dropgrid.api.schemas import (
 )
 from dropgrid.db.models import Account, Campaign, Community, Grid
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
-from dropgrid.services import campaigns, catalog
+from dropgrid.services import campaigns, catalog, vk_accounts
 
 router = APIRouter(prefix="/api/v1")
 
@@ -115,3 +117,22 @@ async def campaign_patch(entity_id: UUID, data: CampaignPatch, session: Session)
 @router.post("/campaigns/{entity_id}/prepare", response_model=PrepareRead)
 async def campaign_prepare(entity_id: UUID, session: Session) -> PrepareRead:
     return await campaigns.prepare_campaign(session, entity_id)
+
+
+@router.post("/accounts/{entity_id}/validate", response_model=AccountValidationRead)
+async def account_validate(
+    entity_id: UUID, session: Session, client: VK, tokens: Tokens
+) -> AccountValidationRead:
+    account, error = await vk_accounts.validate_account(session, entity_id, client, tokens)
+    return AccountValidationRead(
+        account=AccountRead.model_validate(account),
+        valid=error is None,
+        error=error.as_dict() if error else None,
+    )
+
+
+@router.post("/communities/{entity_id}/resolve", response_model=CommunityRead)
+async def community_resolve(
+    entity_id: UUID, data: CommunityResolveInput, session: Session, client: VK, tokens: Tokens
+) -> Community:
+    return await vk_accounts.resolve_community(session, entity_id, data.account_id, client, tokens)

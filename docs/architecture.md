@@ -77,14 +77,28 @@ Later a PostgreSQL job queue (e.g. SELECT FOR UPDATE SKIP LOCKED) or Redis adapt
 can invoke the same services using its own sessions. Claims, retry policy,
 transaction boundaries and authorization must be designed before actual sending.
 
-## Future VK integration
+## VK integration boundary
 
-`integrations/vk/client.py` holds a small VKClient Protocol, receipt and sanitized
-error type. It contains no transport implementation. Future official-API adapter
-will resolve communities/tracks and perform authorized actions, with least-privilege
-OAuth, explicit rate limiting and encrypted secret retrieval. Domain/services will
-receive adapters rather than import a specific network client. Research actual API
-capabilities before extending the current illustrative submit contract.
+VKClient owns one pooled httpx.AsyncClient (or uses caller-owned injected client).
+Fixed official API URL, automatic configured API version, typed/sanitized failures,
+read-only bounded retry and a shared process-local per-account limiter. Helpers
+parse audio, serialize typed attachments, build payloads and match audio without I/O.
+Photo uploader has a separate clean upload HTTP session, ephemeral trusted URL,
+bounded local bytes/path input and explicit write guards. Transport is injectable.
+
+API lifespan owns client/provider; services receive them through simple DI.
+TokenProvider is the only future secret-retrieval boundary. Currently a development
+single-account env fallback is supported; encrypted DB field is never treated as
+plaintext. Validation returns an auth failure result so invalid status can commit;
+other errors roll back the transaction. Resolver handles canonical domain collisions
+without merging grid/history. No schema migration was required.
+
+Metrics fields are emitted in JSON logs using a fixed whitelist. Diagnostics target
+one explicit account/community and require an additional exact allowlist for writes.
+No integration calls from Campaign prepare or worker, no public sending endpoint.
+Research findings and unresolved suggestion/OAuth semantics are in
+[vk-integration.md](vk-integration.md). Future work is genuine encrypted storage,
+OAuth, then an authorized sender with outcome reconciliation.
 
 ## Future Photo Engine (not implemented)
 

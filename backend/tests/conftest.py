@@ -50,3 +50,18 @@ async def client(
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as value:
             yield value
+
+
+@pytest.fixture(autouse=True)
+def forbid_external_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test must explicitly inject MockTransport/ASGITransport for HTTP."""
+    import httpx
+
+    async def denied_async(*args: object, **kwargs: object) -> None:
+        pytest.fail("Real HTTP is disabled in tests; inject MockTransport")
+
+    def denied_sync(*args: object, **kwargs: object) -> None:
+        pytest.fail("Real HTTP is disabled in tests; inject MockTransport")
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", denied_async)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", denied_sync)

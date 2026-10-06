@@ -1,7 +1,8 @@
 # DropGrid
 
 DropGrid — фундамент системы управления кампаниями размещения контента в сообществах VK.
-Сейчас это локальный development stack без отправки в VK и без аутентификации DropGrid.
+Сейчас это локальный development stack без автоматической отправки кампаний и без
+аутентификации DropGrid. VK write diagnostics выключены по умолчанию.
 
 ## Implemented
 
@@ -12,10 +13,13 @@ DropGrid — фундамент системы управления кампан
 - Отдельные worker heartbeat и Telegram `/start`, `/help`, `/status`.
 - React/TypeScript Dashboard, Accounts, Grids, Campaigns (списки с пагинацией).
 - Docker Compose, тесты на настоящем PostgreSQL, Ruff, strict mypy, pre-commit, CI.
+- Async VK user-token client, read operations, typed attachments/audio parser,
+  isolated wall photo upload и guarded single-target diagnostic CLI.
+- Account validation и Community resolve endpoints с injectable TokenProvider.
 
 ## Planned
 
-Официальный VK API/OAuth, encrypted credential storage, разрешённая отправка,
+Официальный OAuth, encrypted credential storage, разрешённая отправка кампаний,
 мониторинг публикаций, Photo Engine и управление кампаниями через Telegram.
 
 ## Architecture
@@ -97,7 +101,8 @@ uv run python -m dropgrid.bot
 
 Без токена bot завершается с понятным сообщением; основной stack от него не зависит.
 `BACKEND_URL` — URL для Telegram health check (Compose задаёт `http://api:8000`).
-Не вводите реальные VK credentials: этот этап их не принимает.
+API не принимает VK tokens. Development diagnostics используют отдельные env
+параметры; см. [VK integration](docs/vk-integration.md).
 
 ## Local frontend
 
@@ -166,6 +171,32 @@ npm run build
 uv run pre-commit install
 uv run pre-commit run --all-files
 ```
+
+## VK integration / diagnostics
+
+Полный researched contract, ограничения и примеры:
+[docs/vk-integration.md](docs/vk-integration.md). VK_API_VERSION=5.199;
+VK_WRITE_ENABLED=false. Для read-only diagnostics нужен user token через ignored
+environment и точная привязка VK_TEST_ACCOUNT_ID к одному UUID. Production token
+storage пока отсутствует: encrypted_access_token не считается plaintext.
+
+Новые read-only VK endpoints:
+`POST /api/v1/accounts/{id}/validate`,
+`POST /api/v1/communities/{id}/resolve` (body: account_id UUID).
+Без безопасно настроенного provider возвращают 503; disabled account — 409.
+Невалидный token сохраняет Account.invalid и возвращает valid=false.
+
+```sh
+# from backend, after configuring private environment:
+uv run python -m dropgrid.integrations.vk.diagnostics account
+uv run python -m dropgrid.integrations.vk.diagnostics community example
+uv run python -m dropgrid.integrations.vk.diagnostics wall example
+```
+
+Никаких tokens в CLI arguments. Live suggest требует write flag **и** точный
+allowlisted target; может создать реальную публикацию вместо suggestion в зависимости
+от прав/настроек. Worker продолжает делать только heartbeat. Обычные тесты блокируют
+реальные HTTP requests; VK tests используют MockTransport.
 
 ## Configuration
 
