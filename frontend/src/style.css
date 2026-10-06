@@ -1,0 +1,9 @@
+body { margin: 0; font: 16px system-ui, sans-serif; color: #202630; background: #f6f7f9; }
+header { padding: 20px; background: white; border-bottom: 1px solid #ddd; }
+nav { display: flex; gap: 20px; margin-top: 12px; }
+a { color: #2354a4; } nav a.active { font-weight: bold; }
+main { max-width: 960px; margin: 32px auto; padding: 0 20px; }
+table { width: 100%; border-collapse: collapse; background: white; margin-bottom: 16px; }
+th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
+button { margin-right: 8px; padding: 8px 12px; }
+[role="alert"] { color: #a12a2a; }

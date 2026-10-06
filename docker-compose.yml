@@ -1,0 +1,84 @@
+x-backend: &backend
+  image: dropgrid-backend:local
+  build:
+    context: .
+    dockerfile: docker/backend.Dockerfile
+  environment: &backend-env
+    APP_ENV: ${APP_ENV:-development}
+    APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+    DATABASE_URL: postgresql+asyncpg://dropgrid:dropgrid@postgres:5432/dropgrid
+    BACKEND_HOST: 0.0.0.0
+    BACKEND_PORT: 8000
+    BACKEND_URL: http://api:8000
+    FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+    WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-10}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dropgrid
+      POSTGRES_PASSWORD: dropgrid
+      POSTGRES_DB: dropgrid
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dropgrid -d dropgrid"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 15
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "dropgrid.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  bot:
+    <<: *backend
+    profiles: ["bot"]
+    command: ["python", "-m", "dropgrid.bot"]
+    environment:
+      <<: *backend-env
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

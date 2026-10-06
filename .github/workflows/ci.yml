@@ -1,0 +1,51 @@
+name: CI
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dropgrid
+          POSTGRES_PASSWORD: dropgrid
+          POSTGRES_DB: dropgrid_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U dropgrid -d dropgrid_test"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://dropgrid:dropgrid@localhost:5432/dropgrid_test
+      TEST_DATABASE_URL: postgresql+asyncpg://dropgrid:dropgrid@localhost:5432/dropgrid_test
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.13"
+      - run: uv sync --frozen --extra dev --python 3.12
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen mypy src/dropgrid
+      - run: uv run --frozen alembic upgrade head
+      - run: uv run --frozen alembic check
+      - run: uv run --frozen pytest
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

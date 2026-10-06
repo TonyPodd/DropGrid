@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dropgrid"
+version = "0.1.0"
+description = "DropGrid campaign management foundation"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.121,<1", "uvicorn[standard]>=0.34,<1",
+  "sqlalchemy[asyncio]>=2.0,<2.1", "asyncpg>=0.30,<1",
+  "alembic>=1.14,<2", "pydantic>=2.10,<3", "pydantic-settings>=2.7,<3",
+  "aiogram>=3.17,<4", "httpx>=0.28,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3,<10", "pytest-asyncio>=0.25,<2", "ruff>=0.9,<1", "mypy>=1.14,<2", "pre-commit>=4,<5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dropgrid"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/dropgrid"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+markers = ["integration: requires TEST_DATABASE_URL pointing to an isolated PostgreSQL database"]
+
+# asyncpg has no bundled type information; ORM APIs remain strictly checked.
+[[tool.mypy.overrides]]
+module = ["asyncpg"]
+ignore_missing_imports = true
