@@ -253,3 +253,50 @@ start a sender or repeat this run automatically.
 Cleanup verified `VK_WRITE_ENABLED=false` and an empty
 `VK_TEST_ALLOWED_COMMUNITY_IDS`. Campaign sends and other community writes: 0.
 No token, upload URL, cookies, or secret keys are included in this record.
+
+## Minimal text-only wall.post experiment
+
+Date: 2026-10-07. Explicitly authorized target: `clubantohahyesos`, group ID
+`242100737`, name «собачки». Read-only preflight confirmed posting user
+`615459987`, `is_admin=0`, `is_member=0`, exact target identity, and successful
+`users.get`, `groups.getById`, and `wall.get(owner_id=-242100737)`.
+
+Previous `groups.join`: code `15`, sanitized category `VKPermissionError`;
+subcode unavailable in the retained local report. **No groups.join calls were
+made in this run.** The account remained a non-member, with membership no longer
+a prerequisite under the explicit isolation-experiment instructions.
+
+No photo/audio attachments were used in this experiment.
+
+The new explicit `diagnostics suggest-text --community-id <ID>` mode requires
+writes enabled and an allowlist containing exactly that single target. It checks
+target identity and rejects an admin account, performs a wall read, and submits
+only `owner_id=-<ID>`, `from_group=0`, and `message=DropGrid integration test`.
+It shares the client's single-attempt write behavior: no automatic retry on
+rejection, transport failure, or timeout. It does not upload media or join groups.
+The CLI receipt leaves placement unverified; placement reads are a separate step.
+
+Live result:
+
+- Allowlist temporarily contained only `242100737`.
+- `wall.post`: **exactly 1 attempt**, rejected.
+- Sanitized category: `VKPermissionError`; code `15`; numeric subcode `1134`.
+- No post ID returned.
+- Post-attempt `wall.get(owner_id=-242100737, filter=all)`: success, count 0,
+  returned 0.
+- Post-attempt `wall.get(owner_id=-242100737, filter=suggests)`: success, count 0,
+  returned 0.
+- Placement: **REJECTED**.
+- Post object / `post_type` / `from_id`: unavailable.
+- Membership requirement: **UNKNOWN**. The denial does not establish whether the
+  cause is membership, target settings, app/token restrictions, or another policy.
+- Suggested-post capability with this account/token/target: **UNCONFIRMED**.
+  This single minimal request was rejected; it is not evidence that every official
+  VK API account/app is unable to create suggestions.
+
+Cleanup ran in `finally`: `VK_WRITE_ENABLED=false`,
+`VK_TEST_ALLOWED_COMMUNITY_IDS=`. Campaign sends, membership calls, media writes,
+and other-community writes: 0. No automatic retry, approval, or deletion followed.
+Investigate the exact wall.post code 15 / subcode 1134 before separately authorizing
+another experiment or starting sender work. No token or raw API response is stored
+in this documentation.

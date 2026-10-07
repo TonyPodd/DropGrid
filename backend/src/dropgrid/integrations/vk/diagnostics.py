@@ -10,7 +10,11 @@ from uuid import UUID
 from dropgrid.config import Settings
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.credentials import DevelopmentTokenProvider
-from dropgrid.integrations.vk.errors import VKCredentialUnavailableError, VKError
+from dropgrid.integrations.vk.errors import (
+    VKCredentialUnavailableError,
+    VKError,
+    VKWriteDisabledError,
+)
 from dropgrid.integrations.vk.helpers import build_suggested_post_request, parse_vk_audio_reference
 from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.logging import configure_logging
@@ -26,15 +30,16 @@ class SafeArgumentParser(argparse.ArgumentParser):
 def parser() -> argparse.ArgumentParser:
     root = SafeArgumentParser(description="DropGrid single-account VK diagnostics")
     commands = root.add_subparsers(dest="command", required=True, parser_class=SafeArgumentParser)
-    for name in ("account", "community", "wall", "suggest"):
+    for name in ("account", "community", "wall", "suggest", "suggest-text"):
         command = commands.add_parser(name)
         command.add_argument("--account-id", type=UUID, help="Must match VK_TEST_ACCOUNT_ID")
         if name in {"community", "wall"}:
             command.add_argument("domain")
         if name == "wall":
             command.add_argument("--suggests", action="store_true")
-        if name == "suggest":
+        if name in {"suggest", "suggest-text"}:
             command.add_argument("--community-id", type=int, required=True)
+        if name == "suggest":
             command.add_argument("--track", required=True)
             command.add_argument("--image", type=Path, required=True)
             command.add_argument("--caption", default="DropGrid integration test")
@@ -45,8 +50,12 @@ async def execute(
     args: argparse.Namespace, settings: Settings, client: VKClient
 ) -> dict[str, object]:
     # Must refuse writes before token retrieval, file access, limiter or any network request.
-    if args.command == "suggest":
+    if args.command in {"suggest", "suggest-text"}:
         client.require_diagnostic_target(args.community_id)
+        if args.command == "suggest-text" and settings.vk_test_allowed_community_ids != {
+            args.community_id
+        }:
+            raise VKWriteDisabledError("wall.post", "Text diagnostic requires exactly one target")
     account_id = args.account_id or settings.vk_test_account_id
     if account_id is None:
         raise VKCredentialUnavailableError(
@@ -56,10 +65,35 @@ async def execute(
     user = await client.get_current_user(access_token=token, account_id=account_id)
     if args.command == "account":
         return {"user_id": user.id}
-    domain = f"club{args.community_id}" if args.command == "suggest" else args.domain
+    domain = (
+        f"club{args.community_id}" if args.command in {"suggest", "suggest-text"} else args.domain
+    )
     community = await client.resolve_community(domain, access_token=token, account_id=account_id)
     if args.command == "community":
         return {"community_id": community.id}
+    if args.command == "suggest-text":
+        if community.id != args.community_id:
+            raise VKCredentialUnavailableError(
+                "wall.post", "Resolved community does not match target"
+            )
+        if community.is_admin:
+            raise VKWriteDisabledError("wall.post", "Text diagnostic requires a non-admin account")
+        await client.call(
+            "wall.get",
+            access_token=token,
+            account_id=account_id,
+            params={"owner_id": -community.id, "count": 1, "filter": "all"},
+        )
+        receipt = await client.create_wall_post(
+            {"owner_id": -community.id, "from_group": 0, "message": "DropGrid integration test"},
+            access_token=token,
+            account_id=account_id,
+        )
+        return {
+            "post_id": receipt.post_id,
+            "owner_id": -community.id,
+            "placement": "unverified; inspect wall and suggestions separately",
+        }
     posts = await client.get_wall_posts(
         domain,
         access_token=token,
