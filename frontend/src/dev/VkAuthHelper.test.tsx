@@ -123,12 +123,10 @@ describe("VK development helper", () => {
     expect(clipboard).toHaveBeenCalledTimes(1);
   });
   it("shows only actually granted allowlisted scopes", async () => {
-    send
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({
-        access_token: TOKEN,
-        scope: `photos,${TOKEN},messages`,
-      });
+    send.mockResolvedValueOnce({}).mockResolvedValueOnce({
+      access_token: TOKEN,
+      scope: `photos,${TOKEN},messages`,
+    });
     const { container } = await receive();
     expect(
       screen.getAllByRole("listitem").map((item) => item.textContent),
@@ -196,7 +194,7 @@ describe("VK development helper", () => {
     [
       {
         error_type: "client_error",
-        error_data: { error_code: 1, error_reason: TOKEN },
+        error_data: { error_code: 6, error_reason: TOKEN },
       },
       "Open this page through the VK Mini App to request a token.",
     ],
@@ -206,6 +204,13 @@ describe("VK development helper", () => {
         error_data: { error_code: 5, error_reason: TOKEN },
       },
       "VK authorization was rejected.",
+    ],
+    [
+      {
+        error_type: "client_error",
+        error_data: { error_code: 1, error_reason: TOKEN },
+      },
+      "VK authorization failed.",
     ],
     [new Error(TOKEN), "VK authorization failed."],
   ])("sanitizes authorization failures", async (failure, message) => {

@@ -30,7 +30,7 @@ function safeAuthError(error: unknown): string {
     };
     if (data.error_type === "client_error" && data.error_data?.error_code === 4)
       return "VK authorization was cancelled by the user.";
-    if (data.error_type === "client_error" && data.error_data?.error_code === 1)
+    if (data.error_type === "client_error" && data.error_data?.error_code === 6)
       return OPEN_IN_VK;
     if (data.error_type === "auth_error" || data.error_type === "api_error")
       return "VK authorization was rejected. Check the Mini App permissions and try again.";
