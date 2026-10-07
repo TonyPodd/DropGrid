@@ -213,3 +213,43 @@ Genuine encrypted-at-rest storage and key rotation; official OAuth permission/ap
 verification; one manually authorized live test to resolve suggestion semantics;
 then design a campaign sender with transaction/job claims and outcome reconciliation.
 Photo Engine and monitoring scheduler remain separate later stages.
+
+## Live suggested-post experiment
+
+Date: 2026-10-07. Explicitly selected test target: `clubantohahyesos`,
+VK group ID `242100737`, name «собачки». Posting user `615459987` was confirmed
+non-admin (`is_admin=0`). Account and target read-only preflight succeeded through
+`users.get` and `groups.getById`.
+
+Membership before: not member. One official `groups.join(group_id=242100737)`
+attempt was rejected with sanitized category `VKPermissionError`, VK error code
+`15`. Membership after: not verified following rejection. No retry or alternative
+join was attempted. The experiment stopped before media selection or upload.
+Manual suggestion UI: `NOT_VERIFIED` due to the Computer Use limitation; the
+latest experiment instructions explicitly waived that UI precondition.
+
+Joined proactively because some communities may restrict suggestions to
+subscribers; requirement for this target was not independently established.
+In this run the proactive join was attempted but **not completed**.
+
+- Audio source/reference IDs: not selected.
+- `photos.getWallUploadServer`: `NOT_RUN`.
+- Multipart upload: `NOT_RUN`.
+- `photos.saveWallPhoto`: `NOT_RUN`.
+- `wall.post`: **0 attempts**, not sent; post ID unavailable.
+- Actual placement: `UNKNOWN`; no post was created by this experiment.
+- Placement reads (`filter=all` / `filter=suggests`): not run after the join rejection.
+- `post_type`, `owner_id`, `from_id`: unavailable.
+- Audio matched / photo present: not checked.
+
+Observed conclusion: `UNCONFIRMED`. The rejected membership setup prevented
+verification of ordinary subscribed non-admin suggested posting through the
+current official token/app. Error code 15 alone does not establish which account,
+app, token, or community restriction caused the denial, and says nothing about
+whether `wall.post` would create a suggestion. Investigate the official membership
+permission restriction before a separately authorized next experiment; do not
+start a sender or repeat this run automatically.
+
+Cleanup verified `VK_WRITE_ENABLED=false` and an empty
+`VK_TEST_ALLOWED_COMMUNITY_IDS`. Campaign sends and other community writes: 0.
+No token, upload URL, cookies, or secret keys are included in this record.
