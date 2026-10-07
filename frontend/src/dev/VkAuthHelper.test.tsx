@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import VkAuthHelper from "./VkAuthHelper";
+import VkAuthHelper, { CopyWindowShell } from "./VkAuthHelper";
 
 const { send, isEmbedded } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -43,6 +43,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 async function ready() {
   const rendered = render(<VkAuthHelper />);
@@ -250,8 +251,60 @@ describe("VK development helper", () => {
     const { container } = await receive();
     fireEvent.click(screen.getByRole("button", { name: "Copy token" }));
     await screen.findByText(
-      "Could not copy token. Allow clipboard access and try again.",
+      "Could not copy token here. Try the separate copy window.",
     );
+    expect(container.innerHTML).not.toContain(TOKEN);
+  });
+  it("copies from a separate top-level window without passing credentials through its URL or DOM", async () => {
+    clipboard.mockRejectedValueOnce(new Error(TOKEN));
+    const { container } = await receive();
+    fireEvent.click(screen.getByRole("button", { name: "Copy token" }));
+    await screen.findByRole("button", { name: "Open copy window" });
+    const popupDocument = document.implementation.createHTMLDocument();
+    const target = popupDocument.createElement("div");
+    target.id = "vk-token-copy-target";
+    popupDocument.body.append(target);
+    const popupClipboard = vi.fn().mockResolvedValue(undefined);
+    const close = vi.fn();
+    const popup = {
+      document: popupDocument,
+      navigator: { clipboard: { writeText: popupClipboard } },
+      closed: false, close,
+    } as unknown as Window;
+    const open = vi.spyOn(window, "open").mockReturnValue(popup);
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Open copy window" }));
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      "/dev/vk-auth/copy", "_blank", "popup,width=600,height=400",
+    );
+    expect(popupClipboard).not.toHaveBeenCalled();
+    expect(popupDocument.body.innerHTML).not.toContain(TOKEN);
+    await act(async () => target.querySelector("button")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(popupClipboard).toHaveBeenCalledExactlyOnceWith(TOKEN);
+    expect(container.innerHTML).not.toContain(TOKEN);
+    expect(popupDocument.body.innerHTML).not.toContain(TOKEN);
+    fireEvent.click(screen.getByRole("button", { name: "Clear token" }));
+    expect(close).toHaveBeenCalledOnce();
+    expect(target.innerHTML).toBe("");
+    expect(screen.queryByText("✓ Token received")).not.toBeInTheDocument();
+  });
+  it("the standalone copy shell cannot request or recover a token", () => {
+    const { container } = render(<CopyWindowShell />);
+    expect(screen.getByText("Copy VK test token")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(send).not.toHaveBeenCalled();
+    expect(clipboard).not.toHaveBeenCalled();
+    expect(container.innerHTML).not.toContain(TOKEN);
+  });
+  it("handles blocked popups without leaking the token", async () => {
+    clipboard.mockRejectedValueOnce(new Error(TOKEN));
+    const { container } = await receive();
+    fireEvent.click(screen.getByRole("button", { name: "Copy token" }));
+    await screen.findByRole("button", { name: "Open copy window" });
+    vi.spyOn(window, "open").mockReturnValue(null);
+    fireEvent.click(screen.getByRole("button", { name: "Open copy window" }));
+    expect(screen.getByText("Allow popups for this Mini App and try again.")).toBeInTheDocument();
     expect(container.innerHTML).not.toContain(TOKEN);
   });
   it("rejects invalid app configuration", async () => {

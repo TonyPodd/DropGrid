@@ -36,16 +36,17 @@ export function App() {
       </aside>
       <main>
         <Routes>
-          {VkAuthHelper && (
+          {VkAuthHelper && ["/dev/vk-auth", "/dev/vk-auth/copy"].map((path) => (
             <Route
-              path="/dev/vk-auth"
+              key={path}
+              path={path}
               element={
                 <Suspense fallback={<p>Loading helper…</p>}>
                   <VkAuthHelper />
                 </Suspense>
               }
             />
-          )}
+          ))}
           <Route path="/" element={<DashboardPage />} />
           <Route path="/grids" element={<GridsPage />} />
           <Route path="/grids/new" element={<GridImportPage />} />

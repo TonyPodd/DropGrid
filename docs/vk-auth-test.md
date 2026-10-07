@@ -62,8 +62,15 @@ Click **Получить тестовый VK token** and accept the requested pe
 request sends the configured app ID and exactly `wall,photos,groups`. The page
 shows only the requested scopes actually granted in Bridge's response, never the
 token itself. Click **Copy token**. Clipboard access requires HTTPS and browser/VK
-permission; on failure, allow clipboard access and click again. There is no alternate
-token extraction or OAuth fallback.
+permission. VK's desktop iframe may block Clipboard API through Permissions Policy,
+which cannot be fixed with a browser clipboard permission. If copying fails, click
+**Open copy window**, then **Copy token** in that separate HTTPS window. Allow the
+popup if your browser blocks it. Keep the Mini App open: the copy window contains
+only buttons rendered by a React portal, with the token still in the original
+helper's React state. No token is passed through URLs, DOM, storage, window
+properties, or postMessage. Clear/unmount closes the copy window. Directly opening
+`/dev/vk-auth/copy` cannot obtain a token. There is no alternate token extraction
+or OAuth fallback.
 
 ## Manual handoff and diagnostics
 
