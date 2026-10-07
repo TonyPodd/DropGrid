@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { AccountsPage, CommunitiesPage, DashboardPage } from "./catalog";
 import { GridDetailPage, GridImportPage, GridsPage } from "./grids";
@@ -6,6 +7,10 @@ import {
   CampaignNewPage,
   CampaignsPage,
 } from "./campaigns";
+const VkAuthHelper =
+  import.meta.env.VITE_ENABLE_VK_AUTH_HELPER === "true"
+    ? lazy(() => import("./dev/VkAuthHelper"))
+    : null;
 export function App() {
   return (
     <div className="app-shell">
@@ -31,6 +36,16 @@ export function App() {
       </aside>
       <main>
         <Routes>
+          {VkAuthHelper && (
+            <Route
+              path="/dev/vk-auth"
+              element={
+                <Suspense fallback={<p>Loading helper…</p>}>
+                  <VkAuthHelper />
+                </Suspense>
+              }
+            />
+          )}
           <Route path="/" element={<DashboardPage />} />
           <Route path="/grids" element={<GridsPage />} />
           <Route path="/grids/new" element={<GridImportPage />} />
