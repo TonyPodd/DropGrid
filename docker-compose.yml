@@ -50,6 +50,14 @@ services:
       VK_TEST_ALLOWED_COMMUNITY_IDS: ${VK_TEST_ALLOWED_COMMUNITY_IDS:-}
       VK_TEST_ACCOUNT_ID: ${VK_TEST_ACCOUNT_ID:-}
       VK_TEST_ACCESS_TOKEN: ${VK_TEST_ACCESS_TOKEN:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      MEDIA_STORAGE_DIR: /app/media
+      PHOTO_MAX_REUSE_PER_ASSET: ${PHOTO_MAX_REUSE_PER_ASSET:-3}
+      PHOTO_SEARCH_CACHE_HOURS: ${PHOTO_SEARCH_CACHE_HOURS:-24}
+      PHOTO_DOWNLOAD_CONCURRENCY: ${PHOTO_DOWNLOAD_CONCURRENCY:-4}
+      PHOTO_DOWNLOAD_SPARE: ${PHOTO_DOWNLOAD_SPARE:-3}
+    volumes:
+      - media_data:/app/media
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -93,3 +101,4 @@ services:
 
 volumes:
   postgres_data:
+  media_data:

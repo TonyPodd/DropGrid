@@ -6,10 +6,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dropgrid.api.schemas import AccountCreate, AccountPatch, GridImport
-from dropgrid.db.models import Account, Campaign, Community, Grid, GridCommunity
+from dropgrid.db.models import Account, Campaign, Community, Grid, GridCommunity, MediaAsset
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 
-type CatalogModel = Account | Campaign | Community | Grid
+type CatalogModel = Account | Campaign | Community | Grid | MediaAsset
 
 
 class NotFoundError(Exception):

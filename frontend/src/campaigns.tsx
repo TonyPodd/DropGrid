@@ -7,13 +7,15 @@ import {
 } from "react-router-dom";
 import { campaignsApi } from "./api/campaigns";
 import { gridsApi } from "./api/grids";
-import { errorMessage } from "./api/client";
+import { errorMessage, mediaContentUrl } from "./api/client";
+import { PhotoPlanButton, PhotoPlanResult } from "./media";
 import {
   submissionStatuses,
   type Audio,
   type Campaign,
   type CampaignInput,
   type Submission,
+  type MediaPlan,
 } from "./api/types";
 import {
   Badge,
@@ -402,7 +404,18 @@ export function SubmissionTable({ items }: { items: Submission[] }) {
               <td>{s.community.domain}</td>
               <td>{categoryName(s.category)}</td>
               <td>{s.account_name ?? "—"}</td>
-              <td>{s.media_label ?? "—"}</td>
+              <td>
+                {s.media_asset_id ? (
+                  <img
+                    className="submission-photo"
+                    src={mediaContentUrl(s.media_asset_id)}
+                    alt={`Фото для ${s.community.domain}`}
+                    loading="lazy"
+                  />
+                ) : (
+                  (s.media_label ?? "—")
+                )}
+              </td>
               <td>
                 <Badge status={s.status} />
               </td>
@@ -524,6 +537,7 @@ export function CampaignDetailPage() {
   const { id = "" } = useParams();
   const [revision, setRevision] = useState(0);
   const [editing, setEditing] = useState(false);
+  const [photoResult, setPhotoResult] = useState<MediaPlan>();
   const state = useLoad(
     (signal) => campaignsApi.detail(id, signal),
     [id, revision],
@@ -535,6 +549,9 @@ export function CampaignDetailPage() {
   return (
     <>
       <Link to="/campaigns">← Campaigns</Link>
+      {photoResult?.campaign_id === id && (
+        <PhotoPlanResult result={photoResult} />
+      )}
       <State {...state} retry={state.reload}>
         {state.data && (
           <>
@@ -593,9 +610,26 @@ export function CampaignDetailPage() {
                     </p>
                   )}
                 </div>
+                {state.data.status === "ready" && (
+                  <PhotoPlanButton
+                    campaignId={id}
+                    showResult={false}
+                    onPlanned={(result) => {
+                      setPhotoResult(result);
+                      setRevision((n) => n + 1);
+                    }}
+                  />
+                )}
               </>
             )}
             <h2>Статистика</h2>
+            {stats.data && (
+              <p>
+                Фото: {stats.data.media_assigned ?? 0} / {stats.data.total} ·
+                Уникальных: {stats.data.media_unique ?? 0} · Без фото:{" "}
+                {stats.data.total - (stats.data.media_assigned ?? 0)}
+              </p>
+            )}
             <State {...stats} retry={stats.reload}>
               {stats.data && (
                 <div className="metrics">

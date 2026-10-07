@@ -27,7 +27,8 @@ async def sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncS
         await connection.execute(
             text(
                 "TRUNCATE submissions, campaigns, grid_communities, grids, "
-                "communities, accounts, media_assets CASCADE"
+                "communities, accounts, media_assets, photo_search_cache, "
+                "photo_provider_state CASCADE"
             )
         )
     try:

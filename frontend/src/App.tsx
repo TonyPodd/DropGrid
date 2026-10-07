@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { AccountsPage, CommunitiesPage, DashboardPage } from "./catalog";
 import { GridDetailPage, GridImportPage, GridsPage } from "./grids";
+import { MediaPage } from "./media";
 import {
   CampaignDetailPage,
   CampaignNewPage,
@@ -36,17 +37,18 @@ export function App() {
       </aside>
       <main>
         <Routes>
-          {VkAuthHelper && ["/dev/vk-auth", "/dev/vk-auth/copy"].map((path) => (
-            <Route
-              key={path}
-              path={path}
-              element={
-                <Suspense fallback={<p>Loading helper…</p>}>
-                  <VkAuthHelper />
-                </Suspense>
-              }
-            />
-          ))}
+          {VkAuthHelper &&
+            ["/dev/vk-auth", "/dev/vk-auth/copy"].map((path) => (
+              <Route
+                key={path}
+                path={path}
+                element={
+                  <Suspense fallback={<p>Loading helper…</p>}>
+                    <VkAuthHelper />
+                  </Suspense>
+                }
+              />
+            ))}
           <Route path="/" element={<DashboardPage />} />
           <Route path="/grids" element={<GridsPage />} />
           <Route path="/grids/new" element={<GridImportPage />} />
@@ -56,15 +58,7 @@ export function App() {
           <Route path="/campaigns/:id" element={<CampaignDetailPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/communities" element={<CommunitiesPage />} />
-          <Route
-            path="/media"
-            element={
-              <>
-                <h1>Media</h1>
-                <p className="empty">Photo Engine is not implemented yet.</p>
-              </>
-            }
-          />
+          <Route path="/media" element={<MediaPage />} />
           <Route
             path="*"
             element={

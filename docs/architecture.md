@@ -29,7 +29,8 @@ one session per transaction/task, never shared between concurrent prepare calls.
   grid so subsequent imports do not overwrite the first community's category.
 - MediaAsset: storage reference, metadata and usage history. `tags` is PostgreSQL
   `text[]`: homogeneous strings, native array operators, no JSON schema ambiguity.
-  No photo downloads or provider queries yet.
+  Photo Engine adds provenance, normalized hashes/dimensions and provider-import
+  aliases. Existing legacy rows remain valid through nullable metadata migration.
 - Campaign: grid, VK track URL and optional parsed IDs, caption, lifecycle status,
   per-campaign publication_check_hours (72 default, positive constraint).
 - Submission: unique campaign/community, nullable account/media references, status,
@@ -100,14 +101,25 @@ Research findings and unresolved suggestion/OAuth semantics are in
 [vk-integration.md](vk-integration.md). Future work is genuine encrypted storage,
 OAuth, then an authorized sender with outcome reconciliation.
 
-## Future Photo Engine (not implemented)
+## Photo Engine v1
 
-```text
-Community category → PhotoQueryBuilder → PhotoProvider → Candidate photos
-→ ranking/deduplication → MediaAsset
-```
+Prepared Campaign → GridCommunity category → PhotoQueryBuilder → existing library
+→ persistent cached PhotoProvider search → metadata ranking → bounded downloads
+→ normalize/deduplicate → MediaAsset → Submission.media_asset_id.
 
-PhotoQueryBuilder derives a query from category. A later PhotoProvider boundary
-will return candidates with provenance/licensing. Ranking and deduplication choose
-eligible assets and the persistence layer records selection/usage. No speculative
-provider classes, Unsplash/Pexels clients, AI APIs or scrapers in this foundation.
+The Pixabay adapter is isolated behind typed candidates. Search cache, coalescing
+leases and rate slots use PostgreSQL; no Redis. Dedicated pinned-DNS HTTP transport
+checks trusted hosts and public IPs at every redirect/connection. Pillow exports
+metadata-free JPEG; SHA/dHash and provider aliases avoid duplicate imports.
+Local content-addressed storage is backed by a persistent Docker media volume.
+
+Campaign leases serialize plans across replicas, without long HTTP transactions.
+Final assignments revalidate lifecycle/category/reference state. Imports hold a
+short transaction lock only during dedup/storage persistence. Planning does not
+change actual-use history or Submission lifecycle. Defaults preserve assignments,
+prefer unique images and limit per-campaign reuse to three. Partial results keep
+valid work and report safe warning categories.
+
+Photo Engine intentionally does not know how VK authorization works. No sender,
+VK calls or production OAuth is added. See [photo-engine.md](photo-engine.md) for
+policy, provenance/license considerations, concurrency, API and extension points.

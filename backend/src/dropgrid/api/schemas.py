@@ -213,6 +213,8 @@ class CampaignSummary(CampaignRead):
 class CampaignStats(BaseModel):
     total: int
     statuses: dict[SubmissionStatus, int]
+    media_assigned: int = 0
+    media_unique: int = 0
 
 
 class SubmissionRead(BaseModel):

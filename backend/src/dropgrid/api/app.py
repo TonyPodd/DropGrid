@@ -24,6 +24,8 @@ from dropgrid.integrations.vk.errors import (
     VKRateLimitError,
 )
 from dropgrid.logging import configure_logging
+from dropgrid.photos.engine import PhotoEngine
+from dropgrid.photos.routes import router as photo_router
 from dropgrid.services.catalog import ConflictError, InvalidGridError, NotFoundError
 
 logger = logging.getLogger(__name__)
@@ -38,9 +40,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.database = Database(config)
         app.state.vk_client = VKClient(config)
         app.state.token_provider = DevelopmentTokenProvider(config)
+        app.state.photo_engine = PhotoEngine(config, app.state.database)
         try:
             yield
         finally:
+            await app.state.photo_engine.aclose()
             await app.state.vk_client.aclose()
             await app.state.database.close()
 
@@ -52,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
     )
     app.include_router(router)
+    app.include_router(photo_router)
 
     @app.get("/health")
     async def health(db: Annotated[Database, Depends(database)]) -> JSONResponse:

@@ -6,6 +6,7 @@ import type {
   Submission,
   Page,
   Audio,
+  MediaPlan,
 } from "./types";
 export const campaignsApi = {
   list: (page: number, signal?: AbortSignal) =>
@@ -23,6 +24,11 @@ export const campaignsApi = {
   prepare: (id: string) =>
     request<{ created: number; total: number }>(`/campaigns/${id}/prepare`, {
       method: "POST",
+    }),
+  planMedia: (id: string) =>
+    request<MediaPlan>(`/campaigns/${id}/media/plan`, {
+      method: "POST",
+      body: { force: false },
     }),
   stats: (id: string, signal?: AbortSignal) =>
     request<Stats>(`/campaigns/${id}/stats`, { signal }),

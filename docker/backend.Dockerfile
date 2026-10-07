@@ -10,5 +10,6 @@ RUN uv sync --frozen --no-dev --no-editable
 COPY backend/alembic.ini ./
 COPY backend/alembic ./alembic
 RUN useradd --create-home dropgrid
+RUN mkdir -p /app/media && chown dropgrid:dropgrid /app/media
 USER dropgrid
 CMD ["python", "-m", "dropgrid.api"]

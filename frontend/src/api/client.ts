@@ -1,6 +1,8 @@
 const baseUrl = (
   import.meta.env.VITE_BACKEND_URL || "http://localhost:8000"
 ).replace(/\/$/, "");
+export const mediaContentUrl = (id: string) =>
+  `${baseUrl}/api/v1/media-assets/${encodeURIComponent(id)}/content`;
 export class ApiError extends Error {
   constructor(
     public status: number,

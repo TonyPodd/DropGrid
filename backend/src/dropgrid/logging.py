@@ -8,7 +8,17 @@ class JsonFormatter(logging.Formatter):
         # Do not serialize exception objects or config: these can contain credentials.
         fields = {
             key: getattr(record, key)
-            for key in ("vk_method", "duration_ms", "success", "error_code", "attempt")
+            for key in (
+                "vk_method",
+                "duration_ms",
+                "success",
+                "error_code",
+                "attempt",
+                "campaign_id",
+                "category",
+                "provider",
+                "counts",
+            )
             if hasattr(record, key)
         }
         return json.dumps(

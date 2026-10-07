@@ -74,6 +74,8 @@ export type CampaignInput = {
 export type Stats = {
   total: number;
   statuses: Record<SubmissionStatus, number>;
+  media_assigned?: number;
+  media_unique?: number;
 };
 export type Submission = {
   id: string;
@@ -81,6 +83,7 @@ export type Submission = {
   category: string | null;
   account_name: string | null;
   media_label: string | null;
+  media_asset_id?: string | null;
   status: SubmissionStatus;
   attempt_count: number;
   error_code: string | null;
@@ -99,3 +102,36 @@ export type Dashboard = {
   recent_campaigns: Campaign[];
 };
 export type Audio = { owner_id: number; audio_id: number };
+
+export type MediaPlan = {
+  campaign_id: string;
+  total_submissions: number;
+  previously_assigned: number;
+  newly_assigned: number;
+  unassigned: number;
+  unique_assets: number;
+  categories: {
+    name: string;
+    submission_count: number;
+    assigned_count: number;
+    unique_asset_count: number;
+    warnings: string[];
+  }[];
+};
+export type MediaAsset = {
+  id: string;
+  category: string | null;
+  provider: string | null;
+  creator_name: string | null;
+  creator_url: string | null;
+  source_url: string | null;
+  license_name: string | null;
+  license_url: string | null;
+  attribution_text: string | null;
+  requires_publication_attribution: boolean;
+  width: number | null;
+  height: number | null;
+  usage_count: number;
+  last_used_at: string | null;
+  enabled: boolean;
+};

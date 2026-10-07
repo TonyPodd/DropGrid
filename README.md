@@ -1,5 +1,16 @@
 # DropGrid
 
+Photo Engine v1 automatically selects photos for prepared campaigns. It uses the
+official Pixabay API, persistent 24-hour metadata caching, bounded downloads,
+image normalization/deduplication and local MediaAsset storage. Configure the
+backend-only `PIXABAY_API_KEY` in ignored `backend/.env`, Prepare a campaign and
+click «Подобрать фото». Without a key, the app starts and the planner returns a
+safe partial result using the existing library.
+
+See [Photo Engine](docs/photo-engine.md) for policy, API, provider/license
+requirements and tests. Docker's `media_data` volume survives ordinary `down`;
+`down -v` deletes it intentionally. A complete backup requires both DB and media.
+
 DropGrid — фундамент системы управления кампаниями размещения контента в сообществах VK.
 Сейчас это локальный development stack без автоматической отправки кампаний и без
 аутентификации DropGrid. VK write diagnostics выключены по умолчанию.
@@ -21,7 +32,7 @@ DropGrid — фундамент системы управления кампан
 ## Planned
 
 Официальный OAuth, encrypted credential storage, разрешённая отправка кампаний,
-мониторинг публикаций, Photo Engine и управление кампаниями через Telegram.
+мониторинг публикаций и управление кампаниями через Telegram.
 
 ## Architecture
 

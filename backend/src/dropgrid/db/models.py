@@ -14,7 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
@@ -85,7 +85,14 @@ class GridCommunity(Base):
 
 class MediaAsset(Identity, Base):
     __tablename__ = "media_assets"
-    __table_args__ = (CheckConstraint("usage_count >= 0", name="usage_count_nonnegative"),)
+    __table_args__ = (
+        CheckConstraint("usage_count >= 0", name="usage_count_nonnegative"),
+        UniqueConstraint("provider", "provider_asset_id", name="uq_media_provider_asset"),
+        UniqueConstraint("sha256", name="uq_media_sha256"),
+        CheckConstraint("width IS NULL OR width > 0", name="width_positive"),
+        CheckConstraint("height IS NULL OR height > 0", name="height_positive"),
+        CheckConstraint("byte_size IS NULL OR byte_size > 0", name="byte_size_positive"),
+    )
     storage_key: Mapped[str] = mapped_column(String(512))
     source_url: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(String(200))
@@ -93,6 +100,58 @@ class MediaAsset(Identity, Base):
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider: Mapped[str | None] = mapped_column(String(50), index=True)
+    provider_asset_id: Mapped[str | None] = mapped_column(String(100))
+    creator_name: Mapped[str | None] = mapped_column(String(200))
+    creator_url: Mapped[str | None] = mapped_column(Text)
+    license_code: Mapped[str | None] = mapped_column(String(100))
+    license_name: Mapped[str | None] = mapped_column(String(200))
+    license_url: Mapped[str | None] = mapped_column(Text)
+    attribution_text: Mapped[str | None] = mapped_column(Text)
+    requires_publication_attribution: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    byte_size: Mapped[int | None] = mapped_column(Integer)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    perceptual_hash: Mapped[str | None] = mapped_column(String(16), index=True)
+
+
+class PhotoSearchCache(Base):
+    __tablename__ = "photo_search_cache"
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    candidates: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    lease_token: Mapped[UUID | None] = mapped_column()
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MediaProviderImport(Base):
+    __tablename__ = "media_provider_imports"
+    provider: Mapped[str] = mapped_column(String(50), primary_key=True)
+    provider_asset_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    media_asset_id: Mapped[UUID] = mapped_column(ForeignKey("media_assets.id"), index=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    creator_name: Mapped[str] = mapped_column(String(200))
+    creator_url: Mapped[str | None] = mapped_column(Text)
+    license_code: Mapped[str] = mapped_column(String(100))
+
+
+class PhotoProviderState(Base):
+    __tablename__ = "photo_provider_state"
+    provider: Mapped[str] = mapped_column(String(50), primary_key=True)
+    next_request_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    interval_seconds: Mapped[float] = mapped_column(default=1.0)
+
+
+class PhotoPlanLease(Base):
+    __tablename__ = "photo_plan_leases"
+    campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id"), primary_key=True)
+    token: Mapped[UUID] = mapped_column()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Campaign(Identity, Base):

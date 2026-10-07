@@ -191,7 +191,20 @@ async def campaign_stats(session: AsyncSession, campaign_id: UUID) -> CampaignSt
         .group_by(Submission.status)
     ):
         statuses[status] = count
-    return CampaignStats(total=sum(statuses.values()), statuses=statuses)
+    assigned, unique = (
+        await session.execute(
+            select(
+                func.count(Submission.media_asset_id),
+                func.count(func.distinct(Submission.media_asset_id)),
+            ).where(Submission.campaign_id == campaign_id)
+        )
+    ).one()
+    return CampaignStats(
+        total=sum(statuses.values()),
+        statuses=statuses,
+        media_assigned=assigned,
+        media_unique=unique,
+    )
 
 
 def safe_result(code: str | None, message: str | None) -> tuple[str | None, str | None]:

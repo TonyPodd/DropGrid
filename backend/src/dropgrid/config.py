@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
@@ -19,6 +20,18 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     frontend_origin: str = "http://localhost:5173"
     worker_poll_seconds: float = Field(default=10, gt=0)
+
+    pixabay_api_key: SecretStr | None = None
+    media_storage_dir: Path = Path("media")
+    photo_max_reuse_per_asset: int = Field(default=3, ge=1, le=20)
+    photo_search_cache_hours: int = Field(default=24, ge=24, le=168)
+    photo_download_concurrency: int = Field(default=4, ge=1, le=6)
+    photo_download_spare: int = Field(default=3, ge=0, le=5)
+
+    @field_validator("media_storage_dir", mode="before")
+    @classmethod
+    def storage_directory(cls, value: object) -> object:
+        return Path("media") if value == "" else value
 
     vk_api_version: str = "5.199"
     vk_write_enabled: bool = False
