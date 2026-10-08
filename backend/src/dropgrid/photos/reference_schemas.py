@@ -89,12 +89,25 @@ class PhotoPreviewItem(Output):
     reference_count: int
 
 
+class ArchiveAgeStratum(Output):
+    min_age_days: float
+    max_age_days: float
+    candidate_count: int
+
+
+class ArchiveShortlistItem(Output):
+    source_identity: str
+    age_days: float
+
+
 class PhotoPreviewRead(Output):
     community_id: UUID
     category: str | None
     references: list[UUID]
     category_only: list[PhotoPreviewItem]
     community_aware: list[PhotoPreviewItem]
+    archive_age_strata: list[ArchiveAgeStratum] = Field(default_factory=list)
+    archive_shortlist: list[ArchiveShortlistItem] = Field(default_factory=list)
     mixed_source: list[PhotoPreviewItem] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -105,6 +118,11 @@ class ArchiveSyncInput(Input):
 
 
 class ArchiveSyncRead(Output):
+    seek_calls: int = 0
+    seek_posts_inspected: int = 0
+    start_offset: int = 0
+    end_offset: int = 0
+    scan_bound_reached: bool = False
     posts_scanned: int = 0
     pages_read: int = 0
     candidates_discovered: int = 0

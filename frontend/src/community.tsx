@@ -48,6 +48,12 @@ type Preview = {
   category_only: Score[];
   community_aware: Score[];
   mixed_source?: Score[];
+  archive_age_strata?: {
+    min_age_days: number;
+    max_age_days: number;
+    candidate_count: number;
+  }[];
+  archive_shortlist?: { source_identity: string; age_days: number }[];
   warnings: string[];
 };
 const defaults: ProfileInput = {
@@ -397,6 +403,17 @@ export function CommunityDetailPage() {
             Порядок и scores доступны для сравнения; улучшение качества требует
             визуальной оценки.
           </p>
+          {(preview.archive_age_strata?.length ?? 0) > 0 && (
+            <p className="note">
+              Архивный shortlist:{" "}
+              {preview
+                .archive_age_strata!.map(
+                  (band) =>
+                    `${band.min_age_days}–${band.max_age_days} дней: ${band.candidate_count}`,
+                )
+                .join("; ")}
+            </p>
+          )}
           {preview.warnings.length > 0 && (
             <p className="note">{preview.warnings.join(", ")}</p>
           )}

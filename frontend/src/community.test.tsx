@@ -44,6 +44,10 @@ beforeEach(() => {
     warnings: [],
   });
   vi.spyOn(communityVisualApi, "preview").mockResolvedValue({
+    archive_age_strata: [
+      { min_age_days: 180, max_age_days: 270, candidate_count: 7 },
+      { min_age_days: 450, max_age_days: 540, candidate_count: 7 },
+    ],
     warnings: [],
     category_only: [
       {
@@ -117,6 +121,9 @@ it("runs one sync only after explicit click and shows bounded preview scores", a
   );
   await screen.findByRole("heading", { name: "С учётом сообщества" });
   expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith("c1");
+  expect(
+    screen.getByText(/180–270 дней: 7; 450–540 дней: 7/),
+  ).toBeInTheDocument();
   expect(screen.getAllByText(/visual: 0.800/)).toHaveLength(2);
 });
 

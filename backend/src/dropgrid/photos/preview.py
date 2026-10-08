@@ -6,11 +6,18 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from dropgrid.db.models import Community, GridCommunity, MediaAsset, utcnow
+from dropgrid.db.models import Community, CommunityContentProfile, GridCommunity, MediaAsset, utcnow
+from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
 from dropgrid.photos.domain import PhotoError, normalize_category
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, archive_pool, rank_pool
-from dropgrid.photos.reference_schemas import PhotoPreviewInput, PhotoPreviewItem, PhotoPreviewRead
+from dropgrid.photos.reference_schemas import (
+    ArchiveAgeStratum,
+    ArchiveShortlistItem,
+    PhotoPreviewInput,
+    PhotoPreviewItem,
+    PhotoPreviewRead,
+)
 from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.catalog import ConflictError, get_entity
 
@@ -120,8 +127,36 @@ async def _photo_preview(
             )
         if len(pool) >= data.candidate_limit * 2:
             break
+    archive = []
     if data.include_archive:
-        pool += await archive_pool(planner.archive, community_id, warnings, category)
+        archive = await archive_pool(planner.archive, community_id, warnings, category)
+        pool += archive
+    strata = []
+    shortlist = []
+    async with planner.sessions() as session:
+        profile = await session.get(CommunityContentProfile, community_id)
+    if profile:
+        lower, upper = profile.archive_reuse_min_age_days, profile.archive_reuse_max_age_days
+        now = utcnow()
+        shortlist = [
+            ArchiveShortlistItem(
+                source_identity=item.photo.provider_asset_id,
+                age_days=(now - item.posted_at).total_seconds() / 86400,
+            )
+            for item in archive
+            if item.posted_at
+        ]
+        width = (upper - lower) / ARCHIVE_STRATA
+        strata = [
+            ArchiveAgeStratum(
+                min_age_days=lower + i * width,
+                max_age_days=lower + (i + 1) * width,
+                candidate_count=sum(
+                    age_band(item.age_days, lower, upper) == i for item in shortlist
+                ),
+            )
+            for i in range(ARCHIVE_STRATA)
+        ]
     mixed = await rank_pool(visual, community_id, pool, category)
     _, reference_ids, _ = await visual.references(community_id)
     if not reference_ids:
@@ -137,6 +172,8 @@ async def _photo_preview(
             )
         ],
         community_aware=[preview_item(i) for i in ranked_pixabay],
+        archive_age_strata=strata,
+        archive_shortlist=shortlist,
         mixed_source=[preview_item(i) for i in mixed[:12]],
         warnings=sorted(set(warnings)),
     )

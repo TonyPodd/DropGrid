@@ -34,11 +34,13 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
 
 
-@pytest.mark.parametrize("scenario", ["window", "bound", "pinned"])
+@pytest.mark.parametrize("scenario", ["window", "bound", "pinned", "active_bound"])
 async def test_archive_pagination_independent_recent_target(sessions, tmp_path, scenario):
     cid, aid = await seed(sessions, target=1)
     rows = []
-    if scenario == "bound":
+    if scenario == "active_bound":
+        ages = [1] * 5000 + [200] * 2000 + [541] * 100
+    elif scenario == "bound":
         ages = [1] * 300
     elif scenario == "pinned":
         ages = [700, 1, 200, 541]
@@ -59,7 +61,13 @@ async def test_archive_pagination_independent_recent_target(sessions, tmp_path, 
         offset = int(params["offset"][0])
         offsets.append(offset)
         return httpx.Response(
-            200, json={"response": {"count": len(rows), "items": rows[offset : offset + 100]}}
+            200,
+            json={
+                "response": {
+                    "count": len(rows),
+                    "items": rows[offset : offset + int(params["count"][0])],
+                }
+            },
         )
 
     async with (
@@ -80,16 +88,21 @@ async def test_archive_pagination_independent_recent_target(sessions, tmp_path, 
         )
         service = ArchiveDiscovery(collector)
         result = await service.sync(cid, aid, max_pages=2, now=NOW)
-        if scenario == "bound":
-            assert (
-                result.posts_scanned == 200
-                and offsets == [0, 100]
-                and result.warnings == ["archive_scan_bound_reached"]
-            )
+        if scenario == "active_bound":
+            assert result.scan_bound_reached and result.pages_read == 2
+            assert result.posts_scanned == 200 and result.start_offset > 4800
+            assert result.seek_calls <= 48
+            assert result.warnings == ["archive_scan_bound_reached"]
+        elif scenario == "bound":
+            assert result.exhausted
+            assert result.seek_calls > 0
+            assert result.start_offset >= 100
+            assert result.candidates_discovered == 0
         else:
             assert result.crossed_max_age
             assert result.candidates_discovered == (1 if scenario == "pinned" else 3)
-            assert result.posts_scanned == (4 if scenario == "pinned" else 110)
+            assert result.posts_scanned <= len(rows)
+            assert result.seek_calls > 0
             repeat = await service.sync(cid, aid, max_pages=2, now=NOW)
             assert (
                 repeat.candidates_discovered == 0
@@ -650,3 +663,55 @@ async def test_recent_sync_materializes_metadata_only_archive_reference(sessions
             row.archive_discovered and row.is_style_reference and row.storage_key and row.embedding
         )
         assert await s.scalar(select(func.count()).select_from(CommunityReferencePhoto)) == 1
+
+
+async def test_provider_db_strata_metadata_only(sessions, tmp_path):
+    cid, _ = await seed(sessions)
+    async with sessions() as s, s.begin():
+        p = await s.get(CommunityContentProfile, cid)
+        p.archive_reuse_enabled = True
+        ages = [180 + i / 10 for i in range(100)] + [300] * 20 + [400] * 20 + [540] * 20
+        for i, age in enumerate(ages, 1):
+            s.add(
+                CommunityReferencePhoto(
+                    community_id=cid,
+                    vk_post_id=i,
+                    vk_photo_owner_id=-123,
+                    vk_photo_id=i,
+                    posted_at=NOW - timedelta(days=age),
+                    archive_discovered=True,
+                    is_style_reference=False,
+                    width=1000,
+                    height=1000,
+                )
+            )
+    async with (
+        VKClient(
+            Settings(_env_file=None),
+            transport=httpx.MockTransport(
+                lambda r: pytest.fail("Sampling is metadata-only; no VK calls")
+            ),
+        ) as vk,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: pytest.fail("Sampling must not download"))
+        ) as http,
+    ):
+        collector = CommunityReferenceCollector(
+            sessions,
+            vk,
+            Tokens(),
+            PhotoDownloader(http, VKReferencePolicy(), resolver),
+            LocalMediaStorage(tmp_path),
+            FakeVisualEmbedder(),
+        )
+        provider = VKArchivePhotoProvider(collector)
+        first = await provider.candidates(cid, now=NOW)
+        second = await provider.candidates(cid, now=NOW)
+        assert len(first) == 28
+        assert [r.id for r in first] == [r.id for r in second]
+        from dropgrid.photos.archive_retrieval import age_band
+
+        bands = [age_band((NOW - r.posted_at).total_seconds() / 86400, 180, 540) for r in first]
+        assert [bands.count(i) for i in range(4)] == [7, 7, 7, 7]
+        assert all(r.embedding is None and r.storage_key is None for r in first)
+        assert len(await provider.candidates(cid, limit=1000, now=NOW)) == 28

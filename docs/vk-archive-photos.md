@@ -13,9 +13,15 @@ allowed while reuse is disabled; that does not authorize candidate selection.
 
 `POST /api/v1/communities/{id}/archive/sync` accepts an optional Account UUID and
 `max_pages` (default 20, hard maximum 50). It reads `wall.get filter=owner`, up to
-100 items/page, and stops at the max-age boundary, exhaustion, the page bound or
+100 items/page. A read-only exponential search followed by binary refinement
+seeks both age boundaries before the sequential region scan, with a shared probe
+cache and budget of 48 calls (5 posts/probe), tolerance 25 offsets and maximum
+probe offset 10,000,000. Pinned/deleted/malformed dates are ignored. Unusable or
+unstable chronology triggers a warned, bounded fallback. The scan overlaps its
+approximate boundaries conservatively and stops at the max-age boundary, exhaustion, the page bound or
 a 300-second timeout. A pinned old post does not stop chronology traversal.
-The endpoint reports inspected posts, pages, discovered/existing candidates,
+The endpoint reports `seek_calls`, `seek_posts_inspected`, `start_offset`,
+`end_offset`, scanned posts, pages, discovered/existing candidates,
 termination flags and sanitized warnings. A reached scan bound means a partial
 index, not a complete archive. It never scans another community or schedules jobs.
 
@@ -31,7 +37,12 @@ currently eligible count and oldest/newest eligible dates.
 
 VKArchivePhotoProvider reads only rows belonging to the requested Community with
 an explicit enabled policy, the current time window and valid identity/dimensions.
-Only a bounded shortlist (up to 12) is prepared for ranking. Each image is handled
+Only a bounded shortlist (up to 28) is prepared for ranking. Four equal-width
+age strata cover the configured window (default 180–270, 270–360, 360–450,
+450–540 days). Each stratum uses a stable hash of community/photo identity and
+UTC date; round-robin selection redistributes sparse-stratum capacity. Retrieval
+fetches at most 28 metadata rows per stratum after DB eligibility filtering,
+then prepares at most 28 images in total. No newest-only LIMIT determines the pool. Each image is handled
 serially, without holding a DB transaction across HTTP or CPU work. Preparation
 uses verified local normalized bytes and the compatible cached embedding. If
 bytes are absent/corrupt, `wall.getById` refreshes the stable post/photo identity;
@@ -88,7 +99,9 @@ The Community page exposes min/max ages, explicit opt-in, archive status and
 bounded index operation. Existing recent-reference synchronization remains separate.
 
 Photo preview retains category-only and Pixabay community-aware arrays, and adds
-`mixed_source`. Each entry includes source/identity, local asset/reference ID,
+`mixed_source`, `archive_age_strata` (counts for the prepared archive pool) and
+`archive_shortlist` (identity and age of every prepared archive candidate).
+The UI displays the distribution. Each ranked entry includes source/identity, local asset/reference ID,
 base/visual/final/age-reuse scores and archive publication date/age. Archive entries
 can have a null MediaAsset ID; thumbnails use the local reference content endpoint.
 No capability URL, embedding vector or credential is exposed.
@@ -119,3 +132,40 @@ Pixabay-only top five IDs: 3405257, 5387333, 3403963, 3552159, 1709944, scores
 0.7568, 0.7516, 0.7509. Their ages were about 182–187 days and visual top-five
 cosine means 0.8110, 0.8236, 0.7904, 0.7626, 0.7742. This verifies observed
 ranking and lazy preparation, not automatic superiority of archive images.
+
+
+## Age-stratified retrieval smoke, 2026-10-09
+
+The follow-up used only lujbit and the encrypted DB account token. Date seeking
+made 20 wall.get calls / 100 probe posts, then scanned offsets 1200–5000:
+38 pages / 3800 posts, crossing max age without warnings or scan-bound termination.
+This added 2277 unique metadata rows (2904 total); 1069 rows met enabled age and
+dimension policy during the temporary opt-in. The discovered window reaches about
+180.82–539.63 days, from 2025-04-17 through 2026-04-11. Existing rows were reused.
+
+The prepared shortlist had 28 entries, seven per equal-width stratum:
+
+- 180–270 days: 265.73, 261.44, 232.78, 252.32, 250.37, 268.62, 221.71.
+- 270–360 days: 283.52, 314.82, 312.28, 290.45, 306.80, 307.72, 292.33.
+- 360–450 days: 443.87, 430.72, 398.53, 371.30, 373.83, 364.28, 448.75.
+- 450–540 days: 521.84, 463.50, 503.48, 521.85, 518.20, 531.21, 512.36.
+
+Mixed top-five source/age/visual/final:
+
+- -223746894_456244193: vk_archive, 373.83 days, 0.8595, 0.8256.
+- -223746894_456243588: vk_archive, 463.50 days, 0.8318, 0.8001.
+- -223746894_456245750: vk_archive, 292.33 days, 0.8639, 0.7949.
+- -223746894_456246944: vk_archive, 232.78 days, 0.7942, 0.7851.
+- -223746894_456245189: vk_archive, 314.82 days, 0.7415, 0.7834.
+
+Scan including seeking took 83.32 seconds, versus the previous partial-index
+44.11 seconds / 1999 posts. The new run inspected 3900 posts including probes and
+skipped the first 1200 wall offsets. It covered the configured window; it is not
+a directly comparable speed benchmark against the old partial run. Total wall.get
+calls were 58 (20 seeks + 38 scans). One preview took 30.92 seconds, with 28 image
+downloads and 28 embeddings; peak Linux RSS was 505.7 MiB. Preparation remains
+serial and cache-backed. Higher scores alone do not establish better image quality.
+
+No archive MediaAssets or CommunityMediaUsage rows were created. Community opt-in
+was restored to false; VK_WRITE_ENABLED remained false and allowlist empty.
+No VK writes, other communities or new providers were used.

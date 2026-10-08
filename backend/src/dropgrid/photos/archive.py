@@ -5,7 +5,7 @@ import hashlib
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from dropgrid.db.models import (
@@ -17,6 +17,8 @@ from dropgrid.db.models import (
 )
 from dropgrid.domain.enums import AccountStatus
 from dropgrid.integrations.vk.errors import VKError
+from dropgrid.integrations.vk.models import WallPosts
+from dropgrid.photos.archive_retrieval import WallDateSeeker, stratified_sample
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoPolicy, PhotoQueryBuilder
 from dropgrid.photos.images import normalize_image
 from dropgrid.photos.reference_schemas import ArchiveSyncRead
@@ -30,7 +32,8 @@ from dropgrid.services.catalog import ConflictError, get_entity
 
 ARCHIVE_TIMEOUT_SECONDS = 300
 ARCHIVE_MAX_PAGES = 50
-ARCHIVE_CANDIDATE_LIMIT = 12
+ARCHIVE_CANDIDATE_LIMIT = 28
+ARCHIVE_MAX_POSTS = 5000
 
 
 def archive_identity(row: CommunityReferencePhoto) -> str:
@@ -104,7 +107,23 @@ class ArchiveDiscovery:
             lower = now - timedelta(days=max_age)
             upper = now - timedelta(days=min_age)
             async with asyncio.timeout(ARCHIVE_TIMEOUT_SECONDS):
-                offset = 0
+
+                async def fetch(offset: int, count: int) -> WallPosts:
+                    return await service.client.get_community_wall_history(
+                        group, access_token=token, account_id=aid, count=count, offset=offset
+                    )
+
+                seeker = WallDateSeeker(fetch)
+                start = await seeker.boundary(upper)
+                end = await seeker.boundary(lower) if start is not None else None
+                report.seek_calls = seeker.calls
+                report.seek_posts_inspected = seeker.posts_inspected
+                report.warnings.extend(seeker.warnings)
+                if start is None or end is None:
+                    report.warnings.append("archive_seek_bounded_fallback")
+                offset = max(0, (start or 0) - 100)
+                report.start_offset = offset
+                stop_offset = end + 200 if end is not None else None
                 for _ in range(max_pages):
                     page = await service.client.get_community_wall_history(
                         group,
@@ -115,6 +134,19 @@ class ArchiveDiscovery:
                     )
                     report.pages_read += 1
                     metadata = []
+                    chronology = [
+                        post["date"]
+                        for post in page.items
+                        if not post.get("is_pinned")
+                        and post.get("post_type") == "post"
+                        and type(post.get("date")) is int
+                        and 0 < post["date"] < 253402300799
+                    ]
+                    chronological = all(
+                        a >= b for a, b in zip(chronology, chronology[1:], strict=False)
+                    )
+                    if not chronological:
+                        report.warnings.append("archive_scan_unstable_chronology")
                     for post in page.items[:100]:
                         report.posts_scanned += 1
                         date = post.get("date")
@@ -125,8 +157,7 @@ class ArchiveDiscovery:
                                 and not post.get("is_pinned")
                                 and post.get("post_type") == "post"
                             ):
-                                report.crossed_max_age = True
-                                break
+                                report.crossed_max_age = chronological
                         photo = representative_photo(post, group, service.policy)
                         if photo and lower <= photo.posted_at <= upper:
                             metadata.append(photo)
@@ -173,6 +204,7 @@ class ArchiveDiscovery:
                                 )
                                 await s.flush()
                                 report.candidates_discovered += 1
+                    report.end_offset = offset + len(page.items)
                     if report.crossed_max_age:
                         finished = True
                         break
@@ -180,7 +212,14 @@ class ArchiveDiscovery:
                     if not page.items or offset >= page.count:
                         report.exhausted = finished = True
                         break
+                    if report.posts_scanned >= ARCHIVE_MAX_POSTS or (
+                        stop_offset is not None and offset >= stop_offset
+                    ):
+                        report.scan_bound_reached = True
+                        report.warnings.append("archive_scan_bound_reached")
+                        break
                 else:
+                    report.scan_bound_reached = True
                     report.warnings.append("archive_scan_bound_reached")
         except VKError as e:
             report.warnings.append("vk_read_" + type(e).__name__)
@@ -218,31 +257,64 @@ class VKArchivePhotoProvider:
             p = await s.get(CommunityContentProfile, community_id)
             if not c.is_active or not p or not p.archive_reuse_enabled:
                 return []
-            rows = (
-                await s.scalars(
-                    select(CommunityReferencePhoto)
-                    .where(
-                        CommunityReferencePhoto.community_id == community_id,
-                        CommunityReferencePhoto.archive_discovered.is_(True),
-                        CommunityReferencePhoto.enabled.is_(True),
-                        CommunityReferencePhoto.posted_at
-                        >= now - timedelta(days=p.archive_reuse_max_age_days),
-                        CommunityReferencePhoto.posted_at
-                        <= now - timedelta(days=p.archive_reuse_min_age_days),
-                        CommunityReferencePhoto.vk_photo_owner_id != 0,
-                        CommunityReferencePhoto.vk_photo_id > 0,
-                        CommunityReferencePhoto.width >= PhotoPolicy().min_short_side,
-                        CommunityReferencePhoto.height >= PhotoPolicy().min_short_side,
-                        CommunityReferencePhoto.width
-                        <= CommunityReferencePhoto.height * PhotoPolicy().max_aspect_ratio,
-                        CommunityReferencePhoto.height
-                        <= CommunityReferencePhoto.width * PhotoPolicy().max_aspect_ratio,
-                    )
-                    .order_by(CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id)
-                    .limit(min(max(limit, 1), ARCHIVE_CANDIDATE_LIMIT))
+            limit = min(max(limit, 1), ARCHIVE_CANDIDATE_LIMIT)
+            query = select(CommunityReferencePhoto).where(
+                CommunityReferencePhoto.community_id == community_id,
+                CommunityReferencePhoto.archive_discovered.is_(True),
+                CommunityReferencePhoto.enabled.is_(True),
+                CommunityReferencePhoto.posted_at
+                >= now - timedelta(days=p.archive_reuse_max_age_days),
+                CommunityReferencePhoto.posted_at
+                <= now - timedelta(days=p.archive_reuse_min_age_days),
+                CommunityReferencePhoto.vk_photo_owner_id != 0,
+                CommunityReferencePhoto.vk_photo_id > 0,
+                CommunityReferencePhoto.width >= PhotoPolicy().min_short_side,
+                CommunityReferencePhoto.height >= PhotoPolicy().min_short_side,
+                CommunityReferencePhoto.width
+                <= CommunityReferencePhoto.height * PhotoPolicy().max_aspect_ratio,
+                CommunityReferencePhoto.height
+                <= CommunityReferencePhoto.width * PhotoPolicy().max_aspect_ratio,
+            )
+            rows: list[CommunityReferencePhoto] = []
+            width = (p.archive_reuse_max_age_days - p.archive_reuse_min_age_days) / 4
+            for band in range(4):
+                young = now - timedelta(days=p.archive_reuse_min_age_days + band * width)
+                old = now - timedelta(days=p.archive_reuse_min_age_days + (band + 1) * width)
+                boundary = (
+                    CommunityReferencePhoto.posted_at >= old
+                    if band == 3
+                    else CommunityReferencePhoto.posted_at > old
                 )
-            ).all()
-            return list(rows)
+                rows.extend(
+                    (
+                        await s.scalars(
+                            query.where(CommunityReferencePhoto.posted_at <= young, boundary)
+                            .order_by(
+                                func.md5(
+                                    func.concat(
+                                        str(community_id),
+                                        ":",
+                                        cast(CommunityReferencePhoto.vk_photo_owner_id, String),
+                                        "_",
+                                        cast(CommunityReferencePhoto.vk_photo_id, String),
+                                        ":",
+                                        str(now.date()),
+                                    )
+                                ),
+                                CommunityReferencePhoto.id,
+                            )
+                            .limit(limit)
+                        )
+                    ).all()
+                )
+            return stratified_sample(
+                rows,
+                community_id,
+                p.archive_reuse_min_age_days,
+                p.archive_reuse_max_age_days,
+                now,
+                limit,
+            )
 
     def photo(self, row: CommunityReferencePhoto, category: str | None = None) -> PhotoCandidate:
         return PhotoCandidate(
