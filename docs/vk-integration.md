@@ -493,3 +493,54 @@ placement remains unconfirmed, so this is not authorization or evidence for a se
 Cleanup ran after each invocation: VK_WRITE_ENABLED=false, allowlist empty, only
 API restarted. No groups.join, other-community writes, worker/sender, token change,
 MediaAsset change, token acquisition, TLS bypass or trusted-host expansion occurred.
+
+## Read-only receipt forensics (2026-10-08)
+
+Official schema confirms wall.getById with user token, `posts=-242100737_4`,
+`extended=0`, response object `items`:
+[method](https://github.com/VKCOM/vk-api-schema/blob/333481bd082ad747d4873ef4a77f9247097eeef0/wall/methods.json),
+[response](https://github.com/VKCOM/vk-api-schema/blob/333481bd082ad747d4873ef4a77f9247097eeef0/wall/responses.json).
+VKClient now treats this as READ with existing bounded read retries and typed
+WallPostsById/WallPostDetails parsing. Receipt arguments are validated before HTTP.
+The production strict matcher/classifier remains unchanged.
+
+Exactly three live read calls used DBTokenProvider while writes stayed false and
+allowlist empty: wall.getById, wall.get suggests (100), wall.get all (100). All
+succeeded on attempt 1. No raw objects, full text or attachment access keys were
+printed or persisted; only whitelisted summaries and fixed evidence booleans.
+
+Direct result: FOUND, one item. ID **4**, owner **-242100737**, from **615459987**,
+date **1791481029**, post_type **suggest**, is_pinned absent, text length **78**,
+diagnostic marker present, attachment types **photo/audio**. Read-back photo is
+**-242100737 / 456239018**, audio is **2000410139 / 456245636**.
+
+Suggestions returned two items:
+
+| id | owner | from | date | type | text length | marker | photo owner/id | audio owner/id |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 | -242100737 | 615459987 | 1791481029 | suggest | 78 | yes | -242100737/456239018 | 2000410139/456245636 |
+| 1 | -242100737 | 615459987 | 1791399316 | suggest | 1 | no | none | none |
+
+Normal wall returned one item: id 3, owner/from -242100737, date 1791480068,
+post_type post, text length 0, no marker, photo -242100737/456239017, no audio.
+Receipt id 4 is absent from this normal page.
+
+For receipt 4, owner/from-user/marker/audio/receipt-id evidence are **true**;
+**photo_match is false**. photos.saveWallPhoto returned user-owned
+615459987/457239318, whereas VK read-back exposes community-owned
+-242100737/456239018. This observed identity difference explains the previous
+strict matcher failure; it does not establish VK's internal transformation process.
+
+Final forensic classification: **SUGGESTED**. Receipt id 4 is present in the target
+suggestion queue and direct object has post_type suggest. It is not confirmed
+published. The earlier NOT_FOUND meant strict match absent on two pages, not that
+VK had created nothing. Diagnostic-only forensic rules report separate evidence:
+receipt on suggests → SUGGESTED; receipt on all → PUBLISHED; direct receipt without
+placement → EXISTS_UNKNOWN_PLACEMENT; strong suggestion evidence may identify a
+suggestion despite omitted audio; absent/conflicting evidence → UNKNOWN.
+
+Regression tests cover direct parsing/schema failures/read retry, both page
+placements, marker/photo/audio mismatch, omitted audio, unknown placement and the
+observed community-photo identity difference. No production matching rule was
+relaxed. VK writes in this forensic stage: wall.post=0, upload=0, saveWallPhoto=0,
+groups.join=0. No new photo, post, sender or automatic follow-up experiment.

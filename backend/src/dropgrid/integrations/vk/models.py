@@ -62,6 +62,21 @@ class WallPosts(ResponseModel):
     items: list[dict[str, Any]]
 
 
+class WallPostDetails(ResponseModel):
+    id: int = Field(ge=0)
+    owner_id: int | None = None
+    from_id: int | None = None
+    date: int | None = None
+    post_type: str | None = None
+    is_pinned: int | None = None
+    text: str = Field(default="", repr=False)
+    attachments: list[dict[str, Any]] = Field(default_factory=list, repr=False)
+
+
+class WallPostsById(ResponseModel):
+    items: list[WallPostDetails]
+
+
 class WallPostReceipt(ResponseModel):
     # Schema does not promise a positive identifier for every accepted wall.post.
     post_id: int = Field(ge=0)

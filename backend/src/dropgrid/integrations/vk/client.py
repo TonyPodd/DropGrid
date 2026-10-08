@@ -22,9 +22,15 @@ from dropgrid.integrations.vk.errors import (
     api_error,
 )
 from dropgrid.integrations.vk.limiter import LocalRateLimiter, Sleeper, VKRateLimiter
-from dropgrid.integrations.vk.models import VKCommunity, VKUser, WallPostReceipt, WallPosts
+from dropgrid.integrations.vk.models import (
+    VKCommunity,
+    VKUser,
+    WallPostReceipt,
+    WallPosts,
+    WallPostsById,
+)
 
-_READ_METHODS = frozenset({"users.get", "groups.getById", "wall.get"})
+_READ_METHODS = frozenset({"users.get", "groups.getById", "wall.get", "wall.getById"})
 _WRITE_METHODS = frozenset({"wall.post", "photos.getWallUploadServer", "photos.saveWallPhoto"})
 logger = logging.getLogger(__name__)
 
@@ -295,6 +301,24 @@ class VKClient:
             },
         )
         return parse_response(TypeAdapter(WallPosts), data["response"], "wall.get")
+
+    async def get_wall_post_by_id(
+        self, owner_id: int, post_id: int, *, access_token: str | SecretStr, account_id: UUID
+    ) -> WallPostsById:
+        if (
+            type(owner_id) is not int
+            or not 0 < abs(owner_id) <= 2**63 - 1
+            or type(post_id) is not int
+            or not 0 <= post_id <= 2**63 - 1
+        ):
+            raise VKInputError("wall.getById", "Invalid wall post identity")
+        data = await self.call(
+            "wall.getById",
+            access_token=access_token,
+            account_id=account_id,
+            params={"posts": f"{owner_id}_{post_id}", "extended": 0},
+        )
+        return parse_response(TypeAdapter(WallPostsById), data["response"], "wall.getById")
 
     async def get_suggested_posts(
         self,
