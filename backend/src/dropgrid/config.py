@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     vk_test_access_token: SecretStr | None = None
     vk_test_account_id: UUID | None = None
     vk_timeout_seconds: float = Field(default=10, gt=0, le=60)
+    # Multipart response may take longer than ordinary API reads; still bounded, no retry.
+    vk_upload_timeout_seconds: float = Field(default=30, gt=0, le=120)
     vk_max_attempts: int = Field(default=3, ge=1, le=5)
     vk_min_interval_seconds: float = Field(default=1, ge=0.34)
     vk_max_photo_bytes: int = Field(default=10 * 1024 * 1024, gt=0, le=50 * 1024 * 1024)

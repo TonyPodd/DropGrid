@@ -149,6 +149,7 @@ async def suggest_media(
     photo = await uploader.upload(
         data, community_id=TARGET, account_id=account_id, access_token=token, mime_type="image/jpeg"
     )
+    result["photo_attachment"] = {"owner_id": photo.owner_id, "id": photo.media_id}
     result["write_attempts"] = 3
     payload = build_suggested_post_request(
         TARGET, caption=f"{caption}\n{marker}", photo=photo, audio=audio

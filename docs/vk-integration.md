@@ -431,3 +431,65 @@ required before running the command. No live VK requests/writes were made in thi
 Normal tests mock VK; PostgreSQL integration tests check encrypted persistence,
 failed replacement rollback, providers, read capabilities and MediaAsset pipeline.
 Frontend tests cover password import, clear-on-error/success/cancel and indicators.
+
+## Multipart transport investigation (2026-10-08)
+
+One explicitly authorized multipart-only probe used the existing DB token, target
+242100737 and existing dog MediaAsset. It stopped before save/post even if upload
+had succeeded. No automatic retry was performed.
+
+The official upload response selected **pu.vk.com** (already trusted). DNS resolved
+an IPv4 address; no IPv6 address was available. TCP 443 and certificate/hostname
+verified TLS 1.3 succeeded in the actual API container in about 0.12 seconds.
+The actual HTTPX multipart POST then raised **ReadTimeout** after about 10.16
+seconds. This establishes a response-read timeout, not DNS/connect/certificate
+failure or a broken IPv6 route. It does not establish why the remote response was
+late or absent. No capability URL/query, token, response body or certificate dump
+was recorded. Existing JPEG/photo/upload.jpg wire shape and host policy remain.
+
+Upload transport errors now retain only fixed category, known exception type,
+stage, sanitized hostname and cause category. SSLWantRead/SSLWantWrite are normal
+nonblocking waits, not evidence of TLS failure. The HTTPX error itself and its
+cause/request objects are discarded before raising the sanitized integration error.
+
+`VK_UPLOAD_TIMEOUT_SECONDS=30` controls multipart **read** inactivity only
+(bounded 0 < value <= 120). `VK_TIMEOUT_SECONDS=10` continues to control ordinary
+API calls and upload connect/write/pool waits. TLS verification, no redirects,
+no cookies/auth/token in multipart and single-attempt writes remain unchanged.
+This is a bounded timeout adjustment based on the observed ReadTimeout; success
+still requires a separately authorized new diagnostic invocation.
+See [HTTPX timeout definitions](https://www.python-httpx.org/advanced/timeouts/).
+
+Regression tests cover connect/read/write/protocol failures, fixed DNS/TLS/route
+cause categories, no credential/capability leakage, no save after upload failure,
+no write retry, and independent upload/API timeout settings. Successful diagnostics
+report only saved photo owner/id; attachment access keys stay private.
+
+### One new end-to-end invocation after timeout adjustment
+
+After full green quality gates, one new `suggest-media` invocation used the DB
+Account bound to VK user 615459987, exact target 242100737, existing dog MediaAsset
+`d5156b7e-ebac-4445-8eb7-900195049935`, and the explicitly supplied track
+`audio2000410139_456245636`.
+
+- users.get / groups.getById / wall.get preflight: SUCCESS, one attempt each.
+- photos.getWallUploadServer / multipart upload / photos.saveWallPhoto: SUCCESS,
+  one attempt each. Saved photo owner/id: **615459987 / 457239318**; no access key
+  recorded. Multipart used the separate 30-second read timeout; API timeout stayed 10.
+- wall.post: **SUCCESS, exactly one attempt**, receipt post_id **4**, no VK error
+  code/subcode. Receipt alone does not prove placement.
+- Immediate read-back: all returned 1 item; suggests returned 2 items. Both calls
+  succeeded, but neither page contained a strict owner/marker/photo/audio match.
+- Classification: **NOT_FOUND on the inspected pages**. This is not proof that VK
+  created no item, nor confirmation of publication/suggestion or audio attachment
+  acceptance. No additional read scan or write retry followed.
+- Four write-stage attempts in this final invocation: server retrieval, multipart,
+  save, post. The earlier separate multipart-only probe made two write-stage
+  attempts and never saved/posted. Total wall.post attempts in this stage: **1**.
+
+A/B baseline: Mini App wall.post rejected with 15/1134; fresh imported DB token's
+wall.post was accepted without that error in this invocation. Suggested-post
+placement remains unconfirmed, so this is not authorization or evidence for a sender.
+Cleanup ran after each invocation: VK_WRITE_ENABLED=false, allowlist empty, only
+API restarted. No groups.join, other-community writes, worker/sender, token change,
+MediaAsset change, token acquisition, TLS bypass or trusted-host expansion occurred.

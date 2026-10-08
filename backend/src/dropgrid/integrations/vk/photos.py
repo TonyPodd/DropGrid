@@ -1,4 +1,8 @@
 import asyncio
+import errno
+import re
+import socket
+import ssl
 from pathlib import Path
 from typing import Self
 from urllib.parse import urlsplit
@@ -8,7 +12,12 @@ import httpx
 from pydantic import SecretStr, TypeAdapter
 
 from dropgrid.integrations.vk.client import VKClient, parse_response
-from dropgrid.integrations.vk.errors import VKInputError, VKProtocolError, VKTransportError
+from dropgrid.integrations.vk.errors import (
+    VKInputError,
+    VKProtocolError,
+    VKTransportError,
+    VKUploadTransportError,
+)
 from dropgrid.integrations.vk.models import (
     SavedPhoto,
     VKAttachment,
@@ -17,6 +26,52 @@ from dropgrid.integrations.vk.models import (
 )
 
 _UPLOAD_SUFFIXES = ("vk.com", "vk.ru", "vkuserphoto.ru", "userapi.com", "vk-cdn.net")
+
+
+def upload_transport_error(error: httpx.HTTPError, url: str) -> VKUploadTransportError:
+    categories = (
+        (httpx.ConnectTimeout, "connect_timeout"),
+        (httpx.ReadTimeout, "read_timeout"),
+        (httpx.WriteTimeout, "write_timeout"),
+        (httpx.PoolTimeout, "pool_timeout"),
+        (httpx.ConnectError, "connect_error"),
+        (httpx.ReadError, "read_error"),
+        (httpx.WriteError, "write_error"),
+        (httpx.RemoteProtocolError, "protocol_error"),
+        (httpx.LocalProtocolError, "protocol_error"),
+    )
+    category, exception_type = "other_http_error", "HTTPError"
+    for kind, value in categories:
+        if isinstance(error, kind):
+            category, exception_type = value, kind.__name__
+            break
+    # Inspect exception types/errno only; upstream messages can contain capability URLs.
+    cause_category = "unavailable"
+    cause: BaseException | None = error
+    for _ in range(10):
+        if cause is None:
+            break
+        if isinstance(cause, socket.gaierror):
+            cause_category = "dns"
+            break
+        if isinstance(cause, ssl.SSLCertVerificationError):
+            cause_category = "tls_certificate"
+            break
+        if isinstance(cause, ssl.SSLError) and not isinstance(
+            cause, (ssl.SSLWantReadError, ssl.SSLWantWriteError)
+        ):
+            cause_category = "tls"
+            break
+        if isinstance(cause, OSError) and cause.errno in {errno.ENETUNREACH, errno.EHOSTUNREACH}:
+            cause_category = "network_unreachable"
+            break
+        if isinstance(cause, OSError) and cause.errno == errno.ECONNREFUSED:
+            cause_category = "connection_refused"
+            break
+        cause = cause.__cause__ or cause.__context__
+    host = urlsplit(url).hostname or ""
+    safe_host = host if re.fullmatch(r"[a-z0-9.-]{1,253}", host) else "unavailable"
+    return VKUploadTransportError(category, exception_type, safe_host, cause_category)
 
 
 def validate_upload_url(value: str) -> str:
@@ -87,12 +142,15 @@ class WallPhotoUploader:
             raise ValueError("Provide upload client or transport, not both")
         self.client = client
         self._owns_http = upload_http is None
+        self.upload_timeout = httpx.Timeout(
+            client.settings.vk_timeout_seconds, read=client.settings.vk_upload_timeout_seconds
+        )
         self.http = (
             upload_http
             if upload_http is not None
             else httpx.AsyncClient(
                 transport=transport,
-                timeout=client.settings.vk_timeout_seconds,
+                timeout=self.upload_timeout,
                 follow_redirects=False,
                 trust_env=False,
             )
@@ -143,13 +201,11 @@ class WallPhotoUploader:
                 files={
                     "photo": ("upload.png" if mime == "image/png" else "upload.jpg", data, mime)
                 },
-                timeout=self.client.settings.vk_timeout_seconds,
+                timeout=self.upload_timeout,
                 follow_redirects=False,
             )
-        except httpx.HTTPError:
-            failure = VKTransportError(
-                "photo.upload", "Photo upload transport failed; outcome uncertain"
-            )
+        except httpx.HTTPError as error:
+            failure = upload_transport_error(error, url)
         else:
             if result.status_code != 200:
                 failure = VKTransportError("photo.upload", "Photo upload HTTP request rejected")

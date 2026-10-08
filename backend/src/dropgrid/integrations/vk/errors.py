@@ -48,6 +48,29 @@ class VKTransportError(VKError):
     pass
 
 
+class VKUploadTransportError(VKTransportError):
+    """Only fixed transport metadata; never retains the HTTPX error or URL."""
+
+    def __init__(
+        self, category: str, exception_type: str, upload_host: str, cause_category: str
+    ) -> None:
+        super().__init__("photo.upload", "Photo upload transport failed; outcome uncertain")
+        self.category = category
+        self.exception_type = exception_type
+        self.upload_host = upload_host
+        self.cause_category = cause_category
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            **super().as_dict(),
+            "stage": "multipart",
+            "transport_category": self.category,
+            "exception_type": self.exception_type,
+            "upload_host": self.upload_host,
+            "cause_category": self.cause_category,
+        }
+
+
 class VKProtocolError(VKError):
     pass
 

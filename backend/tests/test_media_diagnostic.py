@@ -228,6 +228,8 @@ async def test_media_pipeline_single_write_and_readback(sessions, tmp_path, scen
             uploader=uploader,
         )
     assert result["classification"] == expected and "mock-media-token" not in str(result)
+    assert result["photo_attachment"] == {"owner_id": 123, "id": 456}
+    assert "photo_key" not in str(result) and "audio_key" not in str(result)
     counts = Counter(calls)
     assert (
         counts["wall.post"]

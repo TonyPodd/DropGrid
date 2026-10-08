@@ -186,3 +186,127 @@ async def test_upload_errors_sanitized_and_no_save(failure, caplog):
         and TOKEN not in caplog.text
     )
     assert error.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "kind,category",
+    [
+        (httpx.ConnectError, "connect_error"),
+        (httpx.ConnectTimeout, "connect_timeout"),
+        (httpx.ReadTimeout, "read_timeout"),
+        (httpx.WriteError, "write_error"),
+        (httpx.WriteTimeout, "write_timeout"),
+        (httpx.ReadError, "read_error"),
+        (httpx.PoolTimeout, "pool_timeout"),
+        (httpx.RemoteProtocolError, "protocol_error"),
+    ],
+)
+async def test_upload_transport_categories_never_leak_or_retry(kind, category, caplog):
+    calls = []
+    url = f"https://pu.vk.com/private-path?secret={CAPABILITY}"
+
+    def api(request):
+        calls.append("server")
+        return httpx.Response(
+            200, json={"response": {"upload_url": url, "album_id": 1, "user_id": 1}}
+        )
+
+    def upload(request):
+        calls.append("multipart")
+        assert request.method == "POST"
+        assert b'name="photo"; filename="upload.jpg"' in request.content
+        assert b"Content-Type: image/jpeg" in request.content
+        assert "authorization" not in request.headers and "cookie" not in request.headers
+        assert TOKEN.encode() not in request.content
+        raise kind(f"{TOKEN} {url}", request=request)
+
+    async with (
+        VKClient(
+            Settings(_env_file=None, vk_write_enabled=True, vk_max_attempts=3),
+            transport=httpx.MockTransport(api),
+            limiter=NoWaitLimiter(),
+        ) as client,
+        WallPhotoUploader(client, transport=httpx.MockTransport(upload)) as uploader,
+    ):
+        with pytest.raises(VKTransportError) as error:
+            await uploader.upload(
+                b"\xff\xd8\xffjpeg", community_id=123, account_id=ACCOUNT, access_token=TOKEN
+            )
+    detail = error.value.as_dict()
+    assert detail["transport_category"] == category
+    assert detail["exception_type"] == kind.__name__
+    assert detail["stage"] == "multipart" and detail["upload_host"] == "pu.vk.com"
+    assert error.value.__context__ is None and error.value.__cause__ is None
+    for private in (TOKEN, CAPABILITY, url, "private-path", "secret="):
+        assert (
+            private not in json.dumps(detail)
+            and private not in str(error.value)
+            and private not in caplog.text
+        )
+    assert calls == ["server", "multipart"]  # No save and no automatic retry.
+
+
+@pytest.mark.parametrize(
+    "cause_name,expected",
+    [("dns", "dns"), ("certificate", "tls_certificate"), ("route", "network_unreachable")],
+)
+def test_upload_transport_cause_metadata_is_fixed(cause_name, expected):
+    import errno
+    import socket
+    import ssl
+
+    from dropgrid.integrations.vk.photos import upload_transport_error
+
+    causes = {
+        "dns": socket.gaierror(-2, CAPABILITY),
+        "certificate": ssl.SSLCertVerificationError(1, CAPABILITY),
+        "route": OSError(errno.ENETUNREACH, CAPABILITY),
+    }
+    original = httpx.ConnectError(TOKEN)
+    original.__cause__ = causes[cause_name]
+    safe = upload_transport_error(original, f"https://pu.vk.com/upload?secret={CAPABILITY}")
+    assert safe.as_dict()["cause_category"] == expected
+    assert TOKEN not in str(safe.as_dict()) and CAPABILITY not in str(safe.as_dict())
+
+
+async def test_upload_read_timeout_is_separate_from_api_and_other_phases():
+    config = Settings(
+        _env_file=None, vk_write_enabled=True, vk_timeout_seconds=10, vk_upload_timeout_seconds=37
+    )
+    calls = []
+
+    def api(request):
+        calls.append(request.url.path)
+        assert request.extensions["timeout"]["read"] == 10
+        if request.url.path.endswith("getWallUploadServer"):
+            data = {"upload_url": "https://pu.vk.com/upload", "album_id": 1, "user_id": 1}
+        else:
+            data = [{"id": 456, "owner_id": 1}]
+        return httpx.Response(200, json={"response": data})
+
+    def upload(request):
+        assert request.extensions["timeout"] == {"connect": 10, "read": 37, "write": 10, "pool": 10}
+        return httpx.Response(200, json={"server": 1, "photo": "uploaded", "hash": "hash"})
+
+    async with (
+        VKClient(config, transport=httpx.MockTransport(api), limiter=NoWaitLimiter()) as client,
+        WallPhotoUploader(client, transport=httpx.MockTransport(upload)) as uploader,
+    ):
+        await uploader.upload(PNG, community_id=123, account_id=ACCOUNT, access_token=TOKEN)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("kind", ["read", "write"])
+def test_nonblocking_ssl_wait_is_not_tls_failure(kind):
+    import ssl
+
+    from dropgrid.integrations.vk.photos import upload_transport_error
+
+    original = httpx.ReadTimeout(TOKEN)
+    original.__context__ = (ssl.SSLWantReadError if kind == "read" else ssl.SSLWantWriteError)(
+        2, CAPABILITY
+    )
+    detail = upload_transport_error(original, "https://pu.vk.com/upload").as_dict()
+    assert (
+        detail["transport_category"] == "read_timeout" and detail["cause_category"] == "unavailable"
+    )
