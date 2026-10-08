@@ -25,6 +25,8 @@ from dropgrid.integrations.vk.errors import (
 from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
 from dropgrid.photos.engine import PhotoEngine
+from dropgrid.photos.reference_routes import router as reference_router
+from dropgrid.photos.references import CommunityReferenceCollector
 from dropgrid.photos.routes import router as photo_router
 from dropgrid.services.catalog import ConflictError, InvalidGridError, NotFoundError
 
@@ -44,6 +46,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.database.sessions, app.state.token_cipher
         )
         app.state.photo_engine = PhotoEngine(config, app.state.database)
+        photo_engine = app.state.photo_engine
+        app.state.reference_collector = CommunityReferenceCollector(
+            app.state.database.sessions,
+            app.state.vk_client,
+            app.state.token_provider,
+            photo_engine.reference_downloader,
+            photo_engine.reference_storage,
+            photo_engine.embedder,
+        )
         try:
             yield
         finally:
@@ -60,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(router)
     app.include_router(photo_router)
+    app.include_router(reference_router)
 
     @app.get("/health")
     async def health(db: Annotated[Database, Depends(database)]) -> JSONResponse:

@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { AccountsPage, CommunitiesPage, DashboardPage } from "./catalog";
 import { GridDetailPage, GridImportPage, GridsPage } from "./grids";
 import { MediaPage } from "./media";
+import { CommunityDetailPage } from "./community";
 import {
   CampaignDetailPage,
   CampaignNewPage,
@@ -58,6 +59,7 @@ export function App() {
           <Route path="/campaigns/:id" element={<CampaignDetailPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/communities" element={<CommunitiesPage />} />
+          <Route path="/communities/:id" element={<CommunityDetailPage />} />
           <Route path="/media" element={<MediaPage />} />
           <Route
             path="*"

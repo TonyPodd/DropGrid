@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     photo_search_cache_hours: int = Field(default=24, ge=24, le=168)
     photo_download_concurrency: int = Field(default=4, ge=1, le=6)
     photo_download_spare: int = Field(default=3, ge=0, le=5)
+    visual_embedding_enabled: bool = False
+    visual_model_path: Path = Path("models/clip-vision-int8.onnx")
 
     @field_validator("media_storage_dir", mode="before")
     @classmethod

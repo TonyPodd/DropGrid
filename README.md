@@ -11,6 +11,10 @@ See [Photo Engine](docs/photo-engine.md) for policy, API, provider/license
 requirements and tests. Docker's `media_data` volume survives ordinary `down`;
 `down -v` deletes it intentionally. A complete backup requires both DB and media.
 
+[Community Visual References](docs/community-visual-references.md) adds bounded
+read-only VK style analysis and optional CPU similarity ranking. Community details
+provide a manual profile, reference thumbnails and category/community preview.
+
 DropGrid — фундамент системы управления кампаниями размещения контента в сообществах VK.
 Сейчас это локальный development stack без автоматической отправки кампаний и без
 аутентификации DropGrid. VK write diagnostics выключены по умолчанию.

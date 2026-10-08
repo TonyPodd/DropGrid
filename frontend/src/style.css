@@ -531,3 +531,12 @@ tbody tr:hover {
 .token-dialog button {
   margin-right: 0.5rem;
 }
+
+.reference-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}
+.reference-grid figure { margin: 0; }
+.reference-grid img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; }
+.reference-grid figcaption { font-size: .85rem; overflow-wrap: anywhere; }

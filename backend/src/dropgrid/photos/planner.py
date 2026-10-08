@@ -39,6 +39,8 @@ from dropgrid.photos.domain import (
 from dropgrid.photos.download import PhotoDownloader
 from dropgrid.photos.images import MediaStorage, normalize_image
 from dropgrid.photos.schemas import CategoryPlanRead, MediaPlanInput, MediaPlanRead
+from dropgrid.photos.visual import serialize_embedding
+from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.campaigns import locked_campaign
 from dropgrid.services.catalog import ConflictError
 
@@ -51,6 +53,7 @@ def assign_assets(
     counts: Counter[UUID],
     reuse: int,
     pending: Counter[UUID],
+    visual_scores: dict[UUID, dict[UUID, float]] | None = None,
 ) -> dict[UUID, UUID]:
     """Unique first, balanced reuse, creator/history/current-reference penalties."""
     assigned: dict[UUID, UUID] = {}
@@ -64,6 +67,9 @@ def assign_assets(
             available,
             key=lambda a: (
                 counts[a.id],
+                -(visual_scores[submission].get(a.id, 0))
+                if visual_scores and submission in visual_scores
+                else 0,
                 a.id == previous,
                 creators[a.creator_name or ""],
                 a.usage_count * 0.5 + pending[a.id] * 0.25 + (1 if a.last_used_at else 0),
@@ -88,10 +94,12 @@ class CampaignMediaPlanner:
         storage: MediaStorage,
         settings: Settings,
         policy: PhotoPolicy | None = None,
+        visual: VisualLibrary | None = None,
     ) -> None:
         self.sessions, self.cache, self.downloader = sessions, cache, downloader
         self.storage, self.settings = storage, settings
         self.policy = policy or PhotoPolicy()
+        self.visual = visual
         self.dedup = Deduplicator(self.policy.hamming_threshold)
         self.builder, self.ranker = PhotoQueryBuilder(), PhotoRanker()
         self.semaphore = asyncio.Semaphore(settings.photo_download_concurrency)
@@ -142,6 +150,13 @@ class CampaignMediaPlanner:
                 )
                 data = await self.downloader.download(candidate.candidate_download_url)
                 image = await asyncio.to_thread(normalize_image, data, self.policy)
+                embedding = None
+                embedding_warning = None
+                if self.visual and self.visual.embedder:
+                    try:
+                        embedding = await self.visual.embedder.embed_image(image.data)
+                    except PhotoError as exc:
+                        embedding_warning = exc.code
                 async with self.sessions() as session, session.begin():
                     # Global import lock handles perceptual/provider/SHA races across campaigns.
                     await session.execute(text("SELECT pg_advisory_xact_lock(748220102)"))
@@ -236,7 +251,11 @@ class CampaignMediaPlanner:
                         )
                         .on_conflict_do_nothing()
                     )
-                    return asset, created, None
+                    if embedding and asset.sha256 == image.sha256 and not asset.visual_embedding:
+                        asset.visual_embedding = serialize_embedding(embedding)
+                        asset.visual_embedding_model = embedding.model
+                        asset.visual_embedding_dimensions = embedding.dimensions
+                    return asset, created, embedding_warning
             except PhotoError as exc:
                 return None, False, exc.code
             except OSError:
@@ -458,6 +477,30 @@ class CampaignMediaPlanner:
         except TimeoutError:
             for category in categories.values():
                 category.warnings.append("planning_timeout")
+        visual_scores: dict[UUID, dict[UUID, float]] = {}
+        if self.visual and self.visual.embedder:
+            communities = {s.id: s.community_id for s, _ in rows}
+            for category, submission_ids in groups.items():
+                scores_by_community: dict[UUID, dict[UUID, float]] = {}
+                for sid in submission_ids:
+                    community_id = communities[sid]
+                    if community_id not in scores_by_community:
+                        try:
+                            async with asyncio.timeout(self.policy.plan_timeout_seconds):
+                                ranked_assets = await self.visual.rank_assets(
+                                    community_id, available.get(category, []), category
+                                )
+                            scores_by_community[community_id] = (
+                                {aid: score.final_score for aid, score in ranked_assets.items()}
+                                if ranked_assets
+                                and all(s.visual_score is not None for s in ranked_assets.values())
+                                else {}
+                            )
+                        except TimeoutError:
+                            categories[category].warnings.append("visual_ranking_timeout")
+                            scores_by_community[community_id] = {}
+                    if scores_by_community[community_id]:
+                        visual_scores[sid] = scores_by_community[community_id]
         # Re-read and lock lifecycle, categories, assignments and lease before changing references.
         async with self.sessions() as session, session.begin():
             campaign = await locked_campaign(session, campaign_id)
@@ -522,6 +565,7 @@ class CampaignMediaPlanner:
                         counts,
                         reuse,
                         pending,
+                        visual_scores,
                     )
                 )
             for submission in current:

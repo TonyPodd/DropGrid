@@ -3,8 +3,9 @@
 import asyncio
 import ipaddress
 import socket
-from collections.abc import Awaitable, Callable
-from urllib.parse import urljoin, urlsplit
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 
@@ -39,11 +40,16 @@ def validate_url(url: str, policy: PhotoPolicy) -> str:
         host = parsed.hostname or ""
         if (
             parsed.scheme != "https"
-            or host not in policy.trusted_hosts
+            or not policy.trusted_host(host)
             or parsed.port not in (None, 443)
             or parsed.username
             or parsed.password
             or parsed.fragment
+            or len(url) > 8192
+            or any(
+                k.lower() in {"access_token", "token", "authorization"}
+                for k in parse_qs(parsed.query)
+            )
         ):
             raise PhotoError("download_destination_rejected")
         return host
@@ -67,6 +73,8 @@ class PinnedPhotoTransport(httpx.AsyncBaseTransport):
         }
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if "authorization" in request.headers or "cookie" in request.headers:
+            raise PhotoError("download_credentials_rejected")
         host = validate_url(str(request.url), self.policy)
         addresses = await public_addresses(host, self.resolver)
         request.headers["host"] = host
@@ -77,6 +85,8 @@ class PinnedPhotoTransport(httpx.AsyncBaseTransport):
             stream=request.stream,
             extensions={**request.extensions, "sni_hostname": host},
         )
+        if host not in self.pools:
+            self.pools[host] = httpx.AsyncHTTPTransport(retries=0, trust_env=False)
         return await self.pools[host].handle_async_request(pinned)
 
     async def aclose(self) -> None:
@@ -90,13 +100,26 @@ class PhotoDownloader:
     ) -> None:
         self.client, self.policy, self.resolver = client, policy, resolver
 
+    @asynccontextmanager
+    async def _stream(self, url: str) -> AsyncIterator[httpx.Response]:
+        # A CDN may set cookies. Never replay them, even on the next download or
+        # redirect; building a request normally merges the client's cookie jar.
+        request = self.client.build_request("GET", url)
+        request.headers.pop("Cookie", None)
+        request.headers.pop("Authorization", None)
+        response = await self.client.send(request, stream=True, follow_redirects=False, auth=None)
+        try:
+            yield response
+        finally:
+            await response.aclose()
+
     async def download(self, url: str) -> bytes:
         try:
             async with asyncio.timeout(self.policy.timeout_seconds):
                 for redirect in range(self.policy.max_redirects + 1):
                     host = validate_url(url, self.policy)
                     await public_addresses(host, self.resolver)
-                    async with self.client.stream("GET", url, follow_redirects=False) as response:
+                    async with self._stream(url) as response:
                         if response.status_code in {301, 302, 303, 307, 308}:
                             if (
                                 redirect == self.policy.max_redirects

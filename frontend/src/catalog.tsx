@@ -171,7 +171,7 @@ export function CommunitiesPage() {
               <tbody>
                 {state.data.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.domain}</td>
+                    <td><Link to={`/communities/${c.id}`}>{c.domain}</Link></td>
                     <td>{c.name ?? "—"}</td>
                     <td>{categoryName(c.category)}</td>
                     <td>{c.vk_group_id ?? "—"}</td>

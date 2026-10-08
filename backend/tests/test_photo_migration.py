@@ -51,7 +51,9 @@ async def test_upgrade_keeps_legacy_media(database_url):
                 await conn.execute(
                     text(
                         "SELECT id,storage_key,category,tags,usage_count,sha256,provider,"
-                        "requires_publication_attribution FROM media_assets ORDER BY id"
+                        "requires_publication_attribution,visual_embedding,"
+                        "visual_embedding_model,visual_embedding_dimensions "
+                        "FROM media_assets ORDER BY id"
                     )
                 )
             ).all()
@@ -65,6 +67,9 @@ async def test_upgrade_keeps_legacy_media(database_url):
                 and r.sha256 is None
                 and r.provider is None
                 and not r.requires_publication_attribution
+                and r.visual_embedding is None
+                and r.visual_embedding_model is None
+                and r.visual_embedding_dimensions is None
                 for r in rows
             )
     finally:

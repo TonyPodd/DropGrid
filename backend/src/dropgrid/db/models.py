@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CHAR,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Text,
@@ -122,6 +124,57 @@ class MediaAsset(Identity, Base):
     byte_size: Mapped[int | None] = mapped_column(Integer)
     sha256: Mapped[str | None] = mapped_column(String(64))
     perceptual_hash: Mapped[str | None] = mapped_column(String(16), index=True)
+    visual_embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    visual_embedding_model: Mapped[str | None] = mapped_column(String(200))
+    visual_embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
+
+
+class CommunityContentProfile(Updated, Base):
+    __tablename__ = "community_content_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "reference_target_count > 0 AND reference_target_count <= 300", name="target_bound"
+        ),
+        CheckConstraint("archive_reuse_min_age_days >= 0", name="reuse_age_nonnegative"),
+    )
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"), primary_key=True)
+    desired_content: Mapped[str | None] = mapped_column(Text)
+    avoid_content: Mapped[str | None] = mapped_column(Text)
+    style_notes: Mapped[str | None] = mapped_column(Text)
+    reference_target_count: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    archive_reuse_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    archive_reuse_min_age_days: Mapped[int] = mapped_column(
+        Integer, default=180, server_default="180"
+    )
+    references_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sync_lease_token: Mapped[UUID | None] = mapped_column()
+    sync_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CommunityReferencePhoto(Identity, Base):
+    __tablename__ = "community_reference_photos"
+    __table_args__ = (
+        UniqueConstraint(
+            "community_id", "vk_photo_owner_id", "vk_photo_id", name="uq_community_reference_photo"
+        ),
+        Index("ix_community_reference_photos_posted_at", "community_id", "posted_at"),
+    )
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"), index=True)
+    vk_post_id: Mapped[int] = mapped_column(BigInteger)
+    vk_photo_owner_id: Mapped[int] = mapped_column(BigInteger)
+    vk_photo_id: Mapped[int] = mapped_column(BigInteger)
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_url: Mapped[str | None] = mapped_column(Text)
+    storage_key: Mapped[str | None] = mapped_column(Text)
+    sha256: Mapped[str | None] = mapped_column(CHAR(64))
+    perceptual_hash: Mapped[str | None] = mapped_column(String(16))
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    embedding_model: Mapped[str | None] = mapped_column(String(200))
+    embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
+    reuse_eligible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class PhotoSearchCache(Base):

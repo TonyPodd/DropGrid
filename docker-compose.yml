@@ -3,6 +3,8 @@ x-backend: &backend
   build:
     context: .
     dockerfile: docker/backend.Dockerfile
+    args:
+      INSTALL_VISUAL: ${INSTALL_VISUAL:-false}
   environment: &backend-env
     APP_ENV: ${APP_ENV:-development}
     APP_SECRET_KEY: ${APP_SECRET_KEY:-}
@@ -53,6 +55,8 @@ services:
       VK_TEST_ACCESS_TOKEN: ${VK_TEST_ACCESS_TOKEN:-}
       PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
       MEDIA_STORAGE_DIR: /app/media
+      VISUAL_EMBEDDING_ENABLED: ${VISUAL_EMBEDDING_ENABLED:-false}
+      VISUAL_MODEL_PATH: ${VISUAL_MODEL_PATH:-/app/media/models/clip-vision-int8.onnx}
       PHOTO_MAX_REUSE_PER_ASSET: ${PHOTO_MAX_REUSE_PER_ASSET:-3}
       PHOTO_SEARCH_CACHE_HOURS: ${PHOTO_SEARCH_CACHE_HOURS:-24}
       PHOTO_DOWNLOAD_CONCURRENCY: ${PHOTO_DOWNLOAD_CONCURRENCY:-4}

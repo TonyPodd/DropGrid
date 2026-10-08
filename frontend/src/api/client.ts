@@ -3,6 +3,8 @@ const baseUrl = (
 ).replace(/\/$/, "");
 export const mediaContentUrl = (id: string) =>
   `${baseUrl}/api/v1/media-assets/${encodeURIComponent(id)}/content`;
+export const referenceContentUrl = (communityId: string, id: string) =>
+  `${baseUrl}/api/v1/communities/${encodeURIComponent(communityId)}/references/${encodeURIComponent(id)}/content`;
 export class ApiError extends Error {
   constructor(
     public status: number,

@@ -1,0 +1,110 @@
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import FileResponse
+from sqlalchemy import func, select
+
+from dropgrid.api.dependencies import Session
+from dropgrid.db.models import Community, CommunityReferencePhoto
+from dropgrid.photos.domain import PhotoError
+from dropgrid.photos.preview import photo_preview
+from dropgrid.photos.reference_schemas import (
+    PhotoPreviewInput,
+    PhotoPreviewRead,
+    ProfileInput,
+    ProfileRead,
+    ReferencePage,
+    ReferenceRead,
+    ReferenceSyncInput,
+    ReferenceSyncRead,
+)
+from dropgrid.photos.references import CommunityReferenceCollector, profile_read, profile_save
+from dropgrid.photos.routes import Engine
+from dropgrid.services.catalog import NotFoundError, get_entity
+
+router = APIRouter(prefix="/api/v1")
+
+
+def collector(request: Request) -> CommunityReferenceCollector:
+    value: CommunityReferenceCollector = request.app.state.reference_collector
+    return value
+
+
+Collector = Annotated[CommunityReferenceCollector, Depends(collector)]
+
+
+@router.get("/communities/{community_id}/content-profile", response_model=ProfileRead)
+async def get_profile(community_id: UUID, session: Session) -> ProfileRead:
+    return await profile_read(session, community_id)
+
+
+@router.put("/communities/{community_id}/content-profile", response_model=ProfileRead)
+async def put_profile(community_id: UUID, data: ProfileInput, session: Session) -> ProfileRead:
+    return await profile_save(session, community_id, data)
+
+
+@router.post("/communities/{community_id}/references/sync", response_model=ReferenceSyncRead)
+async def sync_references(
+    community_id: UUID, service: Collector, data: ReferenceSyncInput | None = None
+) -> ReferenceSyncRead:
+    values = data or ReferenceSyncInput()
+    return await service.sync(community_id, values.account_id, values.target_count)
+
+
+@router.get("/communities/{community_id}/references", response_model=ReferencePage)
+async def reference_list(
+    community_id: UUID,
+    session: Session,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> ReferencePage:
+    await get_entity(session, Community, community_id)
+    query = select(CommunityReferencePhoto).where(
+        CommunityReferencePhoto.community_id == community_id
+    )
+    total = await session.scalar(select(func.count()).select_from(query.subquery()))
+    rows = (
+        await session.scalars(
+            query.order_by(CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id)
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+    ).all()
+    return ReferencePage(
+        items=[ReferenceRead.model_validate(row) for row in rows],
+        total=total or 0,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/communities/{community_id}/references/{reference_id}/content")
+async def reference_content(
+    community_id: UUID, reference_id: UUID, session: Session, engine: Engine
+) -> FileResponse:
+    row = await session.get(CommunityReferencePhoto, reference_id)
+    if row is None:
+        raise NotFoundError("Reference content not found")
+    if row.community_id != community_id or not row.storage_key:
+        raise NotFoundError("Reference content not found")
+    try:
+        path = engine.reference_storage.path(row.storage_key)
+        if not path.is_file():
+            raise NotFoundError("Reference content not found")
+    except PhotoError:
+        raise NotFoundError("Reference content not found") from None
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.post("/communities/{community_id}/photo-preview", response_model=PhotoPreviewRead)
+async def preview_photos(
+    community_id: UUID, engine: Engine, data: PhotoPreviewInput | None = None
+) -> PhotoPreviewRead:
+    return await photo_preview(
+        engine.planner, engine.visual, community_id, data or PhotoPreviewInput()
+    )

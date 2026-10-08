@@ -160,6 +160,9 @@ class PhotoPolicy:
     plan_timeout_seconds: float = 300
     trusted_hosts: frozenset[str] = frozenset({"pixabay.com", "cdn.pixabay.com"})
 
+    def trusted_host(self, host: str) -> bool:
+        return host in self.trusted_hosts
+
     def dimensions_allowed(self, width: int, height: int) -> bool:
         return (
             min(width, height) >= self.min_short_side

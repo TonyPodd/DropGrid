@@ -356,6 +356,38 @@ class VKClient:
         )
         return parse_response(TypeAdapter(WallPosts), data["response"], "wall.get")
 
+    async def get_community_wall_history(
+        self,
+        group_id: int,
+        *,
+        access_token: str | SecretStr,
+        account_id: UUID,
+        count: int = 100,
+        offset: int = 0,
+    ) -> WallPosts:
+        if (
+            type(group_id) is not int
+            or not 0 < group_id <= 2**63 - 1
+            or type(count) is not int
+            or not 1 <= count <= 100
+            or type(offset) is not int
+            or offset < 0
+        ):
+            raise VKInputError("wall.get", "Invalid community wall history request")
+        data = await self.call(
+            "wall.get",
+            access_token=access_token,
+            account_id=account_id,
+            params={
+                "owner_id": -group_id,
+                "filter": "owner",
+                "count": count,
+                "offset": offset,
+                "extended": 0,
+            },
+        )
+        return parse_response(TypeAdapter(WallPosts), data["response"], "wall.get")
+
     async def get_wall_post_by_id(
         self, owner_id: int, post_id: int, *, access_token: str | SecretStr, account_id: UUID
     ) -> WallPostsById:

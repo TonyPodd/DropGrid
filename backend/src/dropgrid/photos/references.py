@@ -1,0 +1,400 @@
+"""Bounded read-only VK photo-reference collection, separate from candidate media."""
+
+import asyncio
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from dropgrid.db.models import (
+    Account,
+    Community,
+    CommunityContentProfile,
+    CommunityReferencePhoto,
+    utcnow,
+)
+from dropgrid.domain.enums import AccountStatus
+from dropgrid.integrations.vk.client import VKClient
+from dropgrid.integrations.vk.credentials import TokenProvider
+from dropgrid.integrations.vk.errors import VKError
+from dropgrid.photos.domain import PhotoError, PhotoPolicy
+from dropgrid.photos.download import PhotoDownloader, validate_url
+from dropgrid.photos.images import LocalMediaStorage, normalize_image
+from dropgrid.photos.reference_schemas import ProfileInput, ProfileRead, ReferenceSyncRead
+from dropgrid.photos.visual import VisualEmbedder, deserialize_embedding, serialize_embedding
+from dropgrid.services.catalog import ConflictError, get_entity
+
+MAX_SCANNED_POSTS = 400
+SYNC_TIMEOUT_SECONDS = 300
+
+
+@dataclass(frozen=True)
+class VKReferencePolicy(PhotoPolicy):
+    min_short_side: int = 128
+    max_aspect_ratio: float = 20
+    trusted_hosts: frozenset[str] = frozenset(
+        {"userapi.com", "vkuserphoto.ru", "vkuserphoto.com", "vk-cdn.net"}
+    )
+
+    def trusted_host(self, host: str) -> bool:
+        return any(host == root or host.endswith("." + root) for root in self.trusted_hosts)
+
+
+def eligible_for_archive_reuse(
+    posted_at: datetime, now: datetime, min_age_days: int, policy_enabled: bool, valid: bool = True
+) -> bool:
+    if (
+        not policy_enabled
+        or not valid
+        or type(min_age_days) is not int
+        or min_age_days < 0
+        or posted_at.tzinfo is None
+        or now.tzinfo is None
+        or posted_at > now
+    ):
+        return False
+    return (now - posted_at).total_seconds() / 86400 >= min_age_days
+
+
+async def profile_read(session: AsyncSession, community_id: UUID) -> ProfileRead:
+    await get_entity(session, Community, community_id)
+    profile = await session.get(CommunityContentProfile, community_id)
+    from sqlalchemy import func
+
+    count = await session.scalar(
+        select(func.count())
+        .select_from(CommunityReferencePhoto)
+        .where(CommunityReferencePhoto.community_id == community_id)
+    )
+    data = (
+        ProfileRead.model_validate(profile) if profile else ProfileRead(community_id=community_id)
+    )
+    return data.model_copy(update={"reference_count": count or 0})
+
+
+async def profile_save(
+    session: AsyncSession, community_id: UUID, data: ProfileInput
+) -> ProfileRead:
+    await get_entity(session, Community, community_id)
+    await session.execute(
+        insert(CommunityContentProfile)
+        .values(community_id=community_id, **data.model_dump())
+        .on_conflict_do_update(
+            index_elements=["community_id"], set_={**data.model_dump(), "updated_at": utcnow()}
+        )
+    )
+    await session.flush()
+    # Recompute eligibility when policy changes; no conversion/republication.
+    rows = (
+        await session.scalars(
+            select(CommunityReferencePhoto).where(
+                CommunityReferencePhoto.community_id == community_id
+            )
+        )
+    ).all()
+    for row in rows:
+        row.reuse_eligible = eligible_for_archive_reuse(
+            row.posted_at,
+            utcnow(),
+            data.archive_reuse_min_age_days,
+            data.archive_reuse_enabled,
+            bool(row.storage_key and row.sha256),
+        )
+    return await profile_read(session, community_id)
+
+
+@dataclass(frozen=True)
+class ExtractedPhoto:
+    post_id: int
+    owner_id: int
+    photo_id: int
+    posted_at: datetime
+    url: str
+
+
+def representative_photo(
+    post: dict[str, object], group: int, policy: PhotoPolicy
+) -> ExtractedPhoto | None:
+    if (
+        post.get("owner_id") != -group
+        or post.get("from_id") != -group
+        or post.get("post_type") != "post"
+        or post.get("copy_history")
+    ):
+        return None
+    identity, date = post.get("id"), post.get("date")
+    if type(identity) is not int or identity <= 0 or type(date) is not int or date <= 0:
+        return None
+    try:
+        posted_at = datetime.fromtimestamp(date, UTC)
+    except (ValueError, OverflowError, OSError):
+        return None
+    raw = post.get("attachments")
+    if not isinstance(raw, list):
+        return None
+    for attachment in raw:
+        if not isinstance(attachment, dict) or attachment.get("type") != "photo":
+            continue
+        photo = attachment.get("photo")
+        if not isinstance(photo, dict):
+            continue
+        owner, pid = photo.get("owner_id"), photo.get("id")
+        if type(owner) is not int or owner == 0 or type(pid) is not int or pid <= 0:
+            continue
+        sizes = photo.get("sizes")
+        if not isinstance(sizes, list):
+            continue
+        valid = []
+        for size in sizes:
+            if not isinstance(size, dict):
+                continue
+            w, h, url = size.get("width"), size.get("height"), size.get("url")
+            if (
+                type(w) is not int
+                or type(h) is not int
+                or w <= 0
+                or h <= 0
+                or w * h > policy.max_pixels
+                or not policy.dimensions_allowed(w, h)
+                or not isinstance(url, str)
+            ):
+                continue
+            try:
+                validate_url(url, policy)
+            except PhotoError:
+                continue
+            valid.append((w * h, w, h, url))
+        if valid:
+            # Primary attachment, largest suitable size; URL tie-break stays in memory.
+            return ExtractedPhoto(identity, owner, pid, posted_at, max(valid)[3])
+    return None
+
+
+class CommunityReferenceCollector:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        client: VKClient,
+        tokens: TokenProvider,
+        downloader: PhotoDownloader,
+        storage: LocalMediaStorage,
+        embedder: VisualEmbedder | None,
+    ) -> None:
+        self.sessions, self.client, self.tokens = sessions, client, tokens
+        self.downloader, self.storage, self.embedder = downloader, storage, embedder
+        self.policy = VKReferencePolicy()
+
+    async def _embed_existing(self, row: CommunityReferencePhoto) -> bool:
+        if self.embedder is None or not row.storage_key:
+            return False
+        if (
+            row.embedding
+            and row.embedding_model == self.embedder.model
+            and row.embedding_dimensions == self.embedder.dimensions
+        ):
+            try:
+                deserialize_embedding(row.embedding, row.embedding_model, row.embedding_dimensions)
+                return False
+            except PhotoError:
+                pass
+        import hashlib
+
+        path = self.storage.path(row.storage_key)
+        if not path.is_file():
+            raise PhotoError("reference_file_unavailable")
+        if path.stat().st_size > self.policy.max_input_bytes:
+            raise PhotoError("image_too_large")
+        data = await asyncio.to_thread(path.read_bytes)
+        if hashlib.sha256(data).hexdigest() != row.sha256:
+            raise PhotoError("reference_file_unavailable")
+        embedding = await self.embedder.embed_image(data)
+        async with self.sessions() as session, session.begin():
+            fresh = await session.get(CommunityReferencePhoto, row.id, with_for_update=True)
+            if fresh and fresh.sha256 == row.sha256:
+                fresh.embedding = serialize_embedding(embedding)
+                fresh.embedding_model, fresh.embedding_dimensions = (
+                    embedding.model,
+                    embedding.dimensions,
+                )
+        return True
+
+    async def sync(
+        self, community_id: UUID, account_id: UUID | None = None, target_count: int | None = None
+    ) -> ReferenceSyncRead:
+        lease = uuid4()
+        report = ReferenceSyncRead()
+        finished = False
+        async with self.sessions() as session, session.begin():
+            community = await get_entity(session, Community, community_id)
+            if not community.vk_group_id or not community.is_active:
+                raise ConflictError("Resolve an active Community first")
+            group = community.vk_group_id
+            await session.execute(
+                insert(CommunityContentProfile)
+                .values(community_id=community_id)
+                .on_conflict_do_nothing()
+            )
+            profile = await session.get(CommunityContentProfile, community_id, with_for_update=True)
+            assert profile is not None
+            if profile.sync_lease_until and profile.sync_lease_until > utcnow():
+                raise ConflictError("Reference sync already running")
+            profile.sync_lease_token, profile.sync_lease_until = (
+                lease,
+                utcnow() + timedelta(minutes=6),
+            )
+            target = target_count if target_count is not None else profile.reference_target_count
+            if type(target) is not int or not 1 <= target <= 300:
+                raise ConflictError("Invalid reference target")
+            enabled, age = profile.archive_reuse_enabled, profile.archive_reuse_min_age_days
+            query = (
+                select(Account.id)
+                .where(
+                    Account.status == AccountStatus.active,
+                    Account.vk_user_id.is_not(None),
+                    Account.encrypted_access_token.is_not(None),
+                )
+                .order_by(Account.created_at, Account.id)
+            )
+            if account_id:
+                query = query.where(Account.id == account_id)
+            aid = await session.scalar(query.limit(1))
+        seen: set[tuple[int, int]] = set()
+        offset = 0
+        try:
+            if aid is None:
+                report.warnings.append("vk_credentials_unavailable")
+                return report
+            token = await self.tokens.get_token(aid)
+            async with asyncio.timeout(SYNC_TIMEOUT_SECONDS):
+                while report.posts_scanned < MAX_SCANNED_POSTS and len(seen) < target:
+                    page = await self.client.get_community_wall_history(
+                        group,
+                        access_token=token,
+                        account_id=aid,
+                        count=min(100, MAX_SCANNED_POSTS - report.posts_scanned),
+                        offset=offset,
+                    )
+                    if not page.items:
+                        finished = True
+                        break
+                    for post in page.items[: MAX_SCANNED_POSTS - report.posts_scanned]:
+                        report.posts_scanned += 1
+                        offset += 1
+                        photo = representative_photo(post, group, self.policy)
+                        if not photo:
+                            continue
+                        identity = (photo.owner_id, photo.photo_id)
+                        if identity in seen:
+                            continue
+                        report.photo_posts_found += 1
+                        async with self.sessions() as session:
+                            existing = await session.scalar(
+                                select(CommunityReferencePhoto).where(
+                                    CommunityReferencePhoto.community_id == community_id,
+                                    CommunityReferencePhoto.vk_photo_owner_id == photo.owner_id,
+                                    CommunityReferencePhoto.vk_photo_id == photo.photo_id,
+                                )
+                            )
+                        if existing:
+                            report.references_existing += 1
+                            seen.add(identity)
+                            try:
+                                report.references_embedded += int(
+                                    await self._embed_existing(existing)
+                                )
+                            except PhotoError as e:
+                                report.warnings.append(e.code)
+                        else:
+                            try:
+                                raw = await self.downloader.download(photo.url)
+                                image = await asyncio.to_thread(normalize_image, raw, self.policy)
+                                key = await asyncio.to_thread(self.storage.write, image)
+                                report.downloads_succeeded += 1
+                                embedding = None
+                                if self.embedder:
+                                    try:
+                                        embedding = await self.embedder.embed_image(image.data)
+                                    except PhotoError as e:
+                                        report.warnings.append(e.code)
+                                async with self.sessions() as session, session.begin():
+                                    p = await session.get(
+                                        CommunityContentProfile, community_id, with_for_update=True
+                                    )
+                                    if (
+                                        not p
+                                        or p.sync_lease_token != lease
+                                        or p.sync_lease_until is None
+                                        or p.sync_lease_until <= utcnow()
+                                    ):
+                                        raise ConflictError("Reference sync lease expired")
+                                    session.add(
+                                        CommunityReferencePhoto(
+                                            community_id=community_id,
+                                            vk_post_id=photo.post_id,
+                                            vk_photo_owner_id=photo.owner_id,
+                                            vk_photo_id=photo.photo_id,
+                                            posted_at=photo.posted_at,
+                                            source_url=photo.url,
+                                            storage_key=key,
+                                            sha256=image.sha256,
+                                            perceptual_hash=image.perceptual_hash,
+                                            embedding=serialize_embedding(embedding)
+                                            if embedding
+                                            else None,
+                                            embedding_model=embedding.model if embedding else None,
+                                            embedding_dimensions=embedding.dimensions
+                                            if embedding
+                                            else None,
+                                            reuse_eligible=eligible_for_archive_reuse(
+                                                photo.posted_at, utcnow(), age, enabled
+                                            ),
+                                        )
+                                    )
+                                report.references_created += 1
+                                report.references_embedded += int(embedding is not None)
+                                seen.add(identity)
+                            except PhotoError as e:
+                                report.warnings.append(e.code)
+                            except OSError:
+                                report.warnings.append("reference_storage_unavailable")
+                        if len(seen) >= target:
+                            finished = True
+                            break
+                    if len(seen) >= target or offset >= page.count:
+                        finished = True
+                        break
+                if report.posts_scanned >= MAX_SCANNED_POSTS:
+                    report.warnings.append("scan_bound_reached")
+        except VKError as e:
+            report.warnings.append("vk_read_" + type(e).__name__)
+        except TimeoutError:
+            report.warnings.append("sync_timeout")
+        finally:
+            async with self.sessions() as session, session.begin():
+                profile = await session.get(
+                    CommunityContentProfile, community_id, with_for_update=True
+                )
+                if profile and profile.sync_lease_token == lease:
+                    if finished:
+                        profile.references_last_synced_at = utcnow()
+                    profile.sync_lease_token = profile.sync_lease_until = None
+            if self.embedder is None:
+                report.warnings.append("visual_embedding_disabled")
+            report.warnings = sorted(set(report.warnings))
+        return report
+
+    async def backfill(self, community_id: UUID) -> int:
+        async with self.sessions() as session:
+            await get_entity(session, Community, community_id)
+            rows = (
+                await session.scalars(
+                    select(CommunityReferencePhoto)
+                    .where(CommunityReferencePhoto.community_id == community_id)
+                    .order_by(CommunityReferencePhoto.id)
+                    .limit(300)
+                )
+            ).all()
+        return sum([int(await self._embed_existing(row)) for row in rows])
