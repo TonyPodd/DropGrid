@@ -1,3 +1,6 @@
+import gzip
+import json
+
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -20,6 +23,29 @@ def hit():
         "user": "Creator",
         "likes": 20,
     }
+
+
+async def test_gzip_search_response_is_decoded_only_once():
+    compressed = gzip.compress(json.dumps({"hits": [hit()]}).encode())
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                200,
+                content=compressed,
+                headers={
+                    "Content-Encoding": "gzip",
+                    "Content-Length": str(len(compressed)),
+                    "X-RateLimit-Limit": "100",
+                    "X-RateLimit-Remaining": "99",
+                },
+            )
+        )
+    ) as client:
+        result = await PixabayPhotoProvider(SecretStr("secret-test-key"), client).search(
+            PhotoSearch(query="truck")
+        )
+    assert result.candidates[0].provider_asset_id == "123"
+    assert result.rate_limit == 100 and result.remaining == 99
 
 
 async def test_search_mapping_ru_pagination_optional_and_headers():

@@ -97,7 +97,11 @@ async def test_campaign_api(client: AsyncClient) -> None:
 
 
 async def test_health_database_failure() -> None:
-    app = create_app(Settings(database_url="postgresql+asyncpg://unused:unused@127.0.0.1:1/unused"))
+    app = create_app(
+        Settings(
+            _env_file=None, database_url="postgresql+asyncpg://unused:unused@127.0.0.1:1/unused"
+        )
+    )
     async with app.router.lifespan_context(app):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")

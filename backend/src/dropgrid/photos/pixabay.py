@@ -52,7 +52,15 @@ class PixabayPhotoProvider:
                                 raise PhotoError("provider_invalid_response", request_made=True)
                             body.extend(chunk)
                     response = httpx.Response(
-                        remote.status_code, headers=remote.headers, content=bytes(body)
+                        remote.status_code,
+                        # aiter_bytes already decoded HTTP compression. Keeping the
+                        # encoding here would decode the normalized body a second time.
+                        headers={
+                            name: value
+                            for name, value in remote.headers.items()
+                            if name not in {"content-encoding", "content-length"}
+                        },
+                        content=bytes(body),
                     )
         except (httpx.HTTPError, TimeoutError):
             raise PhotoError("provider_unavailable", request_made=True) from None

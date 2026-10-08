@@ -10,9 +10,21 @@ from dropgrid.worker.__main__ import run
 
 
 def test_settings_hide_secrets() -> None:
-    settings = Settings(database_url="sentinel-secret", telegram_bot_token="fake-secret")
+    settings = Settings(
+        _env_file=None, database_url="sentinel-secret", telegram_bot_token="fake-secret"
+    )
     assert "sentinel-secret" not in repr(settings)
     assert "fake-secret" not in repr(settings)
+
+
+def test_test_settings_ignore_local_dotenv(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".env").write_text("PIXABAY_API_KEY=dotenv-sentinel\nVK_WRITE_ENABLED=true\n")
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(_env_file=None)
+    assert settings.pixabay_api_key is None
+    assert settings.vk_write_enabled is False
+    # Runtime behaviour remains intact: only test constructors opt out.
+    assert Settings().pixabay_api_key.get_secret_value() == "dotenv-sentinel"
 
 
 def test_json_logging() -> None:
@@ -30,6 +42,7 @@ async def test_bot_requires_token(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_worker_stops_when_database_unavailable() -> None:
     stop = asyncio.Event()
     settings = Settings(
+        _env_file=None,
         database_url="postgresql+asyncpg://unused:unused@127.0.0.1:1/unused",
         worker_poll_seconds=0.01,
     )

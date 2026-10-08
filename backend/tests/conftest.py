@@ -12,6 +12,14 @@ from dropgrid.api.dependencies import session
 from dropgrid.config import Settings
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runtime configuration must not leak from the developer's shell into tests."""
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture
 def database_url() -> str:
     value = os.environ.get("TEST_DATABASE_URL")
@@ -41,7 +49,7 @@ async def sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncS
 async def client(
     sessions: async_sessionmaker[AsyncSession], database_url: str
 ) -> AsyncIterator[AsyncClient]:
-    app = create_app(Settings(database_url=database_url))
+    app = create_app(Settings(_env_file=None, database_url=database_url))
 
     async def test_session() -> AsyncIterator[AsyncSession]:
         async with sessions() as value, value.begin():
