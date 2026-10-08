@@ -12,6 +12,7 @@ const profile = {
   reference_target_count: 100,
   archive_reuse_enabled: false,
   archive_reuse_min_age_days: 180,
+  archive_reuse_max_age_days: 540,
   reference_count: 1,
   references_last_synced_at: null,
 };
@@ -34,6 +35,12 @@ beforeEach(() => {
     references_created: 1,
     references_existing: 0,
     references_embedded: 1,
+    warnings: [],
+  });
+  vi.spyOn(communityVisualApi, "archive").mockResolvedValue({
+    posts_scanned: 200,
+    candidates_discovered: 3,
+    candidates_existing: 0,
     warnings: [],
   });
   vi.spyOn(communityVisualApi, "preview").mockResolvedValue({
@@ -111,4 +118,26 @@ it("runs one sync only after explicit click and shows bounded preview scores", a
   await screen.findByRole("heading", { name: "С учётом сообщества" });
   expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith("c1");
   expect(screen.getAllByText(/visual: 0.800/)).toHaveLength(2);
+});
+
+it("indexes archive only on click, keeps opt-in off and submits an explicit age window", async () => {
+  open();
+  await screen.findByLabelText("Максимальный возраст архивного фото (дней)");
+  expect(
+    screen.getByLabelText("Максимальный возраст архивного фото (дней)"),
+  ).toHaveValue(540);
+  expect(communityVisualApi.archive).not.toHaveBeenCalled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Проиндексировать архив" }),
+  );
+  await screen.findByText(/Архив: просмотрено 200/);
+  expect(communityVisualApi.archive).toHaveBeenCalledExactlyOnceWith("c1");
+  expect(communityVisualApi.save).toHaveBeenCalledWith(
+    "c1",
+    expect.objectContaining({
+      archive_reuse_enabled: false,
+      archive_reuse_min_age_days: 180,
+      archive_reuse_max_age_days: 540,
+    }),
+  );
 });

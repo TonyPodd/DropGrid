@@ -44,19 +44,29 @@ class VKReferencePolicy(PhotoPolicy):
 
 
 def eligible_for_archive_reuse(
-    posted_at: datetime, now: datetime, min_age_days: int, policy_enabled: bool, valid: bool = True
+    posted_at: datetime,
+    now: datetime,
+    min_age_days: int,
+    policy_enabled: bool,
+    valid: bool = True,
+    max_age_days: int | None = None,
 ) -> bool:
     if (
         not policy_enabled
         or not valid
         or type(min_age_days) is not int
         or min_age_days < 0
+        or (
+            max_age_days is not None
+            and (type(max_age_days) is not int or max_age_days <= min_age_days)
+        )
         or posted_at.tzinfo is None
         or now.tzinfo is None
         or posted_at > now
     ):
         return False
-    return (now - posted_at).total_seconds() / 86400 >= min_age_days
+    age = (now - posted_at).total_seconds() / 86400
+    return age >= min_age_days and (max_age_days is None or age <= max_age_days)
 
 
 async def profile_read(session: AsyncSession, community_id: UUID) -> ProfileRead:
@@ -67,12 +77,51 @@ async def profile_read(session: AsyncSession, community_id: UUID) -> ProfileRead
     count = await session.scalar(
         select(func.count())
         .select_from(CommunityReferencePhoto)
-        .where(CommunityReferencePhoto.community_id == community_id)
+        .where(
+            CommunityReferencePhoto.community_id == community_id,
+            CommunityReferencePhoto.is_style_reference.is_(True),
+        )
     )
     data = (
         ProfileRead.model_validate(profile) if profile else ProfileRead(community_id=community_id)
     )
-    return data.model_copy(update={"reference_count": count or 0})
+    now = utcnow()
+    archive = CommunityReferencePhoto
+    discovered = await session.scalar(
+        select(func.count())
+        .select_from(archive)
+        .where(archive.community_id == community_id, archive.archive_discovered.is_(True))
+    )
+    lower, upper = (
+        now - timedelta(days=data.archive_reuse_max_age_days),
+        now - timedelta(days=data.archive_reuse_min_age_days),
+    )
+    eligible, oldest, newest = (
+        await session.execute(
+            select(func.count(), func.min(archive.posted_at), func.max(archive.posted_at)).where(
+                archive.community_id == community_id,
+                archive.archive_discovered.is_(True),
+                archive.enabled.is_(True),
+                archive.vk_photo_owner_id != 0,
+                archive.vk_photo_id > 0,
+                archive.width >= PhotoPolicy().min_short_side,
+                archive.height >= PhotoPolicy().min_short_side,
+                archive.width <= archive.height * PhotoPolicy().max_aspect_ratio,
+                archive.height <= archive.width * PhotoPolicy().max_aspect_ratio,
+                archive.posted_at >= lower,
+                archive.posted_at <= upper,
+            )
+        )
+    ).one()
+    return data.model_copy(
+        update={
+            "reference_count": count or 0,
+            "archive_discovered_count": discovered or 0,
+            "archive_eligible_count": eligible if data.archive_reuse_enabled else 0,
+            "archive_oldest_eligible_at": oldest if data.archive_reuse_enabled else None,
+            "archive_newest_eligible_at": newest if data.archive_reuse_enabled else None,
+        }
+    )
 
 
 async def profile_save(
@@ -101,7 +150,8 @@ async def profile_save(
             utcnow(),
             data.archive_reuse_min_age_days,
             data.archive_reuse_enabled,
-            bool(row.storage_key and row.sha256),
+            bool(row.enabled and row.vk_photo_id > 0 and row.vk_photo_owner_id),
+            data.archive_reuse_max_age_days,
         )
     return await profile_read(session, community_id)
 
@@ -113,6 +163,8 @@ class ExtractedPhoto:
     photo_id: int
     posted_at: datetime
     url: str
+    width: int
+    height: int
 
 
 def representative_photo(
@@ -169,7 +221,8 @@ def representative_photo(
             valid.append((w * h, w, h, url))
         if valid:
             # Primary attachment, largest suitable size; URL tie-break stays in memory.
-            return ExtractedPhoto(identity, owner, pid, posted_at, max(valid)[3])
+            chosen = max(valid)
+            return ExtractedPhoto(identity, owner, pid, posted_at, chosen[3], chosen[1], chosen[2])
     return None
 
 
@@ -239,7 +292,12 @@ class CommunityReferenceCollector:
             )
             profile = await session.get(CommunityContentProfile, community_id, with_for_update=True)
             assert profile is not None
-            if profile.sync_lease_until and profile.sync_lease_until > utcnow():
+            if (
+                profile.sync_lease_until
+                and profile.sync_lease_until > utcnow()
+                or profile.archive_lease_until
+                and profile.archive_lease_until > utcnow()
+            ):
                 raise ConflictError("Reference sync already running")
             profile.sync_lease_token, profile.sync_lease_until = (
                 lease,
@@ -298,7 +356,17 @@ class CommunityReferenceCollector:
                                     CommunityReferencePhoto.vk_photo_id == photo.photo_id,
                                 )
                             )
-                        if existing:
+                        has_local_file = False
+                        if existing and existing.storage_key:
+                            try:
+                                has_local_file = self.storage.path(existing.storage_key).is_file()
+                            except PhotoError:
+                                pass
+                        if existing and has_local_file:
+                            async with self.sessions() as session, session.begin():
+                                fresh = await session.get(CommunityReferencePhoto, existing.id)
+                                if fresh:
+                                    fresh.is_style_reference = True
                             report.references_existing += 1
                             seen.add(identity)
                             try:
@@ -330,30 +398,55 @@ class CommunityReferenceCollector:
                                         or p.sync_lease_until <= utcnow()
                                     ):
                                         raise ConflictError("Reference sync lease expired")
-                                    session.add(
-                                        CommunityReferencePhoto(
-                                            community_id=community_id,
-                                            vk_post_id=photo.post_id,
-                                            vk_photo_owner_id=photo.owner_id,
-                                            vk_photo_id=photo.photo_id,
-                                            posted_at=photo.posted_at,
-                                            source_url=photo.url,
-                                            storage_key=key,
-                                            sha256=image.sha256,
-                                            perceptual_hash=image.perceptual_hash,
-                                            embedding=serialize_embedding(embedding)
-                                            if embedding
-                                            else None,
-                                            embedding_model=embedding.model if embedding else None,
-                                            embedding_dimensions=embedding.dimensions
-                                            if embedding
-                                            else None,
-                                            reuse_eligible=eligible_for_archive_reuse(
-                                                photo.posted_at, utcnow(), age, enabled
-                                            ),
-                                        )
+                                    collected = CommunityReferencePhoto(
+                                        community_id=community_id,
+                                        vk_post_id=photo.post_id,
+                                        vk_photo_owner_id=photo.owner_id,
+                                        vk_photo_id=photo.photo_id,
+                                        posted_at=photo.posted_at,
+                                        width=image.width,
+                                        height=image.height,
+                                        source_url=photo.url,
+                                        storage_key=key,
+                                        sha256=image.sha256,
+                                        perceptual_hash=image.perceptual_hash,
+                                        embedding=serialize_embedding(embedding)
+                                        if embedding
+                                        else None,
+                                        embedding_model=embedding.model if embedding else None,
+                                        embedding_dimensions=embedding.dimensions
+                                        if embedding
+                                        else None,
+                                        reuse_eligible=eligible_for_archive_reuse(
+                                            photo.posted_at,
+                                            utcnow(),
+                                            age,
+                                            enabled,
+                                            max_age_days=profile.archive_reuse_max_age_days,
+                                        ),
                                     )
-                                report.references_created += 1
+                                    if existing:
+                                        for name in (
+                                            "vk_post_id",
+                                            "posted_at",
+                                            "width",
+                                            "height",
+                                            "source_url",
+                                            "storage_key",
+                                            "sha256",
+                                            "perceptual_hash",
+                                            "embedding",
+                                            "embedding_model",
+                                            "embedding_dimensions",
+                                            "reuse_eligible",
+                                        ):
+                                            setattr(existing, name, getattr(collected, name))
+                                        existing.is_style_reference = True
+                                        session.add(existing)
+                                    else:
+                                        session.add(collected)
+                                report.references_created += int(existing is None)
+                                report.references_existing += int(existing is not None)
                                 report.references_embedded += int(embedding is not None)
                                 seen.add(identity)
                             except PhotoError as e:

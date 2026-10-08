@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dropgrid.api.schemas import Input, Output
 
@@ -12,13 +12,25 @@ class ProfileInput(Input):
     style_notes: str | None = Field(default=None, max_length=3000)
     reference_target_count: int = Field(default=100, gt=0, le=300)
     archive_reuse_enabled: bool = False
-    archive_reuse_min_age_days: int = Field(default=180, ge=0, le=36500)
+    archive_reuse_min_age_days: int = Field(default=180, ge=0, lt=3650)
+    archive_reuse_max_age_days: int = Field(default=540, gt=0, le=3650)
+
+    @model_validator(mode="after")
+    def valid_window(self) -> "ProfileInput":
+        if self.archive_reuse_max_age_days <= self.archive_reuse_min_age_days:
+            raise ValueError("Archive max age must exceed min age")
+        return self
 
 
 class ProfileRead(ProfileInput, Output):
     community_id: UUID
     references_last_synced_at: datetime | None = None
     reference_count: int = 0
+    archive_discovered_count: int = 0
+    archive_eligible_count: int = 0
+    archive_oldest_eligible_at: datetime | None = None
+    archive_newest_eligible_at: datetime | None = None
+    archive_last_synced_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -59,10 +71,17 @@ class ReferencePage(Output):
 class PhotoPreviewInput(Input):
     grid_id: UUID | None = None
     candidate_limit: int = Field(default=8, ge=1, le=12)
+    include_archive: bool = True
 
 
 class PhotoPreviewItem(Output):
-    media_asset_id: UUID
+    media_asset_id: UUID | None = None
+    reference_id: UUID | None = None
+    source: str = "library"
+    source_identity: str = ""
+    original_posted_at: datetime | None = None
+    age_days: float | None = None
+    age_reuse_score: float = 0
     base_score: float
     visual_score: float | None
     final_score: float
@@ -76,4 +95,20 @@ class PhotoPreviewRead(Output):
     references: list[UUID]
     category_only: list[PhotoPreviewItem]
     community_aware: list[PhotoPreviewItem]
+    mixed_source: list[PhotoPreviewItem] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ArchiveSyncInput(Input):
+    account_id: UUID | None = None
+    max_pages: int = Field(default=20, ge=1, le=50)
+
+
+class ArchiveSyncRead(Output):
+    posts_scanned: int = 0
+    pages_read: int = 0
+    candidates_discovered: int = 0
+    candidates_existing: int = 0
+    crossed_max_age: bool = False
+    exhausted: bool = False
     warnings: list[str] = Field(default_factory=list)

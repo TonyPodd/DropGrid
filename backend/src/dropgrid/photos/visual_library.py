@@ -79,7 +79,7 @@ class VisualLibrary:
                     select(CommunityReferencePhoto)
                     .where(CommunityReferencePhoto.community_id == community_id)
                     .order_by(CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id)
-                    .limit(300)
+                    .limit(profile.reference_target_count if profile else 100)
                 )
             ).all()
         vectors = []

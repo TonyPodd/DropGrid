@@ -14,6 +14,8 @@ requirements and tests. Docker's `media_data` volume survives ordinary `down`;
 [Community Visual References](docs/community-visual-references.md) adds bounded
 read-only VK style analysis and optional CPU similarity ranking. Community details
 provide a manual profile, reference thumbnails and category/community preview.
+[VK Archive Photo Provider](docs/vk-archive-photos.md) adds explicit same-community
+archive opt-in, age-based indexing, lazy candidates and community cooldown.
 
 DropGrid — фундамент системы управления кампаниями размещения контента в сообществах VK.
 Сейчас это локальный development stack без автоматической отправки кампаний и без

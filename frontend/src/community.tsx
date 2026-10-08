@@ -15,11 +15,16 @@ type ProfileInput = {
   reference_target_count: number;
   archive_reuse_enabled: boolean;
   archive_reuse_min_age_days: number;
+  archive_reuse_max_age_days: number;
 };
 type Profile = ProfileInput & {
   community_id: string;
   reference_count: number;
   references_last_synced_at: string | null;
+  archive_discovered_count?: number;
+  archive_eligible_count?: number;
+  archive_oldest_eligible_at?: string | null;
+  archive_newest_eligible_at?: string | null;
 };
 type Reference = {
   id: string;
@@ -28,7 +33,13 @@ type Reference = {
   embedding_model: string | null;
 };
 type Score = {
-  media_asset_id: string;
+  media_asset_id: string | null;
+  reference_id?: string | null;
+  source?: string;
+  source_identity?: string;
+  original_posted_at?: string | null;
+  age_days?: number | null;
+  age_reuse_score?: number;
   base_score: number;
   visual_score: number | null;
   final_score: number;
@@ -36,6 +47,7 @@ type Score = {
 type Preview = {
   category_only: Score[];
   community_aware: Score[];
+  mixed_source?: Score[];
   warnings: string[];
 };
 const defaults: ProfileInput = {
@@ -45,6 +57,7 @@ const defaults: ProfileInput = {
   reference_target_count: 100,
   archive_reuse_enabled: false,
   archive_reuse_min_age_days: 180,
+  archive_reuse_max_age_days: 540,
 };
 export const communityVisualApi = {
   profile: (id: string, signal?: AbortSignal) =>
@@ -67,6 +80,16 @@ export const communityVisualApi = {
       references_embedded: number;
       warnings: string[];
     }>(`/communities/${id}/references/sync`, { method: "POST", body: {} }),
+  archive: (id: string) =>
+    request<{
+      posts_scanned: number;
+      candidates_discovered: number;
+      candidates_existing: number;
+      warnings: string[];
+    }>(`/communities/${id}/archive/sync`, {
+      method: "POST",
+      body: { max_pages: 20 },
+    }),
   preview: (id: string) =>
     request<Preview>(`/communities/${id}/photo-preview`, {
       method: "POST",
@@ -74,20 +97,46 @@ export const communityVisualApi = {
     }),
 };
 
-function CandidateScores({ title, items }: { title: string; items: Score[] }) {
+function CandidateScores({
+  title,
+  items,
+  communityId,
+}: {
+  title: string;
+  items: Score[];
+  communityId: string;
+}) {
   return (
     <section>
       <h3>{title}</h3>
       <div className="reference-grid">
         {items.map((item) => (
-          <figure key={item.media_asset_id}>
+          <figure
+            key={
+              item.source_identity ?? item.media_asset_id ?? item.reference_id
+            }
+          >
             <img
-              src={mediaContentUrl(item.media_asset_id)}
+              src={
+                item.reference_id
+                  ? referenceContentUrl(communityId, item.reference_id)
+                  : mediaContentUrl(item.media_asset_id ?? "")
+              }
               alt="Кандидат фото"
               loading="lazy"
             />
             <figcaption>
-              base: {item.base_score.toFixed(3)} · visual:{" "}
+              {item.source ?? "pixabay"} · {item.source_identity}
+              <br />
+              {item.original_posted_at && (
+                <>
+                  Опубликовано: {date(item.original_posted_at)} · Возраст:{" "}
+                  {item.age_days?.toFixed(0)} дней
+                  <br />
+                </>
+              )}
+              age/reuse: {(item.age_reuse_score ?? 0).toFixed(3)} · base:{" "}
+              {item.base_score.toFixed(3)} · visual:{" "}
               {item.visual_score?.toFixed(3) ?? "—"} · final:{" "}
               {item.final_score.toFixed(3)}
             </figcaption>
@@ -124,6 +173,7 @@ export function CommunityDetailPage() {
         reference_target_count,
         archive_reuse_enabled,
         archive_reuse_min_age_days,
+        archive_reuse_max_age_days,
       } = state.data;
       setBody({
         desired_content,
@@ -132,10 +182,11 @@ export function CommunityDetailPage() {
         reference_target_count,
         archive_reuse_enabled,
         archive_reuse_min_age_days,
+        archive_reuse_max_age_days,
       });
     }
   }, [state.data]);
-  async function run(operation: "save" | "sync" | "preview") {
+  async function run(operation: "save" | "sync" | "archive" | "preview") {
     setBusy(true);
     setError("");
     setMessage("");
@@ -148,6 +199,11 @@ export function CommunityDetailPage() {
           const result = await communityVisualApi.sync(id);
           setMessage(
             `Просмотрено постов: ${result.posts_scanned}. Новых референсов: ${result.references_created}. Существующих: ${result.references_existing}. Embeddings: ${result.references_embedded}. ${result.warnings.join(", ")}`,
+          );
+        } else if (operation === "archive") {
+          const result = await communityVisualApi.archive(id);
+          setMessage(
+            `Архив: просмотрено ${result.posts_scanned}, новых ${result.candidates_discovered}, существующих ${result.candidates_existing}. ${result.warnings.join(", ")}`,
           );
         } else setMessage("Профиль сохранён.");
         setRevision((n) => n + 1);
@@ -170,6 +226,19 @@ export function CommunityDetailPage() {
               {state.data.references_last_synced_at
                 ? date(state.data.references_last_synced_at)
                 : "—"}
+            </p>
+            <p>
+              Архив: обнаружено {state.data.archive_discovered_count ?? 0},
+              доступно {state.data.archive_eligible_count ?? 0}.{" "}
+              {state.data.archive_oldest_eligible_at && (
+                <>
+                  Диапазон: {date(state.data.archive_oldest_eligible_at)} —{" "}
+                  {date(
+                    state.data.archive_newest_eligible_at ??
+                      state.data.archive_oldest_eligible_at,
+                  )}
+                </>
+              )}
             </p>
             <form
               className="form-card"
@@ -249,7 +318,7 @@ export function CommunityDetailPage() {
                   <input
                     type="number"
                     min={0}
-                    max={36500}
+                    max={3649}
                     required
                     value={body.archive_reuse_min_age_days}
                     onChange={(e) =>
@@ -260,15 +329,35 @@ export function CommunityDetailPage() {
                     }
                   />
                 </label>
+                <label>
+                  Максимальный возраст архивного фото (дней)
+                  <input
+                    type="number"
+                    required
+                    min={body.archive_reuse_min_age_days + 1}
+                    max={3650}
+                    value={body.archive_reuse_max_age_days}
+                    onChange={(e) =>
+                      setBody({
+                        ...body,
+                        archive_reuse_max_age_days: Number(e.target.value),
+                      })
+                    }
+                  />
+                </label>
                 <p className="note">
-                  Фото из VK сейчас используются для анализа стиля. Повторная
-                  публикация архивных фото пока недоступна. Новые кандидаты
-                  поступают из Pixabay.
+                  Недавние references определяют стиль. Архив индексируется
+                  отдельно по возрасту. При явном разрешении старые фото только
+                  этого сообщества участвуют в подборе вместе с Pixabay.
+                  Индексация и preview ничего не отправляют в VK.
                 </p>
                 <div className="actions">
                   <button>Сохранить профиль</button>
                   <button type="button" onClick={() => void run("sync")}>
                     Изучить последние посты
+                  </button>
+                  <button type="button" onClick={() => void run("archive")}>
+                    Проиндексировать архив
                   </button>
                   <button type="button" onClick={() => void run("preview")}>
                     Сравнить подбор фото
@@ -312,12 +401,19 @@ export function CommunityDetailPage() {
             <p className="note">{preview.warnings.join(", ")}</p>
           )}
           <CandidateScores
+            communityId={id}
             title="Только категория"
             items={preview.category_only}
           />
           <CandidateScores
+            communityId={id}
             title="С учётом сообщества"
             items={preview.community_aware}
+          />
+          <CandidateScores
+            communityId={id}
+            title="Pixabay + архив + библиотека"
+            items={preview.mixed_source ?? []}
           />
         </>
       )}

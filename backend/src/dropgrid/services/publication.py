@@ -193,6 +193,12 @@ async def record_suggested_submission(
             .where(MediaAsset.id == row.media_asset_id)
             .values(usage_count=MediaAsset.usage_count + 1, last_used_at=suggested_at)
         )
+    if row.media_asset_id:
+        from dropgrid.photos.rotation import record_media_usage
+
+        asset = await session.get(MediaAsset, row.media_asset_id)
+        if asset:
+            await record_media_usage(session, row.community_id, asset, row.id, suggested_at)
     await session.flush()
     return row
 

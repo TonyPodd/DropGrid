@@ -54,13 +54,19 @@ def assign_assets(
     reuse: int,
     pending: Counter[UUID],
     visual_scores: dict[UUID, dict[UUID, float]] | None = None,
+    allowed_assets: dict[UUID, set[UUID]] | None = None,
 ) -> dict[UUID, UUID]:
     """Unique first, balanced reuse, creator/history/current-reference penalties."""
     assigned: dict[UUID, UUID] = {}
     creators: Counter[str] = Counter()
     previous: UUID | None = None
     for submission in submissions:
-        available = [a for a in assets if counts[a.id] < reuse]
+        available = [
+            a
+            for a in assets
+            if counts[a.id] < reuse
+            and (allowed_assets is None or a.id in allowed_assets.get(submission, set()))
+        ]
         if not available:
             break
         chosen = min(
@@ -100,6 +106,9 @@ class CampaignMediaPlanner:
         self.storage, self.settings = storage, settings
         self.policy = policy or PhotoPolicy()
         self.visual = visual
+        from dropgrid.photos.archive import VKArchivePhotoProvider
+
+        self.archive: VKArchivePhotoProvider | None = None
         self.dedup = Deduplicator(self.policy.hamming_threshold)
         self.builder, self.ranker = PhotoQueryBuilder(), PhotoRanker()
         self.semaphore = asyncio.Semaphore(settings.photo_download_concurrency)
@@ -315,7 +324,10 @@ class CampaignMediaPlanner:
                 (
                     await session.scalars(
                         select(MediaAsset)
-                        .where(MediaAsset.enabled.is_(True))
+                        .where(
+                            MediaAsset.enabled.is_(True),
+                            or_(MediaAsset.provider.is_(None), MediaAsset.provider != "vk_archive"),
+                        )
                         .order_by(MediaAsset.id)
                     )
                 ).all()
@@ -478,29 +490,104 @@ class CampaignMediaPlanner:
             for category in categories.values():
                 category.warnings.append("planning_timeout")
         visual_scores: dict[UUID, dict[UUID, float]] = {}
-        if self.visual and self.visual.embedder:
+        allowed_assets: dict[UUID, set[UUID]] = {}
+        archive_sources: dict[UUID, dict[UUID, UUID]] = {}
+        from dropgrid.photos.pool import PoolCandidate, archive_pool, materialize_archive, rank_pool
+
+        if self.visual:
             communities = {s.id: s.community_id for s, _ in rows}
             for category, submission_ids in groups.items():
-                scores_by_community: dict[UUID, dict[UUID, float]] = {}
                 for sid in submission_ids:
                     community_id = communities[sid]
-                    if community_id not in scores_by_community:
-                        try:
-                            async with asyncio.timeout(self.policy.plan_timeout_seconds):
-                                ranked_assets = await self.visual.rank_assets(
-                                    community_id, available.get(category, []), category
-                                )
-                            scores_by_community[community_id] = (
-                                {aid: score.final_score for aid, score in ranked_assets.items()}
-                                if ranked_assets
-                                and all(s.visual_score is not None for s in ranked_assets.values())
-                                else {}
+                    warnings = categories[category].warnings
+                    pool = [
+                        PoolCandidate(
+                            self._asset_candidate(a),
+                            "library",
+                            asset=a,
+                            sha256=a.sha256,
+                            perceptual_hash=a.perceptual_hash,
+                        )
+                        for a in available.get(category, [])
+                        if a.provider != "vk_archive"
+                    ]
+                    try:
+                        async with asyncio.timeout(self.policy.plan_timeout_seconds):
+                            archives = await archive_pool(
+                                self.archive, community_id, warnings, category
                             )
-                        except TimeoutError:
-                            categories[category].warnings.append("visual_ranking_timeout")
-                            scores_by_community[community_id] = {}
-                    if scores_by_community[community_id]:
-                        visual_scores[sid] = scores_by_community[community_id]
+                            if not archives:
+                                from dropgrid.photos.rotation import community_usage
+
+                                async with self.sessions() as s:
+                                    usage = await community_usage(s, community_id, utcnow())
+                                if not usage:
+                                    assets = [item.asset for item in pool if item.asset]
+                                    scores = await self.visual.rank_assets(
+                                        community_id, assets, category
+                                    )
+                                    allowed_assets[sid] = {a.id for a in assets}
+                                    if scores and all(
+                                        score.visual_score is not None for score in scores.values()
+                                    ):
+                                        visual_scores[sid] = {
+                                            aid: score.final_score for aid, score in scores.items()
+                                        }
+                                    continue
+                            pool += archives
+                            mixed_ranked = await rank_pool(
+                                self.visual, community_id, pool, category
+                            )
+                            # Only the highest-ranked viable archive is materialized.
+                            # Lower archive candidates remain reference rows.
+                            materialized = []
+                            for item in mixed_ranked:
+                                if item.reference:
+                                    assert self.archive
+                                    try:
+                                        asset, created = await materialize_archive(
+                                            self.archive, self, item, category
+                                        )
+                                    except (PhotoError, OSError) as exc:
+                                        warnings.append(
+                                            exc.code
+                                            if isinstance(exc, PhotoError)
+                                            else "archive_storage_unavailable"
+                                        )
+                                        continue
+                                    if preserved_counts[asset.id] >= reuse:
+                                        continue
+                                    if all(a.id != asset.id for a in available[category]):
+                                        available[category].append(asset)
+                                    if created:
+                                        imported_ids.add(asset.id)
+                                        report.downloaded_assets += 1
+                                    item.asset = asset
+                                    archive_sources[sid] = {asset.id: item.reference.id}
+                                    materialized.append(item)
+                                    break
+                                materialized.append(item)
+                                # A better existing/Pixabay candidate requires no archive import.
+                                if item.asset and preserved_counts[item.asset.id] < reuse:
+                                    break
+                            # Remaining assets are usable fallback, but an archive belonging
+                            # to another community is never admitted via the category pool.
+                            asset_items = [item for item in mixed_ranked if item.asset]
+                            for item in materialized:
+                                if item not in asset_items:
+                                    asset_items.append(item)
+                            allowed_assets[sid] = {
+                                item.asset.id for item in asset_items if item.asset
+                            }
+                            visual_scores[sid] = {
+                                item.asset.id: item.score.final_score
+                                for item in asset_items
+                                if item.asset and item.score
+                            }
+                    except TimeoutError:
+                        warnings.append("visual_ranking_timeout")
+                        allowed_assets[sid] = set()
+        # Even without the optional embedder, rotation uses the same usage clock.
         # Re-read and lock lifecycle, categories, assignments and lease before changing references.
         async with self.sessions() as session, session.begin():
             campaign = await locked_campaign(session, campaign_id)
@@ -558,6 +645,44 @@ class CampaignMediaPlanner:
                     if fresh and self.eligible(fresh, self.builder.build(category).sensitive):
                         valid.append(fresh)
                 eligible_ids = {s.id for s in current if s.status == SubmissionStatus.pending}
+                if self.visual:
+                    from dropgrid.db.models import CommunityContentProfile, CommunityReferencePhoto
+                    from dropgrid.photos.references import eligible_for_archive_reuse
+                    from dropgrid.photos.rotation import community_usage, recently_used
+
+                    for sid in submission_ids:
+                        community_id = next(s.community_id for s in current if s.id == sid)
+                        usage = await community_usage(session, community_id, utcnow())
+                        for asset in valid:
+                            if recently_used(
+                                usage,
+                                asset.provider or "library",
+                                asset.provider_asset_id or str(asset.id),
+                                asset.sha256,
+                                asset.perceptual_hash,
+                                utcnow(),
+                                asset.id,
+                            ):
+                                allowed_assets.get(sid, set()).discard(asset.id)
+                            ref_id = archive_sources.get(sid, {}).get(asset.id)
+                            if ref_id:
+                                profile = await session.get(
+                                    CommunityContentProfile, community_id, with_for_update=True
+                                )
+                                ref = await session.get(CommunityReferencePhoto, ref_id)
+                                if (
+                                    not profile
+                                    or not ref
+                                    or not eligible_for_archive_reuse(
+                                        ref.posted_at,
+                                        utcnow(),
+                                        profile.archive_reuse_min_age_days,
+                                        profile.archive_reuse_enabled,
+                                        ref.enabled,
+                                        profile.archive_reuse_max_age_days,
+                                    )
+                                ):
+                                    allowed_assets.get(sid, set()).discard(asset.id)
                 assignments.update(
                     assign_assets(
                         [sid for sid in submission_ids if sid in eligible_ids],
@@ -566,6 +691,7 @@ class CampaignMediaPlanner:
                         reuse,
                         pending,
                         visual_scores,
+                        allowed_assets if self.visual else None,
                     )
                 )
             for submission in current:

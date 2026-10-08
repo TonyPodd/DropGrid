@@ -7,9 +7,12 @@ from sqlalchemy import func, select
 
 from dropgrid.api.dependencies import Session
 from dropgrid.db.models import Community, CommunityReferencePhoto
+from dropgrid.photos.archive import ArchiveDiscovery
 from dropgrid.photos.domain import PhotoError
 from dropgrid.photos.preview import photo_preview
 from dropgrid.photos.reference_schemas import (
+    ArchiveSyncInput,
+    ArchiveSyncRead,
     PhotoPreviewInput,
     PhotoPreviewRead,
     ProfileInput,
@@ -61,7 +64,8 @@ async def reference_list(
 ) -> ReferencePage:
     await get_entity(session, Community, community_id)
     query = select(CommunityReferencePhoto).where(
-        CommunityReferencePhoto.community_id == community_id
+        CommunityReferencePhoto.community_id == community_id,
+        CommunityReferencePhoto.is_style_reference.is_(True),
     )
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     rows = (
@@ -108,3 +112,11 @@ async def preview_photos(
     return await photo_preview(
         engine.planner, engine.visual, community_id, data or PhotoPreviewInput()
     )
+
+
+@router.post("/communities/{community_id}/archive/sync", response_model=ArchiveSyncRead)
+async def archive_sync(
+    community_id: UUID, service: Collector, data: ArchiveSyncInput | None = None
+) -> ArchiveSyncRead:
+    values = data or ArchiveSyncInput()
+    return await ArchiveDiscovery(service).sync(community_id, values.account_id, values.max_pages)

@@ -12,7 +12,8 @@ count (default 100, maximum 300), archive policy and last successful sync timest
 Existing communities need no profile. CommunityReferencePhoto stores published VK
 post/photo identities, timestamp, validated CDN URL, separate local image, hashes
 and optional embedding. Unique community/photo identity makes repeated syncs
-idempotent. References are never converted to MediaAsset in this version.
+idempotent. Recent style sync never converts references to MediaAsset. The separate opt-in
+[archive provider](vk-archive-photos.md) lazily materializes selected historical candidates.
 
 The collector uses the fresh encrypted Account credential through DBTokenProvider;
 there is no environment-token fallback. One explicit sync reads only `wall.get`
@@ -95,15 +96,12 @@ inspection, not a claim of improved quality.
 
 ## Archive preparation and future rotation
 
-Archive reuse defaults to disabled, with a minimum age of 180 days. The pure
-eligibility helper requires explicit opt-in, valid dates and age >= threshold;
-profile edits recompute eligibility. Eligibility alone never triggers publication.
-Reference analysis remains available while archive reuse is disabled. A future
-VKArchivePhotoProvider must enforce permitted-source policy before converting
-eligible references into candidates. A future CommunityMediaUsage ledger can track
-community/asset/submission time/result to prevent repetition. Neither provider,
-rotation ledger nor campaign sender is implemented here. Existing MediaAsset reuse
-logic remains in force. This feature performs zero VK writes.
+Archive reuse defaults to disabled, with an inclusive 180–540 day window. The
+[VK Archive Photo Provider](vk-archive-photos.md) performs a separate bounded
+age-based discovery and uses eligible same-community rows as lazy candidates.
+Only selected candidates become MediaAsset. References remain available with
+reuse disabled. CommunityMediaUsage now tracks actual DropGrid receipts and a
+180-day cooldown. No sender or VK writes are implemented.
 
 ## Development live smoke (2026-10-08)
 

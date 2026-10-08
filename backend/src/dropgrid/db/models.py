@@ -136,6 +136,11 @@ class CommunityContentProfile(Updated, Base):
             "reference_target_count > 0 AND reference_target_count <= 300", name="target_bound"
         ),
         CheckConstraint("archive_reuse_min_age_days >= 0", name="reuse_age_nonnegative"),
+        CheckConstraint(
+            "archive_reuse_max_age_days > archive_reuse_min_age_days "
+            "AND archive_reuse_max_age_days <= 3650",
+            name="reuse_window",
+        ),
     )
     community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"), primary_key=True)
     desired_content: Mapped[str | None] = mapped_column(Text)
@@ -148,6 +153,12 @@ class CommunityContentProfile(Updated, Base):
     archive_reuse_min_age_days: Mapped[int] = mapped_column(
         Integer, default=180, server_default="180"
     )
+    archive_reuse_max_age_days: Mapped[int] = mapped_column(
+        Integer, default=540, server_default="540"
+    )
+    archive_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archive_lease_token: Mapped[UUID | None] = mapped_column()
+    archive_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     references_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sync_lease_token: Mapped[UUID | None] = mapped_column()
@@ -174,6 +185,11 @@ class CommunityReferencePhoto(Identity, Base):
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
     embedding_model: Mapped[str | None] = mapped_column(String(200))
     embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
+    is_style_reference: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    archive_discovered: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
     reuse_eligible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
@@ -195,6 +211,34 @@ class MediaProviderImport(Base):
     creator_name: Mapped[str] = mapped_column(String(200))
     creator_url: Mapped[str | None] = mapped_column(Text)
     license_code: Mapped[str] = mapped_column(String(100))
+    source_community_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("communities.id"), index=True
+    )
+    source_post_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class CommunityMediaUsage(Identity, Base):
+    __tablename__ = "community_media_usage"
+    __table_args__ = (
+        UniqueConstraint(
+            "community_id",
+            "source_provider",
+            "source_identity",
+            name="uq_community_media_usage_source",
+        ),
+        CheckConstraint("use_count > 0", name="use_count_positive"),
+        Index("ix_community_media_usage_recent", "community_id", "last_used_at"),
+    )
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"))
+    media_asset_id: Mapped[UUID | None] = mapped_column(ForeignKey("media_assets.id"))
+    source_provider: Mapped[str] = mapped_column(String(50))
+    source_identity: Mapped[str] = mapped_column(String(100))
+    sha256: Mapped[str | None] = mapped_column(CHAR(64))
+    perceptual_hash: Mapped[str | None] = mapped_column(String(16))
+    first_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    use_count: Mapped[int] = mapped_column(Integer, default=1)
+    last_submission_id: Mapped[UUID | None] = mapped_column(ForeignKey("submissions.id"))
 
 
 class PhotoProviderState(Base):

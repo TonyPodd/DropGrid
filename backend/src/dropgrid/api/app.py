@@ -24,6 +24,7 @@ from dropgrid.integrations.vk.errors import (
 )
 from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
+from dropgrid.photos.archive import VKArchivePhotoProvider
 from dropgrid.photos.engine import PhotoEngine
 from dropgrid.photos.reference_routes import router as reference_router
 from dropgrid.photos.references import CommunityReferenceCollector
@@ -55,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             photo_engine.reference_storage,
             photo_engine.embedder,
         )
+        photo_engine.planner.archive = VKArchivePhotoProvider(app.state.reference_collector)
         try:
             yield
         finally:
