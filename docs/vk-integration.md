@@ -99,25 +99,96 @@ The user-token-versus-community-token upload experiment was not run. User-only
 support for wall.post and both wall photo API methods is confirmed by the schema;
 no community-token production path is implemented.
 
-## Token model
+## Local Account token onboarding
 
-No pretend encryption and no plaintext credentials in Account API writes/responses.
-TokenProvider is the narrow injectable boundary for a future decrypting/secret-manager
-provider. Existing encrypted_access_token is never read as plaintext. The default
-provider currently supports only development environment fallback:
+Token acquisition stays external/manual. DropGrid does not automate VKHost,
+Marusia, private authentication, CAPTCHA, OAuth or account sessions.
 
-- VK_TEST_ACCESS_TOKEN contains a user token obtained through the official flow.
-- VK_TEST_ACCOUNT_ID binds it to exactly one Account UUID.
-- APP_ENV must be development. A different UUID or production returns a sanitized
-  credential-unavailable error before any VK request.
+`AccountTokenCipher` uses authenticated
+[Fernet encryption from cryptography](https://cryptography.io/en/latest/fernet/).
+`APP_SECRET_KEY` must be a URL-safe base64-encoded 32-byte Fernet key. Stored values
+use `fernet:v1:` followed by ciphertext; the authenticated payload includes the
+Account UUID, preventing credential ciphertext from being copied between Accounts.
+The existing `encrypted_access_token` column is sufficient; no migration was added.
+There is no plaintext fallback. Missing/invalid keys do not prevent app startup,
+but credential import/read fails with a fixed sanitized error. Changing the key
+requires reimporting credentials; automatic key rotation is not implemented.
 
-The API validation endpoint needs an existing Account row. CLI env diagnostics need
-the explicit configured UUID but do not create/modify DB rows. DB credential retrieval
-is deliberately unavailable until genuine encryption/key management is implemented.
-Do not paste tokens into shell commands, CLI arguments, fixtures or issue reports.
-Use a private ignored environment file or secret injection. Local `.env` is excluded
-from Docker build context; Compose injects VK credential configuration only into API,
-not worker/bot/frontend.
+Normal API Account validation, Community resolution and capabilities use
+`DBTokenProvider`: active Account, stored VK identity and encrypted credential are
+required. Decryption occurs inside the provider and returns `SecretStr`. It never
+falls back to `VK_TEST_ACCESS_TOKEN`. Legacy env-bound diagnostics retain
+`DevelopmentTokenProvider` and `VK_TEST_ACCOUNT_ID` for compatibility.
+
+The token import/clear endpoints accept only `APP_ENV=development`. DropGrid has
+no application authentication: keep API and Web UI on loopback, do not expose this
+credential onboarding to the VPS/public Internet. Password-style input is cleared
+after success, failure or cancellation; saved tokens are never returned/rendered.
+`token_configured` means a stored credential exists, not that it is still valid.
+No token is stored in browser persistence or sent to analytics. Request-body tracing
+must stay disabled. Environment files and runtime media remain ignored by git.
+
+### Local setup (without printing a key or token)
+
+Run once from the repository root. This sets a Fernet key directly in ignored
+`backend/.env` only if its current value is empty, and preserves other settings:
+
+```sh
+cd backend
+uv sync
+uv run python - <<'PYKEY'
+import os
+from pathlib import Path
+from cryptography.fernet import Fernet
+from dotenv import dotenv_values
+path = Path('.env')
+if dotenv_values(path).get('APP_SECRET_KEY'):
+    raise SystemExit('APP_SECRET_KEY already exists; keep the current key.')
+lines = path.read_text().splitlines() if path.exists() else []
+lines = [line for line in lines if not line.strip().startswith('APP_SECRET_KEY=')]
+lines.append('APP_SECRET_KEY=' + Fernet.generate_key().decode())
+path.write_text('\n'.join(lines) + '\n')
+os.chmod(path, 0o600)
+PYKEY
+```
+
+Keep that key locally; losing it makes ciphertext unreadable. For Compose, put the
+same key in its ignored root `.env` or inject it privately, then recreate **only API**.
+Never publish either environment file or run `docker compose config` into reports.
+Choose the intended DB and media volume together; an Account and MediaAsset must
+exist in the database used by the diagnostic.
+
+For host development, set `DATABASE_URL`/`MEDIA_STORAGE_DIR` in `backend/.env` to
+that local DB/storage, keep `VK_WRITE_ENABLED=false` and the allowlist empty, then:
+
+```sh
+# Terminal 1, backend/
+PYTHONPATH=src BACKEND_HOST=127.0.0.1 uv run python -m dropgrid.api
+# Terminal 2, frontend/
+npm ci
+npm run dev -- --host 127.0.0.1
+```
+
+Set `VITE_BACKEND_URL` in ignored `frontend/.env.local` if backend uses another
+port. Open `/accounts`. If no Account metadata exists, create it once through the
+existing local API `/docs` → `POST /api/v1/accounts` with `{"name":"Local VK"}`;
+leave VK user ID unset to bind it during import. Click **Добавить/заменить VK token**,
+paste the externally obtained user token into the password input, then
+**Validate / Save**. No token should be pasted into chat or command arguments.
+The API calls `users.get`, requires one user and enforces any existing VK user ID
+before committing encrypted credentials, display name and active status. Failed
+replacement preserves the previous credential. Disabled Accounts are not activated.
+
+### Read-only capabilities API
+
+- `PUT /api/v1/accounts/{id}/token`: body `{"access_token":"<local input>"}`;
+  response: account_id, vk_user_id, name, valid. No credential in response.
+- `DELETE /api/v1/accounts/{id}/token`: removes credential only; Account/history remain.
+- `POST /api/v1/accounts/{id}/vk/capabilities`: body
+  `{"community_id":242100737}`. Performs `users.get`, exact-target `groups.getById`,
+  and one `wall.get` page. Returns token_valid, current_user_id,
+  community_resolved, wall_read, is_admin/is_member (null when unavailable), a
+  sanitized error and **write_capability=UNTESTED**. It never uploads/posts/joins.
 
 ## Write safety
 
@@ -204,15 +275,13 @@ retained as an ambiguous receipt, not converted into a publication URL.
   canonical domain using that account. A canonical-domain collision returns 409,
   preserves both records and does not implicitly merge grids/history.
 
-Without a configured TokenProvider these return 503; they do not acquire tokens.
+Without an imported active Account credential/key these return 503; they do not acquire tokens.
 This foundation still has no DropGrid authentication: keep it local.
 
 ## Future work
 
-Genuine encrypted-at-rest storage and key rotation; official OAuth permission/app
-verification; one manually authorized live test to resolve suggestion semantics;
-then design a campaign sender with transaction/job claims and outcome reconciliation.
-Photo Engine and monitoring scheduler remain separate later stages.
+Key rotation and official permission/app verification remain future work.
+A campaign sender is outside this stage. Photo Engine v1 is implemented separately.
 
 ## Live suggested-post experiment
 
@@ -300,3 +369,65 @@ and other-community writes: 0. No automatic retry, approval, or deletion followe
 Investigate the exact wall.post code 15 / subcode 1134 before separately authorizing
 another experiment or starting sender work. No token or raw API response is stored
 in this documentation.
+
+## Controlled existing-MediaAsset diagnostic
+
+`suggest-media` uses DBTokenProvider only. It requires development mode,
+`VK_WRITE_ENABLED=true` and **exactly** `VK_TEST_ALLOWED_COMMUNITY_IDS=242100737`.
+A different target or additional allowlisted IDs are rejected before DB, credential,
+file or network access. Its only permitted target is «собачки» / clubantohahyesos.
+Do not enable these flags until explicitly preparing one experiment.
+
+The command loads one enabled MediaAsset, resolves its key through LocalMediaStorage,
+checks bounded normalized JPEG bytes, SHA-256, dimensions and decode/pixel limits,
+then checks current user against Account.vk_user_id, exact group identity, confirmed
+non-admin role and a single normal wall page. Unknown admin role fails closed.
+No membership changes, scans, downloads, campaign operations or VK writes occur in
+read preflight.
+
+Once explicitly enabled, with a real user-provided audio reference:
+
+```sh
+# backend/, using the same DB, APP_SECRET_KEY and media directory as the API
+PYTHONPATH=src uv run python -m dropgrid.integrations.vk.diagnostics suggest-media \
+  --account-id '<IMPORTED_ACCOUNT_UUID>' \
+  --community-id 242100737 \
+  --media-asset-id '<EXISTING_DOG_MEDIAASSET_UUID>' \
+  --track '<REAL_USER_PROVIDED_VK_AUDIO_URL_OR_REFERENCE>' \
+  --caption 'DropGrid integration test'
+```
+
+Upload server retrieval → multipart upload → save photo → wall.post each run once.
+Payload is `owner_id=-242100737`, `from_group=0`, photo first, audio second,
+optional caption plus unique diagnostic marker; attachment access keys are preserved.
+No publish_date/post_id input, no retry of writes, no implicit re-run. Upload errors
+abort before wall.post. Transport uncertainty is UNKNOWN, never a reason to retry.
+
+After an accepted post, read one page each of all/suggests. Matching requires owner,
+marker and both attachment identities; receipt ID is supplementary evidence only.
+Report SUGGESTED/PUBLISHED/NOT_FOUND/REJECTED/UNKNOWN with safe counts/matches/errors.
+NOT_FOUND means no match on these pages, not proof of global absence. An inaccessible
+suggestion queue with no normal-wall match is UNKNOWN; conflicting placement evidence
+is UNKNOWN. Raw responses, post contents, attachment keys and credentials are not printed.
+A sanitized rejection including numeric subcode is retained. Code 15/subcode 1134
+stops the experiment; there is no alternate token acquisition or method fallback.
+After any live attempt restore `VK_WRITE_ENABLED=false` and clear the allowlist;
+do not delete the Account credential or MediaAsset.
+
+### Prepared local asset and A/B status (2026-10-08)
+
+Selected existing dog image visually: Couleur / Pixabay 6082017, dog in a garden,
+1280×853 normalized JPEG. In the isolated `dropgrid-photo-live` DB its MediaAsset is
+`d5156b7e-ebac-4445-8eb7-900195049935`. The asset already exists in its media volume;
+no new photo download was performed. This UUID is local runtime data, not a portable
+fixture; another DB must use its own existing MediaAsset UUID.
+
+Baseline Mini App token: wall.post **code 15 / subcode 1134**, app_type_permission_denied.
+Imported DB token: **NOT_RUN**. No DB-stored credential was available, APP_SECRET_KEY
+was unset, writes were false and allowlist empty. The legacy env token was not migrated
+without explicit import authorization. A real user-provided audio reference is also
+required before running the command. No live VK requests/writes were made in this stage.
+
+Normal tests mock VK; PostgreSQL integration tests check encrypted persistence,
+failed replacement rollback, providers, read capabilities and MediaAsset pipeline.
+Frontend tests cover password import, clear-on-error/success/cancel and indicators.

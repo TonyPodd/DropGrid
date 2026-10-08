@@ -19,6 +19,7 @@ export const submissionStatuses = [
 export type CampaignStatus = (typeof campaignStatuses)[number];
 export type SubmissionStatus = (typeof submissionStatuses)[number];
 export type Account = {
+  token_configured?: boolean;
   id: string;
   name: string;
   vk_user_id: number | null;

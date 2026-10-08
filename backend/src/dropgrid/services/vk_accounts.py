@@ -31,6 +31,8 @@ async def validate_account(
         failure = error
         account.status = AccountStatus.invalid
     else:
+        if account.vk_user_id is not None and account.vk_user_id != user.id:
+            raise ConflictError("Token belongs to a different VK user")
         account.vk_user_id = user.id
         if user.display_name:
             account.name = user.display_name[:200]

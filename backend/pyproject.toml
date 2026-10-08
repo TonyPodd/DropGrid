@@ -19,6 +19,7 @@ dependencies = [
   "httpx>=0.28,<1",
   "pillow>=12,<13",
   "imagehash>=4.3,<5",
+  "cryptography>=46,<52",
 ]
 
 [project.optional-dependencies]

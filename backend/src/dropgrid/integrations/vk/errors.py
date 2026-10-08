@@ -4,14 +4,20 @@ from typing import Any
 class VKError(Exception):
     """Contains only local, fixed messages; no upstream body/request/cause."""
 
-    def __init__(self, method: str, message: str, code: int | None = None) -> None:
+    def __init__(
+        self, method: str, message: str, code: int | None = None, subcode: int | None = None
+    ) -> None:
         self.method = method
         self.message = message
         self.code = code
+        self.subcode = subcode
         super().__init__(f"{method}: {message}" + (f" (VK {code})" if code is not None else ""))
 
     def as_dict(self) -> dict[str, Any]:
-        return {"method": self.method, "message": self.message, "error_code": self.code}
+        result = {"method": self.method, "message": self.message, "error_code": self.code}
+        if self.subcode is not None:
+            result["error_subcode"] = self.subcode
+        return result
 
 
 class VKAPIError(VKError):

@@ -53,8 +53,8 @@ class VKCommunity(ResponseModel):
     screen_name: str | None = None
     is_closed: int = 0
     deactivated: str | None = None
-    is_member: int = 0
-    is_admin: int = 0
+    is_member: int | None = None
+    is_admin: int | None = None
 
 
 class WallPosts(ResponseModel):

@@ -24,24 +24,36 @@ class SafeArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> Never:
         # argparse ordinarily echoes rejected arguments, which might contain a token.
         self.print_usage()
-        self.exit(2, "Invalid diagnostic arguments; consult --help. Tokens must use environment.\n")
+        self.exit(
+            2, "Invalid diagnostic arguments; consult --help. Never pass tokens as arguments.\n"
+        )
 
 
 def parser() -> argparse.ArgumentParser:
     root = SafeArgumentParser(description="DropGrid single-account VK diagnostics")
     commands = root.add_subparsers(dest="command", required=True, parser_class=SafeArgumentParser)
-    for name in ("account", "community", "wall", "suggest", "suggest-text"):
+    for name in ("account", "community", "wall", "suggest", "suggest-text", "suggest-media"):
         command = commands.add_parser(name)
-        command.add_argument("--account-id", type=UUID, help="Must match VK_TEST_ACCOUNT_ID")
+        command.add_argument(
+            "--account-id",
+            type=UUID,
+            required=name == "suggest-media",
+            help="Account with imported DB token"
+            if name == "suggest-media"
+            else "Must match VK_TEST_ACCOUNT_ID",
+        )
         if name in {"community", "wall"}:
             command.add_argument("domain")
         if name == "wall":
             command.add_argument("--suggests", action="store_true")
-        if name in {"suggest", "suggest-text"}:
+        if name in {"suggest", "suggest-text", "suggest-media"}:
             command.add_argument("--community-id", type=int, required=True)
-        if name == "suggest":
+        if name in {"suggest", "suggest-media"}:
             command.add_argument("--track", required=True)
-            command.add_argument("--image", type=Path, required=True)
+            if name == "suggest":
+                command.add_argument("--image", type=Path, required=True)
+            else:
+                command.add_argument("--media-asset-id", type=UUID, required=True)
             command.add_argument("--caption", default="DropGrid integration test")
     return root
 
@@ -49,6 +61,36 @@ def parser() -> argparse.ArgumentParser:
 async def execute(
     args: argparse.Namespace, settings: Settings, client: VKClient
 ) -> dict[str, object]:
+    if args.command == "suggest-media":
+        from dropgrid.db.session import Database
+        from dropgrid.integrations.vk.media_diagnostic import require_media_target, suggest_media
+        from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
+        from dropgrid.photos.images import LocalMediaStorage
+
+        require_media_target(client, args.community_id)
+        account_id = args.account_id
+        if account_id is None:
+            raise VKCredentialUnavailableError("credentials", "Explicit Account UUID required")
+        db = Database(settings)
+        try:
+            async with WallPhotoUploader(client) as uploader:
+                return await suggest_media(
+                    account_id=account_id,
+                    community_id=args.community_id,
+                    media_asset_id=args.media_asset_id,
+                    track=args.track,
+                    caption=args.caption,
+                    settings=settings,
+                    sessions=db.sessions,
+                    client=client,
+                    tokens=DBTokenProvider(
+                        db.sessions, AccountTokenCipher(settings.app_secret_key)
+                    ),
+                    storage=LocalMediaStorage(settings.media_storage_dir),
+                    uploader=uploader,
+                )
+        finally:
+            await db.close()
     # Must refuse writes before token retrieval, file access, limiter or any network request.
     if args.command in {"suggest", "suggest-text"}:
         client.require_diagnostic_target(args.community_id)

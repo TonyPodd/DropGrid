@@ -8,7 +8,7 @@ from dropgrid.integrations.vk.errors import VKCredentialUnavailableError
 
 
 class TokenProvider(Protocol):
-    """Later: decrypt the account's token or retrieve it from a secret manager."""
+    """Credential boundary: external acquisition, encrypted DB or explicit dev binding."""
 
     async def get_token(self, account_id: UUID) -> SecretStr: ...
 

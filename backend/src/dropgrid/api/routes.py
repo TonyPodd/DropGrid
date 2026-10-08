@@ -2,19 +2,23 @@ from collections.abc import Sequence
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens
 from dropgrid.api.schemas import (
     AccountCreate,
     AccountPatch,
     AccountRead,
+    AccountTokenInput,
+    AccountTokenRead,
     AccountValidationRead,
     CampaignCreate,
     CampaignPatch,
     CampaignRead,
     CampaignStats,
     CampaignSummary,
+    CapabilityInput,
+    CapabilityRead,
     CommunityRead,
     CommunityResolveInput,
     DashboardRead,
@@ -36,7 +40,7 @@ from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 from dropgrid.integrations.vk.errors import VKInputError
 from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
-from dropgrid.services import campaigns, catalog, vk_accounts, workflow
+from dropgrid.services import account_tokens, campaigns, catalog, vk_accounts, workflow
 from dropgrid.services.catalog import InvalidGridError
 
 router = APIRouter(prefix="/api/v1")
@@ -60,6 +64,38 @@ async def account_get(entity_id: UUID, session: Session) -> Account:
 @router.patch("/accounts/{entity_id}", response_model=AccountRead)
 async def account_patch(entity_id: UUID, data: AccountPatch, session: Session) -> Account:
     return await catalog.patch_account(session, entity_id, data)
+
+
+@router.put("/accounts/{account_id}/token", response_model=AccountTokenRead)
+async def account_token_import(
+    account_id: UUID, data: AccountTokenInput, request: Request, session: Session, client: VK
+) -> AccountTokenRead:
+    if client.settings.app_env != "development":
+        raise HTTPException(403, "Token import is local development only")
+    account = await account_tokens.import_token(
+        session, account_id, data.access_token, client, request.app.state.token_cipher
+    )
+    assert account.vk_user_id is not None
+    return AccountTokenRead(account_id=account.id, vk_user_id=account.vk_user_id, name=account.name)
+
+
+@router.delete("/accounts/{account_id}/token", response_model=AccountRead)
+async def account_token_clear(
+    account_id: UUID, request: Request, session: Session, client: VK
+) -> Account:
+    if client.settings.app_env != "development":
+        raise HTTPException(403, "Token clear is local development only")
+    account = await catalog.get_entity(session, Account, account_id)
+    account.encrypted_access_token = None
+    await session.flush()
+    return account
+
+
+@router.post("/accounts/{account_id}/vk/capabilities", response_model=CapabilityRead)
+async def account_capabilities(
+    account_id: UUID, data: CapabilityInput, session: Session, client: VK, tokens: Tokens
+) -> dict[str, object]:
+    return await account_tokens.capabilities(session, account_id, data.community_id, client, tokens)
 
 
 @router.get("/communities", response_model=list[CommunityRead])

@@ -1,3 +1,4 @@
+import { AccountTokenImport } from "./account-token";
 import { useState } from "react";
 import { accountsApi, communitiesApi, getDashboard } from "./api/accounts";
 import { ApiError, errorMessage } from "./api/client";
@@ -79,8 +80,8 @@ export function AccountsPage() {
     <>
       <h1>Accounts</h1>
       <p>
-        Метаданные аккаунтов. OAuth пока не реализован; проверка VK запускается
-        только вручную.
+        Локальные single-user Accounts. Токены импортируются вручную и хранятся
+        зашифрованными; проверка VK запускается только по вашему действию.
       </p>
       {message && <p role="status">{message}</p>}
       <State {...state} retry={state.reload}>
@@ -93,7 +94,8 @@ export function AccountsPage() {
                   <th>VK user ID</th>
                   <th>Gender tag</th>
                   <th>Status</th>
-                  <th>Проверка</th>
+                  <th>Token configured</th>
+                  <th>Проверка / token</th>
                 </tr>
               </thead>
               <tbody>
@@ -105,7 +107,15 @@ export function AccountsPage() {
                     <td>
                       <Badge status={a.status} />
                     </td>
+                    <td>{a.token_configured ? "yes" : "no"}</td>
                     <td>
+                      <AccountTokenImport
+                        accountId={a.id}
+                        onSaved={(value) => {
+                          setMessage(value);
+                          state.reload();
+                        }}
+                      />
                       <button
                         disabled={!!busy || a.status === "disabled"}
                         onClick={() => void validate(a.id)}

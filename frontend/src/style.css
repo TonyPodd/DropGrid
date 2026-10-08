@@ -506,3 +506,28 @@ tbody tr:hover {
 .photo-plan {
   margin-block: 1rem;
 }
+
+.token-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #102b3bcc;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.token-dialog form {
+  background: white;
+  padding: 2rem;
+  border-radius: 1rem;
+  max-width: 36rem;
+  width: 100%;
+}
+.token-dialog label {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.token-dialog button {
+  margin-right: 0.5rem;
+}

@@ -57,6 +57,10 @@ class Account(Identity, Updated, Base):
     )
     encrypted_access_token: Mapped[str | None] = mapped_column(Text)
 
+    @property
+    def token_configured(self) -> bool:
+        return bool(self.encrypted_access_token)
+
 
 class Community(Identity, Updated, Base):
     __tablename__ = "communities"

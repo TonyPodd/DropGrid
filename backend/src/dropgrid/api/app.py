@@ -15,7 +15,6 @@ from dropgrid.api.routes import router
 from dropgrid.config import Settings
 from dropgrid.db.session import Database
 from dropgrid.integrations.vk.client import VKClient
-from dropgrid.integrations.vk.credentials import DevelopmentTokenProvider
 from dropgrid.integrations.vk.errors import (
     VKAuthenticationError,
     VKCredentialUnavailableError,
@@ -23,6 +22,7 @@ from dropgrid.integrations.vk.errors import (
     VKPermissionError,
     VKRateLimitError,
 )
+from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
 from dropgrid.photos.engine import PhotoEngine
 from dropgrid.photos.routes import router as photo_router
@@ -39,7 +39,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         configure_logging()
         app.state.database = Database(config)
         app.state.vk_client = VKClient(config)
-        app.state.token_provider = DevelopmentTokenProvider(config)
+        app.state.token_cipher = AccountTokenCipher(config.app_secret_key)
+        app.state.token_provider = DBTokenProvider(
+            app.state.database.sessions, app.state.token_cipher
+        )
         app.state.photo_engine = PhotoEngine(config, app.state.database)
         try:
             yield
@@ -52,7 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[config.frontend_origin],
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Content-Type"],
     )
     app.include_router(router)

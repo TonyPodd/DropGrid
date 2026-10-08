@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
 from dropgrid.domain.grid_parser import ParseGridResult
@@ -47,8 +47,44 @@ class AccountRead(Output):
     vk_user_id: int | None
     gender_tag: GenderTag | None
     status: AccountStatus
+    token_configured: bool
     created_at: datetime
     updated_at: datetime
+
+
+class AccountTokenInput(Input):
+    access_token: SecretStr
+
+    @field_validator("access_token", mode="before")
+    @classmethod
+    def bounded_token(cls, value: object) -> object:
+        if not isinstance(value, str) or not 1 <= len(value) <= 8192:
+            raise ValueError("Expected a bounded access token")
+        if any(c.isspace() or c == "\0" for c in value):
+            raise ValueError("Access token must not contain whitespace")
+        return value
+
+
+class AccountTokenRead(BaseModel):
+    account_id: UUID
+    vk_user_id: int
+    name: str
+    valid: bool = True
+
+
+class CapabilityInput(Input):
+    community_id: int = Field(gt=0, le=2**63 - 1)
+
+
+class CapabilityRead(BaseModel):
+    token_valid: bool
+    current_user_id: int | None
+    community_resolved: bool
+    wall_read: bool
+    is_admin: bool | None
+    is_member: bool | None
+    write_capability: str
+    error: dict[str, object] | None
 
 
 class CommunityRead(Output):

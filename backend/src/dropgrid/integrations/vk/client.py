@@ -165,6 +165,9 @@ class VKClient:
                         code = vk_error.get("error_code") if isinstance(vk_error, dict) else None
                         if type(code) is int:
                             error = api_error(method, code)
+                            subcode = vk_error.get("error_subcode")
+                            if type(subcode) is int and 0 <= subcode <= 2**31 - 1:
+                                error.subcode = subcode
                             transient = code == 10
                         else:
                             error = VKProtocolError(method, "Unexpected VK error structure")
