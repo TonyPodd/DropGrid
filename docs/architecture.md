@@ -69,9 +69,10 @@ through PATCH and edits are allowed only in draft. No start/sending action exist
 ## Worker and future queue
 
 Worker is a separate process so polling/shutdown and future jobs do not depend on
-API request lifetime or number of API replicas. Today it only pings PostgreSQL and
-waits on a stop event, handles SIGTERM/SIGINT and disposes the engine. Failed DB
-heartbeats are sanitized and retried on the next interval.
+API request lifetime or number of API replicas. It runs read-only Publication Monitor,
+handles SIGTERM/SIGINT and disposes the VK client and engine. Failed DB cycles are
+sanitized and retried on the next interval. Account cursors and Submission leases
+use PostgreSQL claims; no transaction spans VK HTTP. See [monitor design](publication-monitor.md).
 
 Redis/Celery add deployment and scheduling complexity without current job needs.
 Later a PostgreSQL job queue (e.g. SELECT FOR UPDATE SKIP LOCKED) or Redis adapter

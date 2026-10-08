@@ -176,7 +176,7 @@ it("renders submission status, empty assignments and safe result links", () => {
     />,
   );
   expect(screen.getByText("PENDING")).toBeInTheDocument();
-  expect(screen.getByText("PUBLISHED")).toBeInTheDocument();
+  expect(screen.getByText("Опубликовано")).toBeInTheDocument();
   expect(screen.getByRole("link")).toHaveAttribute(
     "href",
     "https://vk.ru/wall-1_2",

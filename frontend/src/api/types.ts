@@ -90,6 +90,7 @@ export type Submission = {
   error_code: string | null;
   error_message: string | null;
   published_post_url: string | null;
+  published_at?: string | null;
 };
 export type Page<T> = {
   items: T[];

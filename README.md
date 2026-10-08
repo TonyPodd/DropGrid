@@ -21,23 +21,24 @@ DropGrid — фундамент системы управления кампан
 - PostgreSQL, SQLAlchemy 2 async/asyncpg, UUID, UTC timestamps, Alembic.
 - Чистые normalization/parser с построчными ошибками; preview и импорт сеток.
 - Идемпотентный prepare, создающий Submission без отправки контента.
-- Отдельные worker heartbeat и Telegram `/start`, `/help`, `/status`.
+- Read-only Publication Monitor в worker и Telegram `/start`, `/help`, `/status`.
 - React/TypeScript workflow: Dashboard с counts, импорт/preview сеток, черновики,
   Prepare, статистика и submissions с фильтрами/пагинацией; Accounts, Communities, Media.
 - Docker Compose, тесты на настоящем PostgreSQL, Ruff, strict mypy, pre-commit, CI.
 - Async VK user-token client, read operations, typed attachments/audio parser,
   isolated wall photo upload и guarded single-target diagnostic CLI.
 - Account validation и Community resolve endpoints с injectable TokenProvider.
+- Publication reconciliation: notifications → getById → canonical-photo fallback,
+  список принятых постов и ручная проверка. [Monitor details](docs/publication-monitor.md).
 
 ## Planned
 
-Официальный OAuth, encrypted credential storage, разрешённая отправка кампаний,
-мониторинг публикаций и управление кампаниями через Telegram.
+Официальный OAuth, разрешённая отправка кампаний и управление кампаниями через Telegram.
 
 ## Architecture
 
 Web UI → FastAPI routers → services → SQLAlchemy/PostgreSQL.
-Telegram проверяет API и БД. Worker сейчас только проверяет соединение с БД.
+Telegram проверяет API и БД. Worker выполняет read-only reconciliation отправленных предложек.
 Domain parser не зависит от БД или сети. Подробнее: [architecture](docs/architecture.md),
 [security](docs/security.md).
 
@@ -98,8 +99,9 @@ uv run alembic check
 uv run python -m dropgrid.worker
 ```
 
-Worker выводит JSON heartbeat каждые `WORKER_POLL_SECONDS` и закрывает engine на
-SIGTERM/SIGINT. Никаких Submission worker пока не обрабатывает.
+Worker запускает цикл Publication Monitor каждые `WORKER_POLL_SECONDS`, учитывая
+per-Account/per-Submission schedule и PostgreSQL leases. На SIGTERM/SIGINT закрывает
+клиент и engine. Campaign sending не реализован.
 
 ## Telegram
 
@@ -211,14 +213,14 @@ uv run python -m dropgrid.integrations.vk.diagnostics wall example
 
 Никаких tokens в CLI arguments. Live suggest требует write flag **и** точный
 allowlisted target; может создать реальную публикацию вместо suggestion в зависимости
-от прав/настроек. Worker продолжает делать только heartbeat. Обычные тесты блокируют
+от прав/настроек. Worker выполняет только read-only monitoring. Обычные тесты блокируют
 реальные HTTP requests; VK tests используют MockTransport.
 
 ## Configuration
 
 См. `.env.example`: секреты только через environment / ignored `.env`.
-`APP_SECRET_KEY` зарезервирован и сейчас не используется; token encryption не
-реализован. Development пароль PostgreSQL из Compose — публичный локальный
+`APP_SECRET_KEY` — Fernet key для encrypted Account tokens; worker и API должны
+использовать один ключ. Development пароль PostgreSQL из Compose — публичный локальный
 default, а не production credential. Порты опубликованы только на loopback.
 
 ## Structure

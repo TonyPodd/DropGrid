@@ -2,9 +2,9 @@ from collections.abc import Sequence
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens
+from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens, database
 from dropgrid.api.schemas import (
     AccountCreate,
     AccountPatch,
@@ -31,19 +31,38 @@ from dropgrid.api.schemas import (
     GridSummary,
     GridText,
     PrepareRead,
+    PublicationCheckRead,
+    PublishedResult,
     SubmissionPage,
     TrackInput,
     TrackRead,
 )
 from dropgrid.db.models import Account, Campaign, Community, Grid
+from dropgrid.db.session import Database
 from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 from dropgrid.integrations.vk.errors import VKInputError
 from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
 from dropgrid.services import account_tokens, campaigns, catalog, vk_accounts, workflow
 from dropgrid.services.catalog import InvalidGridError
+from dropgrid.services.publication import PublicationMonitor
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.post("/submissions/{submission_id}/check-publication", response_model=PublicationCheckRead)
+async def check_publication(
+    submission_id: UUID, db: Annotated[Database, Depends(database)], client: VK, tokens: Tokens
+) -> dict[str, object]:
+    # Deliberately no Session dependency: no request transaction across VK reads.
+    return await PublicationMonitor(db.sessions, client, tokens).check_submission(submission_id)
+
+
+@router.get("/campaigns/{campaign_id}/published", response_model=list[PublishedResult])
+async def campaign_published(
+    campaign_id: UUID, session: Session, limit: Limit = 100, offset: Offset = 0
+) -> list[PublishedResult]:
+    return await workflow.published_results(session, campaign_id, limit, offset)
 
 
 @router.get("/accounts", response_model=list[AccountRead])

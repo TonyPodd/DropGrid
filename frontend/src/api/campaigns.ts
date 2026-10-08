@@ -52,4 +52,10 @@ export const campaignsApi = {
       body: { track_url },
       signal,
     }),
+  checkPublication: (id: string) => request<{ current_status: string; evidence: Record<string, unknown> }>(
+    `/submissions/${id}/check-publication`, { method: "POST" }),
+  published: (id: string, signal?: AbortSignal) => request<{
+    community: Submission["community"]; category: string | null;
+    published_post_url: string; published_at: string;
+  }[]>(`/campaigns/${id}/published`, { signal }),
 };

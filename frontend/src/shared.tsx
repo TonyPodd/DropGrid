@@ -53,9 +53,18 @@ export function State({
 export function Badge({ status }: { status: string }) {
   return (
     <span className={`badge ${status}`}>
-      {status.replace("_", " ").toUpperCase()}
+      {publicationLabel(status)}
     </span>
   );
+}
+
+export function publicationLabel(status: string) {
+  const labels: Record<string, string> = {
+    submitted: "На модерации",
+    published: "Опубликовано",
+    not_found: "Не найдено",
+  };
+  return labels[status] ?? status.replace("_", " ").toUpperCase();
 }
 export function Pager({
   page,

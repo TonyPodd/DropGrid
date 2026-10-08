@@ -64,7 +64,8 @@ VK_WRITE_ENABLED. Generic unknown methods fail closed. The single-target live
 CLI additionally checks VK_TEST_ALLOWED_COMMUNITY_IDS before any network/file/token
 access. Exact positive IDs only, no wildcards. Writes are not retried: ambiguous
 network outcomes need manual reconciliation. CAPTCHA and security validation stop
-immediately. No campaign sending/monitoring was connected to worker.
+immediately. Worker now performs read-only publication monitoring using DBTokenProvider;
+it never calls write methods or marks notifications viewed. No campaign sender was added.
 
 DevelopmentTokenProvider binds VK_TEST_ACCESS_TOKEN to exactly VK_TEST_ACCOUNT_ID,
 requires APP_ENV=development, and fails in production. No plaintext DB storage or

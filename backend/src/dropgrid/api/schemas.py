@@ -266,6 +266,26 @@ class SubmissionRead(BaseModel):
     error_code: str | None
     error_message: str | None
     published_post_url: str | None
+    published_at: datetime | None = None
+
+
+class PublicationCheckRead(BaseModel):
+    submission_id: UUID
+    previous_status: SubmissionStatus
+    current_status: SubmissionStatus
+    suggestion_state: str
+    notification_match: bool
+    published_post_id: int | None
+    published_post_url: str | None
+    last_checked_at: datetime | None
+    evidence: dict[str, object]
+
+
+class PublishedResult(BaseModel):
+    community: CommunityRead
+    category: str | None
+    published_post_url: str
+    published_at: datetime
 
 
 class SubmissionPage(BaseModel):

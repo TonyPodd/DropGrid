@@ -7,19 +7,29 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from dropgrid.config import Settings
 from dropgrid.db.session import Database
+from dropgrid.integrations.vk.client import VKClient
+from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
+from dropgrid.services.publication import PublicationMonitor
 
 logger = logging.getLogger(__name__)
 
 
 async def run(settings: Settings, stop: asyncio.Event) -> None:
     db = Database(settings)
+    client = VKClient(settings)
+    monitor = PublicationMonitor(
+        db.sessions,
+        client,
+        DBTokenProvider(db.sessions, AccountTokenCipher(settings.app_secret_key)),
+    )
     logger.info("Worker started")
     try:
         while not stop.is_set():
             try:
                 await db.ping()
-                logger.info("Worker heartbeat: database ok")
+                await monitor.tick()
+                logger.info("Worker publication monitor: cycle complete")
             except (SQLAlchemyError, PostgresError, OSError, TimeoutError):
                 logger.warning("Worker heartbeat: database unavailable")
             try:
@@ -27,6 +37,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
             except TimeoutError:
                 pass
     finally:
+        await client.aclose()
         await db.close()
         logger.info("Worker stopped")
 

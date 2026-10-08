@@ -17,6 +17,7 @@ from dropgrid.api.schemas import (
     GridDetail,
     GridRead,
     GridSummary,
+    PublishedResult,
     SubmissionPage,
     SubmissionRead,
 )
@@ -273,6 +274,40 @@ async def submission_list(
                 error_code=code,
                 error_message=message,
                 published_post_url=url,
+                published_at=submission.published_at,
             )
         )
     return SubmissionPage(items=items, total=total or 0, page=page, page_size=page_size)
+
+
+async def published_results(
+    session: AsyncSession, campaign_id: UUID, limit: int, offset: int
+) -> list[PublishedResult]:
+    campaign = await get_entity(session, Campaign, campaign_id)
+    rows = await session.execute(
+        select(Submission, Community, GridCommunity.category)
+        .join(Community, Community.id == Submission.community_id)
+        .outerjoin(
+            GridCommunity,
+            (GridCommunity.community_id == Community.id)
+            & (GridCommunity.grid_id == campaign.grid_id),
+        )
+        .where(
+            Submission.campaign_id == campaign_id, Submission.status == SubmissionStatus.published
+        )
+        .order_by(Submission.published_at.desc(), Submission.id)
+        .limit(limit)
+        .offset(offset)
+    )
+    return [
+        PublishedResult(
+            community=CommunityRead.model_validate(c),
+            category=category,
+            published_post_url=s.published_post_url,
+            published_at=s.published_at,
+        )
+        for s, c, category in rows
+        if s.published_at
+        and s.published_post_url
+        and re.fullmatch(r"https://vk\.com/wall-\d+_\d+", s.published_post_url)
+    ]

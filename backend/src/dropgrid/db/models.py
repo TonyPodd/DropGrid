@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     String,
@@ -180,6 +181,8 @@ class Submission(Identity, Updated, Base):
     __table_args__ = (
         UniqueConstraint("campaign_id", "community_id", name="uq_submission_campaign_community"),
         CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        Index("ix_submissions_monitor_due", "status", "vk_next_check_at"),
+        Index("ix_submissions_vk_receipt", "account_id", "vk_suggested_post_id", "community_id"),
     )
     campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id"), index=True)
     community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"))
@@ -194,3 +197,25 @@ class Submission(Identity, Updated, Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     published_post_url: Mapped[str | None] = mapped_column(Text)
+    vk_suggested_post_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_suggested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_canonical_photo_owner_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_canonical_photo_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_audio_owner_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_audio_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_published_post_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_publication_detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_monitor_lease_token: Mapped[UUID | None] = mapped_column()
+    vk_monitor_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_monitor_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+
+
+class VKNotificationCursor(Base):
+    __tablename__ = "vk_notification_cursors"
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"), primary_key=True)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    lease_token: Mapped[UUID | None] = mapped_column()
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

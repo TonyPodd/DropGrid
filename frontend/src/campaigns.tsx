@@ -25,6 +25,7 @@ import {
   Pager,
   State,
   useLoad,
+  publicationLabel,
 } from "./shared";
 
 export function CampaignsPage() {
@@ -293,8 +294,8 @@ export function CampaignForm({
           <p role="alert">Введите целое число от 1 до 2147483647.</p>
         )}
         <p className="note">
-          Сохранение и Prepare не обращаются к VK. Проверка публикаций пока не
-          реализована.
+          Сохранение и Prepare не обращаются к VK. Отправленные предложки
+          проверяются до конца указанного периода.
         </p>
         {error && <p role="alert">{error}</p>}
         <div className="actions">
@@ -383,7 +384,10 @@ export function PrepareButton({
     </>
   );
 }
-export function SubmissionTable({ items }: { items: Submission[] }) {
+export function SubmissionTable({ items, onChecked }: {
+  items: Submission[];
+  onChecked?: () => void;
+}) {
   return items.length ? (
     <div className="table-wrap">
       <table>
@@ -437,6 +441,12 @@ export function SubmissionTable({ items }: { items: Submission[] }) {
                 ) : (
                   "—"
                 )}
+                {s.status === "published" && s.published_at && (
+                  <div>{date(s.published_at)}</div>
+                )}
+                {s.status === "submitted" && onChecked && (
+                  <PublicationCheckButton id={s.id} onChecked={onChecked} />
+                )}
               </td>
             </tr>
           ))}
@@ -447,12 +457,41 @@ export function SubmissionTable({ items }: { items: Submission[] }) {
     <p className="empty">Submissions по выбранным фильтрам нет.</p>
   );
 }
+
+export function PublicationCheckButton({ id, onChecked }: { id: string; onChecked: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  return (
+    <>
+      <button disabled={busy} onClick={async () => {
+        setBusy(true);
+        setMessage("");
+        try {
+          const result = await campaignsApi.checkPublication(id);
+          if (result.evidence.result === "read_error") {
+            setMessage("Проверка временно недоступна. Статус публикации не изменён.");
+          }
+          onChecked();
+        } catch {
+          setMessage("Проверка временно недоступна. Попробуйте позже.");
+        } finally {
+          setBusy(false);
+        }
+      }}>
+        {busy ? "Проверка…" : "Проверить публикацию"}
+      </button>
+      {message && <p role="status">{message}</p>}
+    </>
+  );
+}
 export function SubmissionsPanel({
   campaign,
   revision,
+  onChecked,
 }: {
   campaign: Campaign;
   revision: number;
+  onChecked?: () => void;
 }) {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
@@ -482,7 +521,7 @@ export function SubmissionsPanel({
             <option value="">All</option>
             {submissionStatuses.map((s) => (
               <option key={s} value={s}>
-                {s.replace("_", " ")}
+                {publicationLabel(s)}
               </option>
             ))}
           </select>
@@ -520,7 +559,10 @@ export function SubmissionsPanel({
         {submissions.data && (
           <>
             <p className="muted">Найдено: {submissions.data.total}</p>
-            <SubmissionTable items={submissions.data.items} />
+            <SubmissionTable
+              items={submissions.data.items}
+              onChecked={onChecked ?? submissions.reload}
+            />
           </>
         )}
       </State>
@@ -639,7 +681,7 @@ export function CampaignDetailPage() {
                   </div>
                   {submissionStatuses.map((s) => (
                     <div key={s}>
-                      <span>{s.replace("_", " ")}</span>
+                      <span>{publicationLabel(s)}</span>
                       <strong>{stats.data?.statuses[s]}</strong>
                     </div>
                   ))}
@@ -650,6 +692,7 @@ export function CampaignDetailPage() {
               key={id}
               campaign={state.data}
               revision={revision}
+              onChecked={() => setRevision((n) => n + 1)}
             />
           </>
         )}

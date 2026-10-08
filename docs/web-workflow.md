@@ -2,8 +2,10 @@
 
 Grid import → Campaign draft → Prepare → Submission inspection.
 
-**Prepare does not contact VK.** Worker remains a database heartbeat. This stage
-adds no sender, monitoring, OAuth or Photo Engine. It works without VK credentials.
+**Prepare does not contact VK.** Preparation works without VK credentials. The worker
+now checks recorded submitted receipts through the read-only [Publication Monitor](publication-monitor.md).
+Campaign sending remains unavailable. Accepted submissions show publication time and VK URL;
+«Проверить публикацию» runs an explicit read-only VK reconciliation.
 
 ## Import a grid
 
