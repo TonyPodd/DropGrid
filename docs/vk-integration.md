@@ -544,3 +544,62 @@ placements, marker/photo/audio mismatch, omitted audio, unknown placement and th
 observed community-photo identity difference. No production matching rule was
 relaxed. VK writes in this forensic stage: wall.post=0, upload=0, saveWallPhoto=0,
 groups.join=0. No new photo, post, sender or automatic follow-up experiment.
+
+### Read-only acceptance notifications experiment (2026-10-08)
+
+Official schema: [methods](https://github.com/VKCOM/vk-api-schema/blob/master/notifications/methods.json),
+[response](https://github.com/VKCOM/vk-api-schema/blob/master/notifications/responses.json),
+[objects](https://github.com/VKCOM/vk-api-schema/blob/master/notifications/objects.json).
+`notifications.get` accepts a user token, count 1–100, start/end timestamps,
+`start_from`, and filters including `wall`. `next_from` is an opaque cursor.
+Notification types are open strings; optional feedback/parent/reply objects
+retain nested fields in memory. Payloads and cursors are excluded from model
+repr. This client does not expose `notifications.markAsViewed`.
+
+Using only DBTokenProvider for VK user 615459987, the window 1791477429–1791484067
+returned two notifications with no next page. No-filter and `filters=wall`
+both returned the acceptance event. One additional read inspected the complete
+event's numeric identities without logging raw text, URLs, attachment access
+keys, or credentials. All three calls succeeded on their first attempt; writes
+remained disabled and the allowlist empty.
+
+Relevant event, reduced to identity fields:
+
+```json
+{
+  "type": "wall_publish",
+  "date": 1791483366,
+  "feedback": {
+    "id": 5,
+    "owner_id": -242100737,
+    "from_id": -242100737,
+    "to_id": -242100737,
+    "date": 1791483366,
+    "type": "post",
+    "post_type": "post",
+    "text_present": true,
+    "attachments": [
+      {
+        "type": "photo",
+        "photo": {"owner_id": -242100737, "id": 456239018, "post_id": 4}
+      },
+      {
+        "type": "audio",
+        "audio": {"owner_id": 2000410139, "id": 456245636}
+      }
+    ]
+  }
+}
+```
+
+The event has no parent or reply. Relevant response group reference: 242100737.
+It does not contain author user id 615459987. The recipient is established by
+using that account's DB token, not by an author field in the event.
+
+For this observed photo-backed suggestion, `feedback.id=5` and the canonical
+photo's `post_id=4` provide a **DIRECT_MAPPING** from the known suggestion to
+publication. The old id is nested photo metadata, not a dedicated suggestion
+reference. Matching must include community and canonical photo identity; an
+unrelated nested integer is insufficient. One experiment does not establish
+that this reference is always preserved, that text-only suggestions are covered,
+or that delivery is durable/exhaustive. No monitor or sender was added.

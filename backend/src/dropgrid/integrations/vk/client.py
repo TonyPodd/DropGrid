@@ -24,13 +24,16 @@ from dropgrid.integrations.vk.errors import (
 from dropgrid.integrations.vk.limiter import LocalRateLimiter, Sleeper, VKRateLimiter
 from dropgrid.integrations.vk.models import (
     VKCommunity,
+    VKNotifications,
     VKUser,
     WallPostReceipt,
     WallPosts,
     WallPostsById,
 )
 
-_READ_METHODS = frozenset({"users.get", "groups.getById", "wall.get", "wall.getById"})
+_READ_METHODS = frozenset(
+    {"users.get", "groups.getById", "wall.get", "wall.getById", "notifications.get"}
+)
 _WRITE_METHODS = frozenset({"wall.post", "photos.getWallUploadServer", "photos.saveWallPhoto"})
 logger = logging.getLogger(__name__)
 
@@ -235,6 +238,57 @@ class VKClient:
         if len(users) != 1:
             raise VKProtocolError("users.get", "Expected a single current user")
         return users[0]
+
+    async def get_notifications(
+        self,
+        *,
+        access_token: str | SecretStr,
+        account_id: UUID,
+        count: int = 100,
+        start_time: int | None = None,
+        end_time: int | None = None,
+        start_from: str | None = None,
+        filters: list[str] | None = None,
+    ) -> VKNotifications:
+        if type(count) is not int or not 1 <= count <= 100:
+            raise VKInputError("notifications.get", "Invalid notification count")
+        for value in (start_time, end_time):
+            if value is not None and (type(value) is not int or value < 0):
+                raise VKInputError("notifications.get", "Invalid notification timestamp")
+        if start_time is not None and end_time is not None and start_time > end_time:
+            raise VKInputError("notifications.get", "Invalid notification time window")
+        if start_from is not None and (
+            not isinstance(start_from, str) or not start_from or len(start_from) > 4096
+        ):
+            raise VKInputError("notifications.get", "Invalid notification pagination token")
+        allowed_filters = {
+            "wall",
+            "mentions",
+            "comments",
+            "likes",
+            "reposted",
+            "followers",
+            "friends",
+        }
+        if filters is not None and (
+            not isinstance(filters, list)
+            or not filters
+            or any(not isinstance(value, str) or value not in allowed_filters for value in filters)
+        ):
+            raise VKInputError("notifications.get", "Invalid notification filters")
+        data = await self.call(
+            "notifications.get",
+            access_token=access_token,
+            account_id=account_id,
+            params={
+                "count": count,
+                "start_time": start_time,
+                "end_time": end_time,
+                "start_from": start_from,
+                "filters": filters,
+            },
+        )
+        return parse_response(TypeAdapter(VKNotifications), data["response"], "notifications.get")
 
     async def resolve_community(
         self, domain: str, *, access_token: str | SecretStr, account_id: UUID

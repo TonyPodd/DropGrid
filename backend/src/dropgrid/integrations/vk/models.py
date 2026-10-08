@@ -77,6 +77,23 @@ class WallPostsById(ResponseModel):
     items: list[WallPostDetails]
 
 
+class VKNotification(ResponseModel):
+    # VK adds notification types; do not restrict this to a known enum.
+    type: str | None = None
+    date: int | None = None
+    feedback: dict[str, Any] | None = Field(default=None, repr=False)
+    parent: dict[str, Any] | None = Field(default=None, repr=False)
+    reply: dict[str, Any] | None = Field(default=None, repr=False)
+
+
+class VKNotifications(ResponseModel):
+    count: int = Field(ge=0)
+    items: list[VKNotification] = Field(repr=False)
+    next_from: str | None = Field(default=None, repr=False)
+    profiles: list[dict[str, Any]] = Field(default_factory=list, repr=False)
+    groups: list[dict[str, Any]] = Field(default_factory=list, repr=False)
+
+
 class WallPostReceipt(ResponseModel):
     # Schema does not promise a positive identifier for every accepted wall.post.
     post_id: int = Field(ge=0)
