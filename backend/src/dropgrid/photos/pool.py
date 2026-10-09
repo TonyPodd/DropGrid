@@ -2,7 +2,7 @@
 
 import asyncio
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -35,6 +35,7 @@ from dropgrid.photos.visual import (
     RankedPhoto,
     VisualEmbedding,
     VisualScore,
+    cosine_similarity,
     deserialize_embedding,
     rank_photo,
 )
@@ -55,6 +56,8 @@ class PoolCandidate:
     perceptual_hash: str | None = None
     score: RankedPhoto | None = None
     age_reuse_score: float = 0
+    reference_matches: list[tuple[UUID, float]] = field(default_factory=list)
+    embedding_error: str | None = None
 
     @property
     def identity(self) -> tuple[str, str]:
@@ -105,23 +108,8 @@ async def rank_pool(
     with stage("reference_loading"):
         async with visual.sessions() as s:
             profile = await s.get(CommunityContentProfile, community_id)
-            refs = list(
-                (
-                    await s.scalars(
-                        select(CommunityReferencePhoto)
-                        .where(
-                            CommunityReferencePhoto.community_id == community_id,
-                            CommunityReferencePhoto.is_style_reference.is_(True),
-                            CommunityReferencePhoto.enabled.is_(True),
-                        )
-                        .order_by(
-                            CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id
-                        )
-                        .limit(profile.reference_target_count if profile else 100)
-                    )
-                ).all()
-            )
             usage = await community_usage(s, community_id, now)
+    refs, _ = await visual.reference_rows(community_id)
     kept = []
     search = PhotoQueryBuilder().build(category).variants[0]
     for item in deduplicate_pool(pool):
@@ -137,8 +125,10 @@ async def rank_pool(
         if item.asset and visual.embedder:
             try:
                 item.embedding = await visual.asset_embedding(item.asset)
-            except (PhotoError, OSError):
-                pass
+            except (PhotoError, OSError) as error:
+                item.embedding_error = (
+                    error.code if isinstance(error, PhotoError) else "media_unavailable"
+                )
         vectors = []
         if item.embedding:
             for ref in refs:
@@ -150,10 +140,12 @@ async def rank_pool(
                 ):
                     continue
                 try:
-                    vectors.append(
-                        deserialize_embedding(
-                            ref.embedding, ref.embedding_model, ref.embedding_dimensions
-                        )
+                    reference_vector = deserialize_embedding(
+                        ref.embedding, ref.embedding_model, ref.embedding_dimensions
+                    )
+                    vectors.append(reference_vector)
+                    item.reference_matches.append(
+                        (ref.id, cosine_similarity(item.embedding, reference_vector))
                     )
                 except PhotoError:
                     pass
@@ -174,16 +166,10 @@ async def rank_pool(
             item.posted_at, now, profile.archive_reuse_min_age_days if profile else 180
         )
         kept.append(item)
-    if any(item.score and item.score.visual_score is None for item in kept):
-        # Same legacy fallback for the entire pool; no mixed 0..15 / 0..1 scale.
-        for item in kept:
-            item.score = rank_photo(
-                item.photo,
-                search,
-                VisualScore(None, None, 0),
-                usage=item.asset.usage_count if item.asset else 0,
-            )
     for item in kept:
+        item.reference_matches = sorted(item.reference_matches, key=lambda x: (-x[1], str(x[0])))[
+            :5
+        ]
         assert item.score
         value = item.score
         penalty_scale = BASE_SCORE_SCALE if value.visual_score is None else 1
@@ -194,7 +180,14 @@ async def rank_pool(
             value.best_similarity,
             value.reference_count,
         )
-    return sorted(kept, key=lambda c: (-(c.score.final_score if c.score else 0), c.identity))
+    return sorted(
+        kept,
+        key=lambda c: (
+            c.score is None or c.score.visual_score is None,
+            -(c.score.final_score if c.score else 0),
+            c.identity,
+        ),
+    )
 
 
 @timed("archive_preparation")

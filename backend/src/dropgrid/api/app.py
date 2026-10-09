@@ -25,6 +25,7 @@ from dropgrid.integrations.vk.errors import (
 from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
 from dropgrid.photos.archive import VKArchivePhotoProvider
+from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.engine import PhotoEngine
 from dropgrid.photos.preparation import MediaPreparation
 from dropgrid.photos.preparation_routes import router as preparation_router
@@ -102,6 +103,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(ConflictError)
     async def conflict(request: Request, exc: ConflictError) -> JSONResponse:
+        if isinstance(exc, PhotoConflict):
+            return JSONResponse(status_code=409, content={"detail": {"code": exc.code}})
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(InvalidGridError)

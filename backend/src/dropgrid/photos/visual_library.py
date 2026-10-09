@@ -2,12 +2,14 @@
 
 import asyncio
 import hashlib
+from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from dropgrid.db.models import CommunityContentProfile, CommunityReferencePhoto, MediaAsset
+from dropgrid.db.models import CommunityContentProfile, CommunityReferencePhoto, MediaAsset, utcnow
+from dropgrid.photos.density import assess_references
 from dropgrid.photos.domain import PhotoError, PhotoQueryBuilder
 from dropgrid.photos.images import LocalMediaStorage
 from dropgrid.photos.timings import timed
@@ -70,38 +72,39 @@ class VisualLibrary:
                 )
             return vector
 
+    async def reference_rows(
+        self, community_id: UUID
+    ) -> tuple[list[CommunityReferencePhoto], CommunityContentProfile | None]:
+        async with self.sessions() as s:
+            profile = await s.get(CommunityContentProfile, community_id)
+            rows = list(
+                (
+                    await s.scalars(
+                        select(CommunityReferencePhoto)
+                        .where(
+                            CommunityReferencePhoto.community_id == community_id,
+                            CommunityReferencePhoto.enabled.is_(True),
+                            CommunityReferencePhoto.is_style_reference.is_(True),
+                            CommunityReferencePhoto.posted_at >= utcnow() - timedelta(days=180),
+                        )
+                        .order_by(
+                            CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id
+                        )
+                        .limit(profile.reference_target_count if profile else 100)
+                    )
+                ).all()
+            )
+        assessments, _ = assess_references(rows, self.embedder)
+        core = {a.id for a in assessments if a.role == "core"}
+        return [row for row in rows if row.id in core], profile
+
     @timed("reference_loading")
     async def references(
         self, community_id: UUID
     ) -> tuple[list[VisualEmbedding], list[UUID], CommunityContentProfile | None]:
-        async with self.sessions() as s:
-            profile = await s.get(CommunityContentProfile, community_id)
-            rows = (
-                await s.scalars(
-                    select(CommunityReferencePhoto)
-                    .where(CommunityReferencePhoto.community_id == community_id)
-                    .order_by(CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id)
-                    .limit(profile.reference_target_count if profile else 100)
-                )
-            ).all()
-        vectors = []
-        ids = []
-        for row in rows:
-            if (
-                self.embedder
-                and row.embedding
-                and row.embedding_model == self.embedder.model
-                and row.embedding_dimensions == self.embedder.dimensions
-            ):
-                try:
-                    vector = deserialize_embedding(
-                        row.embedding, row.embedding_model, row.embedding_dimensions
-                    )
-                except PhotoError:
-                    continue
-                vectors.append(vector)
-                ids.append(row.id)
-        return vectors, ids, profile
+        rows, profile = await self.reference_rows(community_id)
+        _, vectors = assess_references(rows, self.embedder)
+        return list(vectors.values()), list(vectors), profile
 
     async def rank_assets(
         self, community_id: UUID, assets: list[MediaAsset], category: str | None
@@ -128,15 +131,4 @@ class VisualLibrary:
                 profile.avoid_content if profile else None,
                 asset.usage_count,
             )
-        if any(score.visual_score is None for score in result.values()):
-            # Never mix normalized V2 scores with unnormalized legacy scores.
-            result = {
-                asset.id: rank_photo(
-                    CampaignMediaPlanner._asset_candidate(asset),
-                    search,
-                    VisualScore(None, None, 0),
-                    usage=asset.usage_count,
-                )
-                for asset in assets
-            }
         return result

@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -168,6 +170,8 @@ class CommunityContentProfile(Updated, Base):
     archive_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archive_lease_token: Mapped[UUID | None] = mapped_column()
     archive_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    preview_lease_token: Mapped[UUID | None]
+    preview_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     references_last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sync_lease_token: Mapped[UUID | None] = mapped_column()
@@ -200,6 +204,13 @@ class CommunityReferencePhoto(Identity, Base):
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     reuse_eligible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    reference_role: Mapped[str] = mapped_column(String(12), default="core", server_default="core")
+    reference_density: Mapped[float | None] = mapped_column(Float)
+    reference_nearest_similarity: Mapped[float | None] = mapped_column(Float)
+    reference_duplicate: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
 
 
 class PhotoSearchCache(Base):
@@ -357,3 +368,28 @@ class MediaPreparationJob(Identity, Updated, Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(64))
+
+
+class ReferenceSyncJob(Identity, Updated, Base):
+    __tablename__ = "reference_sync_jobs"
+    __table_args__ = (
+        Index(
+            "ix_reference_sync_jobs_active",
+            "community_id",
+            unique=True,
+            postgresql_where=text("state NOT IN ('ready', 'failed')"),
+        ),
+        Index("ix_reference_sync_jobs_due", "state", "lease_until"),
+    )
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id", ondelete="CASCADE"))
+    account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
+    target_count: Mapped[int | None] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_token: Mapped[UUID | None]
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    progress: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict, server_default="{}")
+    result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(80))

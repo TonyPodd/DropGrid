@@ -2,12 +2,15 @@
 
 import asyncio
 from dataclasses import replace
-from uuid import UUID
+from datetime import timedelta
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from dropgrid.db.models import Community, CommunityContentProfile, GridCommunity, MediaAsset, utcnow
 from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
+from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import normalize_category
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, archive_pool, rank_pool
@@ -17,6 +20,8 @@ from dropgrid.photos.reference_schemas import (
     PhotoPreviewInput,
     PhotoPreviewItem,
     PhotoPreviewRead,
+    ReferenceMatch,
+    VisualEngineRead,
 )
 from dropgrid.photos.retrieval import RetrievedPhoto, retrieve_photos
 from dropgrid.photos.timings import collect_timings, stage
@@ -28,6 +33,10 @@ def preview_item(item: PoolCandidate) -> PhotoPreviewItem:
     assert item.score
     score = item.score
     return PhotoPreviewItem(
+        top_references=[
+            ReferenceMatch(reference_id=id, similarity=similarity)
+            for id, similarity in item.reference_matches
+        ],
         media_asset_id=item.asset.id if item.asset else None,
         reference_id=item.reference.id if item.reference else None,
         source=item.source,
@@ -188,7 +197,29 @@ async def _photo_preview(
             update={"retrieval_queries": provenance.get(item.asset.id, []) if item.asset else []}
         )
 
+    embeddings = sum(item.embedding is not None for item in ranked_pixabay)
+    reason = None
+    if visual.embedder is None:
+        reason = "model_disabled"
+    elif any(
+        item.embedding_error in {"visual_model_unavailable", "visual_embedding_unavailable"}
+        for item in ranked_pixabay
+    ):
+        reason = "model_unavailable"
+    elif not reference_ids:
+        reason = "no_compatible_references"
+    elif embeddings < len(ranked_pixabay) or not embeddings:
+        reason = "candidate_embedding_unavailable"
+    active = any(item.score and item.score.visual_score is not None for item in ranked_pixabay)
     return PhotoPreviewRead(
+        visual_engine=VisualEngineRead(
+            enabled=visual.embedder is not None,
+            model=visual.embedder.model if visual.embedder else None,
+            compatible_reference_count=len(reference_ids),
+            candidate_embeddings_available=embeddings,
+            active=active,
+            reason_if_inactive=reason,
+        ),
         community_id=community_id,
         category=category,
         comment=comment,
@@ -211,7 +242,7 @@ async def _photo_preview(
     )
 
 
-async def photo_preview(
+async def _timed_preview(
     planner: CampaignMediaPlanner,
     visual: VisualLibrary,
     community_id: UUID,
@@ -234,3 +265,39 @@ async def photo_preview(
         if data.diagnostics and planner.settings.app_env == "development":
             result.timings_ms = {key: round(value, 2) for key, value in timings.items()}
         return result
+
+
+async def photo_preview(
+    planner: CampaignMediaPlanner,
+    visual: VisualLibrary,
+    community_id: UUID,
+    data: PhotoPreviewInput,
+) -> PhotoPreviewRead:
+    token = uuid4()
+    async with planner.sessions() as session, session.begin():
+        await get_entity(session, Community, community_id)
+        await session.execute(
+            insert(CommunityContentProfile)
+            .values(community_id=community_id)
+            .on_conflict_do_nothing()
+        )
+        profile = await session.get(CommunityContentProfile, community_id, with_for_update=True)
+        assert profile
+        for until, code in (
+            (profile.sync_lease_until, "reference_sync_in_progress"),
+            (profile.archive_lease_until, "archive_sync_in_progress"),
+            (profile.preview_lease_until, "preview_in_progress"),
+        ):
+            if until and until > utcnow():
+                raise PhotoConflict(code)
+        profile.preview_lease_token, profile.preview_lease_until = (
+            token,
+            utcnow() + timedelta(seconds=planner.policy.plan_timeout_seconds + 30),
+        )
+    try:
+        return await _timed_preview(planner, visual, community_id, data)
+    finally:
+        async with planner.sessions() as session, session.begin():
+            profile = await session.get(CommunityContentProfile, community_id, with_for_update=True)
+            if profile and profile.preview_lease_token == token:
+                profile.preview_lease_token = profile.preview_lease_until = None

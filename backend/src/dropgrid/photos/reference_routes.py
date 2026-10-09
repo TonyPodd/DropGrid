@@ -10,6 +10,7 @@ from dropgrid.db.models import Community, CommunityReferencePhoto
 from dropgrid.photos.archive import ArchiveDiscovery
 from dropgrid.photos.domain import PhotoError
 from dropgrid.photos.preview import photo_preview
+from dropgrid.photos.reference_jobs import ReferenceJobs
 from dropgrid.photos.reference_schemas import (
     ArchiveSyncInput,
     ArchiveSyncRead,
@@ -120,3 +121,17 @@ async def archive_sync(
 ) -> ArchiveSyncRead:
     values = data or ArchiveSyncInput()
     return await ArchiveDiscovery(service).sync(community_id, values.account_id, values.max_pages)
+
+
+@router.post("/communities/{community_id}/references/jobs", status_code=202)
+async def queue_reference_study(
+    community_id: UUID, service: Collector, data: ReferenceSyncInput | None = None
+) -> dict[str, object]:
+    return await ReferenceJobs(service).enqueue(community_id, data or ReferenceSyncInput())
+
+
+@router.get("/communities/{community_id}/references/jobs/latest")
+async def latest_reference_study(
+    community_id: UUID, service: Collector
+) -> dict[str, object] | None:
+    return await ReferenceJobs(service).latest(community_id)

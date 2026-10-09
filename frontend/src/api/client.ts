@@ -43,6 +43,31 @@ export async function request<T>(
       422: "Проверьте поля формы: данные не прошли проверку.",
       503: "Сервис временно недоступен. Повторите позже.",
     };
+    if (response.status === 409) {
+      const conflicts: Record<string, string> = {
+        reference_sync_in_progress:
+          "Изучение стены уже выполняется. Дождитесь завершения.",
+        archive_sync_in_progress:
+          "Индексация архива уже выполняется. Дождитесь завершения.",
+        profile_locked:
+          "Профиль занят обработкой фото. Повторите после завершения.",
+        preview_in_progress:
+          "Сравнение фото уже выполняется. Дождитесь завершения.",
+      };
+      const payload: unknown = await response.json().catch(() => null);
+      if (payload && typeof payload === "object" && "detail" in payload) {
+        const detail = payload.detail;
+        if (
+          detail &&
+          typeof detail === "object" &&
+          "code" in detail &&
+          typeof detail.code === "string" &&
+          conflicts[detail.code]
+        ) {
+          throw new ApiError(409, conflicts[detail.code]);
+        }
+      }
+    }
     throw new ApiError(
       response.status,
       messages[response.status] ??

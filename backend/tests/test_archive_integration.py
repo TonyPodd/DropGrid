@@ -556,6 +556,7 @@ async def test_preview_comparisons_do_not_share_mutable_scores(sessions, tmp_pat
         p = await s.get(CommunityContentProfile, cid)
         p.archive_reuse_enabled = True
     ref, _ = await cached_reference(sessions, refs, embedder, cid, style=True)
+    await cached_reference(sessions, refs, embedder, cid, photo_id=2, style=True, age=1, seed=3)
     image = normalize_image(image_bytes(seed=15), PhotoPolicy())
     key = storage.write(image)
     vector = await embedder.embed_image(image.data)
@@ -609,7 +610,9 @@ async def test_preview_comparisons_do_not_share_mutable_scores(sessions, tmp_pat
         preview = await photo_preview(planner, visual, cid, PhotoPreviewInput())
     assert preview.community_aware[0].visual_score is not None
     assert preview.community_aware[0].final_score <= 1
-    assert all(item.visual_score is None for item in preview.mixed_source)
+    assert any(item.visual_score is not None for item in preview.mixed_source)
+    assert preview.visual_engine.active
+    assert preview.community_aware[0].top_references
 
 
 async def test_recent_sync_materializes_metadata_only_archive_reference(sessions, tmp_path):

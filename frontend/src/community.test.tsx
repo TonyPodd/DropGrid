@@ -30,12 +30,14 @@ beforeEach(() => {
     ],
   });
   vi.spyOn(communityVisualApi, "save").mockResolvedValue(profile);
+  vi.spyOn(communityVisualApi, "study").mockResolvedValue(null);
   vi.spyOn(communityVisualApi, "sync").mockResolvedValue({
-    posts_scanned: 2,
-    references_created: 1,
-    references_existing: 0,
-    references_embedded: 1,
-    warnings: [],
+    id: "j1",
+    state: "ready",
+    elapsed_seconds: 2,
+    progress: {},
+    result: { warnings: [] },
+    error_code: null,
   });
   vi.spyOn(communityVisualApi, "archive").mockResolvedValue({
     posts_scanned: 200,
@@ -114,12 +116,14 @@ it("runs one sync only after explicit click and shows bounded preview scores", a
   await userEvent.click(
     screen.getByRole("button", { name: "Изучить последние посты" }),
   );
-  await screen.findByText(/Просмотрено постов: 2/);
+  await waitFor(() => expect(communityVisualApi.sync).toHaveBeenCalled());
   expect(communityVisualApi.sync).toHaveBeenCalledExactlyOnceWith("c1");
   await userEvent.click(
     screen.getByRole("button", { name: "Сравнить подбор фото" }),
   );
-  await screen.findByRole("heading", { name: "С учётом сообщества" });
+  await screen.findByRole("heading", {
+    name: "Pixabay · визуальное сравнение недоступно",
+  });
   expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith("c1");
   expect(
     screen.getByText(/180–270 дней: 7; 450–540 дней: 7/),
@@ -168,4 +172,44 @@ it("uses explicit grid context and shows query diagnostics", async () => {
     "c1",
     "g1",
   );
+});
+
+it("shows a visible inactive warning and CORE/AUX diagnostics", async () => {
+  vi.mocked(communityVisualApi.references).mockResolvedValue({
+    total: 1,
+    items: [
+      {
+        id: "r2",
+        vk_post_id: 6,
+        posted_at: "2026-10-08T10:00:00Z",
+        embedding_model: "clip",
+        reference_role: "auxiliary",
+        reference_density: 0.23,
+        reference_nearest_similarity: 0.4,
+      },
+    ],
+  });
+  open();
+  await screen.findByText("AUX");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Сравнить/ }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Визуальное сравнение сейчас не используется",
+  );
+  expect(screen.getByText(/density: 0.230/)).toBeInTheDocument();
+});
+
+it("recovers durable study progress and disables conflicting operations", async () => {
+  vi.mocked(communityVisualApi.study).mockResolvedValue({
+    id: "j2",
+    state: "embedding",
+    elapsed_seconds: 14,
+    progress: { embeddings_done: 7, embeddings_total: 12 },
+    result: null,
+    error_code: null,
+  });
+  open();
+  await screen.findByText(/Строим embeddings: 7\/12/);
+  expect(screen.getByRole("button", { name: /Изучить/ })).toBeDisabled();
 });

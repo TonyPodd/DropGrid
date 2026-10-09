@@ -11,7 +11,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from dropgrid.photos.concepts import concept_queries
+from dropgrid.photos.concepts import car_model, concept_queries
 
 MAX_RETRIEVAL_QUERIES = 4
 MAX_CANDIDATES_PER_QUERY = 24
@@ -153,6 +153,18 @@ class PhotoQueryBuilder:
         content_hint: str | None = None,
         desired_content: str | None = None,
     ) -> PhotoQueryPlan:
+        model = car_model(" ".join(filter(None, (category, content_hint, desired_content))))
+        if model:
+            return PhotoQueryPlan(
+                normalize_category(category),
+                tuple(
+                    PhotoSearch(query=model + suffix, lang="en", per_page=MAX_CANDIDATES_PER_QUERY)
+                    for suffix in ("", " car", " aesthetic", " street")
+                ),
+                False,
+                content_hint,
+                desired_content,
+            )
         key = normalize_category(category)
         canonical = self.aliases.get(key, key)
         if {"dating", "знакомства", "знакомство"} & set(key.split()):

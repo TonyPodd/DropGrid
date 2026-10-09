@@ -1,6 +1,7 @@
 """Bounded read-only VK photo-reference collection, separate from candidate media."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -20,6 +21,8 @@ from dropgrid.domain.enums import AccountStatus
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.credentials import TokenProvider
 from dropgrid.integrations.vk.errors import VKError
+from dropgrid.photos.conflicts import PhotoConflict
+from dropgrid.photos.density import refresh_density
 from dropgrid.photos.domain import PhotoError, PhotoPolicy
 from dropgrid.photos.download import PhotoDownloader, validate_url
 from dropgrid.photos.images import LocalMediaStorage, normalize_image
@@ -129,6 +132,16 @@ async def profile_save(
     session: AsyncSession, community_id: UUID, data: ProfileInput
 ) -> ProfileRead:
     await get_entity(session, Community, community_id)
+    locked = await session.get(CommunityContentProfile, community_id, with_for_update=True)
+    if locked and any(
+        until and until > utcnow()
+        for until in (
+            locked.sync_lease_until,
+            locked.archive_lease_until,
+            locked.preview_lease_until,
+        )
+    ):
+        raise PhotoConflict("profile_locked")
     await session.execute(
         insert(CommunityContentProfile)
         .values(community_id=community_id, **data.model_dump())
@@ -137,6 +150,8 @@ async def profile_save(
         )
     )
     await session.flush()
+    if locked:
+        await session.refresh(locked)
     # Recompute eligibility when policy changes; no conversion/republication.
     rows = (
         await session.scalars(
@@ -284,6 +299,7 @@ class CommunityReferenceCollector:
         max_scanned_posts: int = MAX_SCANNED_POSTS,
         timeout_seconds: float = SYNC_TIMEOUT_SECONDS,
         recent_since: datetime | None = None,
+        progress: Callable[[str, ReferenceSyncRead], Awaitable[None]] | None = None,
     ) -> ReferenceSyncRead:
         if (
             not 1 <= max_scanned_posts <= MAX_SCANNED_POSTS
@@ -305,13 +321,13 @@ class CommunityReferenceCollector:
             )
             profile = await session.get(CommunityContentProfile, community_id, with_for_update=True)
             assert profile is not None
-            if (
-                profile.sync_lease_until
-                and profile.sync_lease_until > utcnow()
-                or profile.archive_lease_until
-                and profile.archive_lease_until > utcnow()
+            for until, code in (
+                (profile.sync_lease_until, "reference_sync_in_progress"),
+                (profile.archive_lease_until, "archive_sync_in_progress"),
+                (profile.preview_lease_until, "preview_in_progress"),
             ):
-                raise ConflictError("Reference sync already running")
+                if until and until > utcnow():
+                    raise PhotoConflict(code)
             profile.sync_lease_token, profile.sync_lease_until = (
                 lease,
                 utcnow() + timedelta(minutes=6),
@@ -332,6 +348,11 @@ class CommunityReferenceCollector:
             if account_id:
                 query = query.where(Account.id == account_id)
             aid = await session.scalar(query.limit(1))
+
+        async def notify(state: str) -> None:
+            if progress:
+                await progress(state, report)
+
         seen: set[tuple[int, int]] = set()
         offset = 0
         try:
@@ -341,6 +362,7 @@ class CommunityReferenceCollector:
             token = await self.tokens.get_token(aid)
             async with asyncio.timeout(timeout_seconds):
                 while report.posts_scanned < max_scanned_posts and len(seen) < target:
+                    await notify("reading_wall")
                     page = await self.client.get_community_wall_history(
                         group,
                         access_token=token,
@@ -383,6 +405,7 @@ class CommunityReferenceCollector:
                             report.references_existing += 1
                             seen.add(identity)
                             try:
+                                await notify("embedding")
                                 report.references_embedded += int(
                                     await self._embed_existing(existing)
                                 )
@@ -390,6 +413,7 @@ class CommunityReferenceCollector:
                                 report.warnings.append(e.code)
                         else:
                             try:
+                                await notify("downloading")
                                 raw = await self.downloader.download(photo.url)
                                 with stage("normalization"):
                                     image = await asyncio.to_thread(
@@ -400,6 +424,7 @@ class CommunityReferenceCollector:
                                 embedding = None
                                 if self.embedder:
                                     try:
+                                        await notify("embedding")
                                         embedding = await self.embedder.embed_image(image.data)
                                     except PhotoError as e:
                                         report.warnings.append(e.code)
@@ -469,6 +494,7 @@ class CommunityReferenceCollector:
                                 report.warnings.append(e.code)
                             except OSError:
                                 report.warnings.append("reference_storage_unavailable")
+                        await notify("reading_wall")
                         if len(seen) >= target:
                             finished = True
                             break
@@ -493,6 +519,8 @@ class CommunityReferenceCollector:
             if self.embedder is None:
                 report.warnings.append("visual_embedding_disabled")
             report.warnings = sorted(set(report.warnings))
+        await notify("finalizing")
+        await refresh_density(self.sessions, community_id, self.embedder)
         return report
 
     async def backfill(self, community_id: UUID) -> int:
@@ -506,4 +534,6 @@ class CommunityReferenceCollector:
                     .limit(300)
                 )
             ).all()
-        return sum([int(await self._embed_existing(row)) for row in rows])
+        count = sum([int(await self._embed_existing(row)) for row in rows])
+        await refresh_density(self.sessions, community_id, self.embedder)
+        return count

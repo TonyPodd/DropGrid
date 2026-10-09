@@ -58,6 +58,10 @@ class ReferenceRead(Output):
     vk_photo_id: int
     posted_at: datetime
     embedding_model: str | None
+    reference_role: str = "core"
+    reference_density: float | None = None
+    reference_nearest_similarity: float | None = None
+    reference_duplicate: bool = False
     reuse_eligible: bool
 
 
@@ -75,7 +79,22 @@ class PhotoPreviewInput(Input):
     diagnostics: bool = False
 
 
+class VisualEngineRead(Output):
+    enabled: bool = False
+    model: str | None = None
+    compatible_reference_count: int = 0
+    candidate_embeddings_available: int = 0
+    active: bool = False
+    reason_if_inactive: str | None = None
+
+
+class ReferenceMatch(Output):
+    reference_id: UUID
+    similarity: float
+
+
 class PhotoPreviewItem(Output):
+    top_references: list[ReferenceMatch] = Field(default_factory=list)
     provider: str = ""
     media_asset_id: UUID | None = None
     reference_id: UUID | None = None
@@ -104,6 +123,7 @@ class ArchiveShortlistItem(Output):
 
 
 class PhotoPreviewRead(Output):
+    visual_engine: VisualEngineRead = Field(default_factory=VisualEngineRead)
     timings_ms: dict[str, float] | None = None
     community_id: UUID
     category: str | None

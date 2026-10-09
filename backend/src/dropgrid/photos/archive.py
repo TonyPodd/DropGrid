@@ -20,6 +20,7 @@ from dropgrid.domain.enums import AccountStatus
 from dropgrid.integrations.vk.errors import VKError
 from dropgrid.integrations.vk.models import WallPosts
 from dropgrid.photos.archive_retrieval import WallDateSeeker, stratified_sample
+from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoPolicy, PhotoQueryBuilder
 from dropgrid.photos.images import normalize_image
 from dropgrid.photos.reference_schemas import ArchiveSyncRead
@@ -72,13 +73,13 @@ class ArchiveDiscovery:
             )
             profile = await s.get(CommunityContentProfile, community_id, with_for_update=True)
             assert profile
-            if (
-                profile.archive_lease_until
-                and profile.archive_lease_until > utcnow()
-                or profile.sync_lease_until
-                and profile.sync_lease_until > utcnow()
+            for until, code in (
+                (profile.sync_lease_until, "reference_sync_in_progress"),
+                (profile.archive_lease_until, "archive_sync_in_progress"),
+                (profile.preview_lease_until, "preview_in_progress"),
             ):
-                raise ConflictError("Archive discovery already running")
+                if until and until > utcnow():
+                    raise PhotoConflict(code)
             profile.archive_lease_token, profile.archive_lease_until = (
                 lease,
                 utcnow() + timedelta(minutes=6),

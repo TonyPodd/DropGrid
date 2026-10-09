@@ -26,13 +26,25 @@ type Profile = ProfileInput & {
   archive_oldest_eligible_at?: string | null;
   archive_newest_eligible_at?: string | null;
 };
+type StudyJob = {
+  id: string;
+  state: string;
+  elapsed_seconds: number;
+  progress: Record<string, number>;
+  error_code: string | null;
+  result: { warnings: string[] } | null;
+};
 type Reference = {
+  reference_role?: string;
+  reference_density?: number | null;
+  reference_nearest_similarity?: number | null;
   id: string;
   posted_at: string;
   vk_post_id: number;
   embedding_model: string | null;
 };
 type Score = {
+  top_references?: { reference_id: string; similarity: number }[];
   media_asset_id: string | null;
   reference_id?: string | null;
   source?: string;
@@ -46,6 +58,14 @@ type Score = {
   final_score: number;
 };
 type Preview = {
+  visual_engine?: {
+    enabled: boolean;
+    model: string | null;
+    compatible_reference_count: number;
+    candidate_embeddings_available: number;
+    active: boolean;
+    reason_if_inactive: string | null;
+  };
   timings_ms?: Record<string, number> | null;
   category?: string | null;
   comment?: string | null;
@@ -85,13 +105,14 @@ export const communityVisualApi = {
       { signal },
     ),
   sync: (id: string) =>
-    request<{
-      posts_scanned: number;
-      references_created: number;
-      references_existing: number;
-      references_embedded: number;
-      warnings: string[];
-    }>(`/communities/${id}/references/sync`, { method: "POST", body: {} }),
+    request<StudyJob>(`/communities/${id}/references/jobs`, {
+      method: "POST",
+      body: {},
+    }),
+  study: (id: string, signal?: AbortSignal) =>
+    request<StudyJob | null>(`/communities/${id}/references/jobs/latest`, {
+      signal,
+    }),
   archive: (id: string) =>
     request<{
       posts_scanned: number;
@@ -126,7 +147,7 @@ function CandidateScores({
     <section>
       <h3>{title}</h3>
       <div className="reference-grid">
-        {items.map((item) => (
+        {items.map((item, rank) => (
           <figure
             key={
               item.source_identity ?? item.media_asset_id ?? item.reference_id
@@ -142,7 +163,7 @@ function CandidateScores({
               loading="lazy"
             />
             <figcaption>
-              {item.source ?? "pixabay"} · {item.source_identity}
+              #{rank + 1} · {item.source ?? "pixabay"} · {item.source_identity}
               <br />
               {item.original_posted_at && (
                 <>
@@ -159,6 +180,21 @@ function CandidateScores({
               Queries:{" "}
               {(item.retrieval_queries ?? []).join(" · ") ||
                 "library / archive"}
+              {(item.top_references ?? []).length > 0 && (
+                <div>
+                  Ближайшие CORE references:
+                  {item.top_references?.map((ref) => (
+                    <span key={ref.reference_id}>
+                      <img
+                        style={{ width: 54, height: 54, objectFit: "cover" }}
+                        src={referenceContentUrl(communityId, ref.reference_id)}
+                        alt="Ближайший CORE reference"
+                      />{" "}
+                      {ref.similarity.toFixed(3)}{" "}
+                    </span>
+                  ))}
+                </div>
+              )}
             </figcaption>
           </figure>
         ))}
@@ -183,6 +219,8 @@ export function CommunityDetailPage() {
   );
   const [body, setBody] = useState<ProfileInput>(defaults);
   const [busy, setBusy] = useState(false);
+  const [study, setStudy] = useState<StudyJob | null>(null);
+  const studying = !!study && !["ready", "failed"].includes(study.state);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<Preview>();
@@ -208,6 +246,29 @@ export function CommunityDetailPage() {
       });
     }
   }, [state.data]);
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const controller = new AbortController();
+    async function poll() {
+      try {
+        const job = await communityVisualApi.study(id, controller.signal);
+        if (disposed) return;
+        setStudy(job);
+        if (job && !["ready", "failed"].includes(job.state))
+          timer = setTimeout(() => void poll(), 1000);
+        else if (job) setRevision((n) => n + 1);
+      } catch (err) {
+        if (!disposed) setError(errorMessage(err));
+      }
+    }
+    void poll();
+    return () => {
+      disposed = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [id, study?.id]);
   async function run(operation: "save" | "sync" | "archive" | "preview") {
     setBusy(true);
     setError("");
@@ -222,10 +283,7 @@ export function CommunityDetailPage() {
       else {
         await communityVisualApi.save(id, body);
         if (operation === "sync") {
-          const result = await communityVisualApi.sync(id);
-          setMessage(
-            `Просмотрено постов: ${result.posts_scanned}. Новых референсов: ${result.references_created}. Существующих: ${result.references_existing}. Embeddings: ${result.references_embedded}. ${result.warnings.join(", ")}`,
-          );
+          setStudy(await communityVisualApi.sync(id));
         } else if (operation === "archive") {
           const result = await communityVisualApi.archive(id);
           setMessage(
@@ -273,7 +331,7 @@ export function CommunityDetailPage() {
                 void run("save");
               }}
             >
-              <fieldset disabled={busy}>
+              <fieldset disabled={busy || studying}>
                 <label>
                   Желаемый контент
                   <textarea
@@ -394,6 +452,27 @@ export function CommunityDetailPage() {
           </>
         )}
       </State>
+      {study && (
+        <p role="status">
+          {
+            (
+              {
+                queued: "В очереди",
+                reading_wall: `Читаем стену: ${study.progress.posts_scanned ?? 0} постов`,
+                downloading: `Скачиваем фото: ${study.progress.downloads_done ?? 0}/${study.progress.downloads_total ?? 0}`,
+                embedding: `Строим embeddings: ${study.progress.embeddings_done ?? 0}/${study.progress.embeddings_total ?? 0}`,
+                finalizing: "Определяем CORE references",
+                ready: "Изучение стены завершено",
+                failed: "Изучение стены не завершено. Повторите позже.",
+              } as Record<string, string>
+            )[study.state]
+          }{" "}
+          · {study.elapsed_seconds} сек.
+          {study.result?.warnings?.length
+            ? ` · ${study.result.warnings.join(", ")}`
+            : ""}
+        </p>
+      )}
       {message && <p role="status">{message}</p>}
       {error && <p role="alert">{error}</p>}
       <h2>Визуальные референсы</h2>
@@ -406,7 +485,15 @@ export function CommunityDetailPage() {
                 alt={`Референс поста ${ref.vk_post_id}`}
                 loading="lazy"
               />
-              <figcaption>{date(ref.posted_at)}</figcaption>
+              <figcaption>
+                <strong>
+                  {ref.reference_role === "auxiliary" ? "AUX" : "CORE"}
+                </strong>{" "}
+                · {date(ref.posted_at)}
+                <br />
+                density: {ref.reference_density?.toFixed(3) ?? "—"} · nearest:{" "}
+                {ref.reference_nearest_similarity?.toFixed(3) ?? "—"}
+              </figcaption>
             </figure>
           ))}
         </div>
@@ -419,6 +506,20 @@ export function CommunityDetailPage() {
       />
       {preview && (
         <>
+          {!preview.visual_engine?.active && (
+            <p role="alert">
+              Визуальное сравнение сейчас не используется ·{" "}
+              {preview.visual_engine?.reason_if_inactive ??
+                "no_compatible_references"}
+            </p>
+          )}
+          {preview.visual_engine && (
+            <p className="note">
+              Visual engine: {preview.visual_engine.model ?? "disabled"} · CORE:{" "}
+              {preview.visual_engine.compatible_reference_count} · candidate
+              embeddings: {preview.visual_engine.candidate_embeddings_available}
+            </p>
+          )}
           <p>
             Порядок и scores доступны для сравнения; улучшение качества требует
             визуальной оценки.
@@ -456,12 +557,16 @@ export function CommunityDetailPage() {
           )}
           <CandidateScores
             communityId={id}
-            title="Только категория"
+            title="Pixabay"
             items={preview.category_only}
           />
           <CandidateScores
             communityId={id}
-            title="С учётом сообщества"
+            title={
+              preview.visual_engine?.active
+                ? "Community-ranked Pixabay"
+                : "Pixabay · визуальное сравнение недоступно"
+            }
             items={preview.community_aware}
           />
           <CandidateScores

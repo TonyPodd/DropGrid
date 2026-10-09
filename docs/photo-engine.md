@@ -256,3 +256,26 @@ nonempty legacy migrations, persistent cache/coalescing, shared rate cooldowns,
 hash/alias uniqueness, concurrent plans/imports, category precedence, partial
 results, idempotency/force and content/library endpoints. Frontend tests cover
 the automated button, progress/results, local thumbnails, provenance and filters.
+
+### Observable visual profiling
+
+Photo Lab shows visual-engine status explicitly. Null visual scores retain the
+metadata fallback, with a visible warning; a missing candidate embedding does
+not disable other candidates. CORE references are selected from compatible,
+enabled style references in the last 180 days. Exact/near duplicates collapse;
+density is the mean of the five nearest other images. With eight unique images
+or more, the top 75% (at least six) form CORE; smaller sets retain all unique
+references. Historical references remain available as AUX.
+
+Reference study uses durable PostgreSQL jobs. Start its read-only worker:
+
+```bash
+docker compose --profile reference-study up -d reference-study
+# Or from backend/, with the same DB/storage/model configuration as the API:
+python -m dropgrid.photos.reference_worker
+```
+
+The UI polls `/communities/{id}/references/jobs/latest`; enqueue uses
+`POST /communities/{id}/references/jobs`. Progress persists through page reload.
+The worker cannot instantiate a sender and forces VK writes off. Expired jobs
+can resume bounded read-only collection; each job has at most two executions.
