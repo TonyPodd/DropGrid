@@ -86,7 +86,7 @@ Existing search/normalized/embedding caches were reused; no forced cache expirat
 
 Contact sheet is generated in ignored local media reports.
 
-### Bmw
+### BMW
 
 Pinterest: 32 unique metadata candidates, 32 materialized, 32 embedded.
 Queries: bmw e60, bmw e60 car, bmw e60 aesthetic.
@@ -110,4 +110,3 @@ Existing search/normalized/embedding caches were reused; no forced cache expirat
 | 12 | vk_category_archive | 0.764 |
 
 Contact sheet is generated in ignored local media reports.
-
