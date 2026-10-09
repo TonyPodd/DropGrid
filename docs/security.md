@@ -36,11 +36,7 @@ includes detect-private-key; that is not a substitute for full secret scanning.
 Review diffs and CI configuration for credentials before pushing.
 
 ## Platform boundaries
-
-No CAPTCHA bypass, anti-fraud evasion, fingerprint spoofing, residential proxy
-rotation, account purchasing/creation or blocking circumvention is included.
-Future integrations must use the official API, permitted accounts, documented
-capabilities and normal rate limits. Respect platform errors and user consent.
+-...-
 
 ## Data and tests
 
