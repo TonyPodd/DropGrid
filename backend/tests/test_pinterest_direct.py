@@ -251,3 +251,28 @@ async def test_safe_diagnostics_distinguish_status_html_empty_and_parser_mismatc
         assert json.loads(JsonFormatter().format(logged))["counts"] == diagnostic
         assert "private body" not in str(diagnostic) and "private body" not in caplog.text
         assert not list(client.cookies.jar)
+
+
+async def test_related_capability_bounded_upstream_options_and_ephemeral_session():
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        if request.url.path == "/":
+            return httpx.Response(200, text="public")
+        assert request.url.path == "/resource/RelatedPinFeedResource/get/"
+        assert request.url.params["source_url"] == "/pin/123456789/"
+        assert json.loads(request.url.params["data"])["options"] == {
+            "pin_id": "123456789",
+            "page_size": 25,
+        }
+        assert request.url.params["_"].isdigit()
+        return httpx.Response(200, json=envelope([wire(str(234567890 + i)) for i in range(25)]))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        backend = PinterestDirectBackend(client)
+        assert len(await backend.related("123456789")) == 20
+        assert len(calls) == 2 and not list(client.cookies.jar)
+        with pytest.raises(PhotoError):
+            await backend.related("123456789", 21)
+        assert len(calls) == 2

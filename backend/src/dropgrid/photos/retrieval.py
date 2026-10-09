@@ -31,7 +31,12 @@ class RetrievalResult:
 
 
 async def retrieve_photos(
-    cache: SearchCache, plan: PhotoQueryPlan, policy: PhotoPolicy
+    cache: SearchCache,
+    plan: PhotoQueryPlan,
+    policy: PhotoPolicy,
+    *,
+    target: int | None = None,
+    max_candidates: int | None = None,
 ) -> RetrievalResult:
     result = RetrievalResult()
     if plan.sensitive and not cache.provider.supports_sensitive_context:
@@ -67,6 +72,8 @@ async def retrieve_photos(
             if identity not in lane:
                 lane.append(identity)
         lanes.append(lane)
+        if target is not None and len(by_identity) >= target:
+            break
     await emit(
         "pinterest_search"
         if getattr(cache.provider, "name", "") == "pinterest"
@@ -82,6 +89,8 @@ async def retrieve_photos(
             if i < len(lane) and lane[i] not in seen:
                 seen.add(lane[i])
                 result.items.append(by_identity[lane[i]])
+    if max_candidates is not None:
+        result.items = result.items[:max_candidates]
     return result
 
 

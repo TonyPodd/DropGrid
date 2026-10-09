@@ -300,6 +300,11 @@ class PinterestDirectBackend:
         }
         if cursor:
             options["bookmarks"] = [cursor]
+        return await self._resource_page("BaseSearchResource", source, options, query)
+
+    async def _resource_page(
+        self, resource: str, source: str, options: dict[str, object], query: str
+    ) -> PinterestPage:
         headers = {
             "Accept": "application/json, text/javascript, */*, q=0.01",
             "X-Pinterest-PWS-Handler": "www/[username].js",
@@ -318,7 +323,7 @@ class PinterestDirectBackend:
         if csrf:
             headers["X-CSRFToken"] = csrf
         body = await self._get(
-            "/resource/BaseSearchResource/get/",
+            f"/resource/{resource}/get/",
             params={
                 "source_url": source,
                 "_": str(time.time_ns() // 1_000_000),
@@ -329,6 +334,46 @@ class PinterestDirectBackend:
         payload = json.loads(body)
         self._diagnostic.payload(payload)
         return parse_page(payload, query)
+
+    async def related(self, pin_id: str, limit: int = 20) -> list[dict[str, object]]:
+        """Development experiment capability; never called by production discovery.
+
+        One anonymous resource page, no pagination. A caller may choose at most
+        two already-ranked seeds; this adapter caps each seed at 20 results.
+        """
+        if (
+            not pin_id.isascii()
+            or not pin_id.isdigit()
+            or not 8 <= len(pin_id) <= 30
+            or not 1 <= limit <= 20
+        ):
+            raise PhotoError("pinterest_candidate_invalid")
+        async with self.lock:
+            self.client.cookies.clear()
+            self._sync_cookies()
+            self._diagnostic = PinterestDiagnostics()
+            try:
+                async with asyncio.timeout(20):
+                    await self._get(
+                        "/",
+                        headers={
+                            "Accept": (
+                                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                            )
+                        },
+                    )
+                    page = await self._resource_page(
+                        "RelatedPinFeedResource",
+                        f"/pin/{pin_id}/",
+                        {"pin_id": pin_id, "page_size": 25},
+                        f"related:{pin_id}",
+                    )
+                return [p.record() for p in page.pins if p.pin_id != pin_id][:limit]
+            except (httpx.HTTPError, PhotoError, ValueError, TypeError, TimeoutError):
+                raise PhotoError("pinterest_search_unavailable") from None
+            finally:
+                self.client.cookies.clear()
+                self._sync_cookies()
 
     async def search(self, query: str, limit: int) -> list[dict[str, object]]:
         async with self.lock:

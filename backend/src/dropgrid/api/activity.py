@@ -153,6 +153,8 @@ async def list_activity(session: AsyncSession) -> list[ActivityRead]:
                     target_url=f"/communities/{row.community_id}",
                     message="Операция не завершена. Проверьте доступ и повторите вручную."
                     if state == "failed"
+                    else "Pinterest недоступен — использован резервный источник"
+                    if row.result and "pinterest_fallback_used" in row.result.get("warnings", [])
                     else "Завершено с предупреждениями. Откройте результат."
                     if state == "warning"
                     else None,

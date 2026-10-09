@@ -5,11 +5,15 @@ Imports are serialized only for dedup persistence, never across HTTP downloads.
 """
 
 import asyncio
+import hashlib
+import io
 import logging
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID, uuid4
 
+from PIL import Image
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -28,6 +32,7 @@ from dropgrid.db.models import (
 )
 from dropgrid.domain.enums import CampaignStatus, SubmissionStatus
 from dropgrid.photos.cache import SearchCache
+from dropgrid.photos.discovery import discover
 from dropgrid.photos.domain import (
     Deduplicator,
     PhotoCandidate,
@@ -38,7 +43,8 @@ from dropgrid.photos.domain import (
     normalize_category,
 )
 from dropgrid.photos.download import PhotoDownloader
-from dropgrid.photos.images import MediaStorage, normalize_image
+from dropgrid.photos.images import MediaStorage, NormalizedPhoto, normalize_image
+from dropgrid.photos.pool import PoolCandidate
 from dropgrid.photos.schemas import CategoryPlanRead, MediaPlanInput, MediaPlanRead
 from dropgrid.photos.timings import stage
 from dropgrid.photos.visual import serialize_embedding
@@ -121,7 +127,8 @@ class CampaignMediaPlanner:
 
     def eligible(self, asset: MediaAsset, sensitive: bool = False) -> bool:
         if (
-            asset.provider in {"pinterest", "vk_category_archive"}
+            (asset.provider == "pinterest" and not self.settings.pinterest_publication_enabled)
+            or asset.provider == "vk_category_archive"
             or not asset.enabled
             or not asset.sha256
             or not asset.license_code
@@ -159,8 +166,11 @@ class CampaignMediaPlanner:
         self, candidate: PhotoCandidate, category: str, sensitive: bool
     ) -> tuple[MediaAsset | None, bool, str | None]:
         if (
-            candidate.provider in {"pinterest", "vk_category_archive"}
+            candidate.provider == "vk_category_archive"
+            or candidate.provider == "pinterest"
+            and not self.settings.pinterest_publication_enabled
             or not candidate.publication_eligible
+            and candidate.provider != "pinterest"
         ):
             return None, False, "publication_ineligible"
         async with self.semaphore:
@@ -169,12 +179,41 @@ class CampaignMediaPlanner:
                     "photo.candidate.selected",
                     extra={"category": category, "provider": candidate.provider},
                 )
-                data = await self.downloader.download(candidate.candidate_download_url)
+                cached_embedding = None
+                prepared_image = None
+                if candidate.provider == "pinterest":
+                    if not self.pinterest_preview:
+                        return None, False, "pinterest_preview_unavailable"
+                    prepared = await self.pinterest_preview.materialize(candidate)
+                    from dropgrid.db.models import PhotoPreviewCache
+
+                    async with self.sessions() as session:
+                        cached = await session.get(PhotoPreviewCache, prepared.preview_id)
+                    if not cached:
+                        return None, False, "preview_storage_unavailable"
+                    data = await asyncio.to_thread(
+                        self.pinterest_preview.storage.path(cached.storage_key).read_bytes
+                    )
+                    if hashlib.sha256(data).hexdigest() != cached.sha256:
+                        return None, False, "preview_storage_unavailable"
+                    with Image.open(io.BytesIO(data)) as opened:
+                        width, height = opened.size
+                    if not self.policy.dimensions_allowed(width, height):
+                        return None, False, "image_dimensions_rejected"
+                    prepared_image = NormalizedPhoto(
+                        data, cached.sha256, cached.perceptual_hash, width, height
+                    )
+                    cached_embedding = prepared.embedding
+                else:
+                    data = await self.downloader.download(candidate.candidate_download_url)
                 with stage("normalization"):
-                    image = await asyncio.to_thread(normalize_image, data, self.policy)
-                embedding = None
+                    if prepared_image is not None:
+                        image = prepared_image
+                    else:
+                        image = await asyncio.to_thread(normalize_image, data, self.policy)
+                embedding = cached_embedding
                 embedding_warning = None
-                if self.visual and self.visual.embedder:
+                if self.visual and self.visual.embedder and embedding is None:
                     try:
                         embedding = await self.visual.embedder.embed_image(image.data)
                     except PhotoError as exc:
@@ -267,6 +306,8 @@ class CampaignMediaPlanner:
                             provider_asset_id=candidate.provider_asset_id,
                             media_asset_id=asset.id,
                             source_url=candidate.source_page_url,
+                            image_source_url=candidate.candidate_download_url,
+                            retrieval_query=candidate.retrieval_query,
                             creator_name=candidate.creator_name,
                             creator_url=candidate.creator_url,
                             license_code=candidate.license_code,
@@ -386,11 +427,29 @@ class CampaignMediaPlanner:
                     )
                 ).all()
             }
+        from dropgrid.photos.concepts import car_model
+
+        async with self.sessions() as session:
+            name_hints = {
+                c.id: car_model(c.name)
+                for c in (
+                    await session.scalars(
+                        select(Community).where(Community.id.in_([s.community_id for s, _ in rows]))
+                    )
+                ).all()
+            }
         total = len(rows)
         previously = sum(s.media_asset_id is not None for s, _ in rows)
         report = MediaPlanRead(
             campaign_id=campaign_id, total_submissions=total, previously_assigned=previously
         )
+        source_of_asset = {a.id: "library" for a in library}
+        report.source_contributions = {
+            source: dict.fromkeys(
+                ("retrieved", "deduplicated", "materialized", "embedded", "top_10", "selected"), 0
+            )
+            for source in ("pinterest", "pixabay", "library", "vk_archive", "vk_category_archive")
+        }
         groups: dict[tuple[str, str | None, str | None], list[UUID]] = defaultdict(list)
         all_groups: dict[str, list[UUID]] = defaultdict(list)
         for submission, category in rows:
@@ -400,7 +459,12 @@ class CampaignMediaPlanner:
                 data.force or not submission.media_asset_id
             ):
                 groups[
-                    (key, hints.get(submission.community_id), desired.get(submission.community_id))
+                    (
+                        key,
+                        hints.get(submission.community_id)
+                        or name_hints.get(submission.community_id),
+                        desired.get(submission.community_id),
+                    )
                 ].append(submission.id)
         available: dict[tuple[str, str | None, str | None], list[MediaAsset]] = {}
         categories: dict[str, CategoryPlanRead] = {
@@ -415,6 +479,7 @@ class CampaignMediaPlanner:
             if s.media_asset_id and not (data.force and s.status == SubmissionStatus.pending)
         )
         stop_provider: str | None = None
+        discovered_pins: dict[tuple[str, str | None, str | None], list[PoolCandidate]] = {}
         try:
             async with asyncio.timeout(self.policy.plan_timeout_seconds):
                 for context, submission_ids in sorted(
@@ -433,6 +498,7 @@ class CampaignMediaPlanner:
                         and preserved_counts[a.id] < reuse
                     ]
                     available[context] = assets
+                    report.source_contributions["library"]["retrieved"] += len(assets)
                     target = (
                         len(assets) + min(4, len(submission_ids)) if hinted else len(submission_ids)
                     )
@@ -443,15 +509,46 @@ class CampaignMediaPlanner:
                     if plan.sensitive and not self.cache.provider.supports_sensitive_context:
                         warnings.append("provider_context_restricted")
                         continue
-                    if stop_provider:
+                    if stop_provider and not self.pinterest_preview:
                         warnings.append(stop_provider)
                         continue
                     candidates: dict[tuple[str, str], tuple[PhotoCandidate, float]] = {}
-                    for priority, search in enumerate(plan.variants):
+                    discovery = None
+                    if self.pinterest_preview:
+                        representative = next(
+                            s.community_id for s, _ in rows if s.id in submission_ids
+                        )
+                        discovery = await discover(
+                            self.pinterest_preview,
+                            self.cache,
+                            plan,
+                            representative,
+                            self.settings,
+                            self.policy,
+                            for_campaign=True,
+                            include_fallback=stop_provider is None,
+                        )
+                        discovered_pins[context] = discovery.pins
+                        primary_counts = report.source_contributions["pinterest"]
+                        primary_counts["retrieved"] += discovery.pins_retrieved
+                        primary_counts["materialized"] += discovery.pins_materialized
+                        primary_counts["embedded"] += discovery.pins_embedded
+                        warnings.extend(discovery.warnings)
+                        report.provider_requests += discovery.primary_requests
+                        report.provider_cache_hits += discovery.primary_cache_hits
+                    searches = plan.variants if discovery is None else plan.variants[:1]
+                    for priority, search in enumerate(searches):
                         try:
-                            found, hit = await self.cache.search(search)
-                            report.provider_cache_hits += int(hit)
-                            report.provider_requests += int(not hit)
+                            if discovery is None:
+                                found, hit = await self.cache.search(search)
+                                report.provider_cache_hits += int(hit)
+                                report.provider_requests += int(not hit)
+                            else:
+                                found = tuple(item.photo for item in discovery.fallback.items)
+                            report.source_contributions["pixabay"]["retrieved"] += len(found)
+                            if discovery is not None:
+                                report.provider_requests += discovery.fallback.requests
+                                report.provider_cache_hits += discovery.fallback.cache_hits
                         except PhotoError as exc:
                             report.provider_requests += int(exc.request_made)
                             warnings.append(exc.code)
@@ -519,6 +616,13 @@ class CampaignMediaPlanner:
                             if error:
                                 warnings.append(error)
                             if asset is not None:
+                                source_of_asset.setdefault(asset.id, "pixabay")
+                                report.source_contributions["pixabay"]["materialized"] += int(
+                                    created
+                                )
+                                report.source_contributions["pixabay"]["embedded"] += int(
+                                    bool(asset.visual_embedding)
+                                )
                                 if created:
                                     report.downloaded_assets += 1
                                     imported_ids.add(asset.id)
@@ -526,7 +630,9 @@ class CampaignMediaPlanner:
                                     assets.append(asset)
                                 if all(a.id != asset.id for a in library):
                                     library.append(asset)
-                    if len(assets) < len(submission_ids):
+                    if len(assets) < len(submission_ids) and not (
+                        self.settings.pinterest_publication_enabled and discovered_pins.get(context)
+                    ):
                         warnings.append("limited_unique_photos")
         except TimeoutError:
             for category in categories.values():
@@ -534,7 +640,7 @@ class CampaignMediaPlanner:
         visual_scores: dict[UUID, dict[UUID, float]] = {}
         allowed_assets: dict[UUID, set[UUID]] = {}
         archive_sources: dict[UUID, dict[UUID, UUID]] = {}
-        from dropgrid.photos.pool import PoolCandidate, archive_pool, materialize_archive, rank_pool
+        from dropgrid.photos.pool import archive_pool, materialize_archive, rank_pool
 
         if self.visual:
             communities = {s.id: s.community_id for s, _ in rows}
@@ -559,7 +665,15 @@ class CampaignMediaPlanner:
                             archives = await archive_pool(
                                 self.archive, community_id, warnings, category
                             )
-                            if not archives:
+                            pins = [
+                                replace(i, score=None, reference_matches=[])
+                                for i in discovered_pins.get(context, [])
+                            ]
+                            if (
+                                not archives
+                                and not pins
+                                and not self.settings.cross_community_reuse_enabled
+                            ):
                                 from dropgrid.photos.rotation import community_usage
 
                                 async with self.sessions() as s:
@@ -577,14 +691,57 @@ class CampaignMediaPlanner:
                                             aid: score.final_score for aid, score in scores.items()
                                         }
                                     continue
-                            pool += archives
+                            report.source_contributions["vk_archive"]["retrieved"] += len(archives)
+                            pool += archives + pins
+                            if self.archive and self.settings.cross_community_reuse_enabled:
+                                from dropgrid.photos.category_archive import (
+                                    VKCategoryArchivePhotoProvider,
+                                )
+
+                                (
+                                    category_pool,
+                                    _,
+                                    category_warnings,
+                                ) = await VKCategoryArchivePhotoProvider(
+                                    self.archive, self.visual
+                                ).preview(community_id, category, hint, campaign.grid_id)
+                                warnings.extend(category_warnings)
+                                pool += category_pool
+                                report.source_contributions["vk_category_archive"]["retrieved"] += (
+                                    len(category_pool)
+                                )
                             mixed_ranked = await rank_pool(
                                 self.visual, community_id, pool, category
                             )
+                            for pool_item in mixed_ranked:
+                                report.source_contributions[pool_item.source]["deduplicated"] += 1
+                            for pool_item in mixed_ranked[:10]:
+                                report.source_contributions[pool_item.source]["top_10"] += 1
                             # Only the highest-ranked viable archive is materialized.
                             # Lower archive candidates remain reference rows.
                             materialized = []
                             for item in mixed_ranked:
+                                if item.source == "vk_category_archive":
+                                    continue
+                                if item.source == "pinterest":
+                                    if not self.settings.pinterest_publication_enabled:
+                                        continue
+                                    asset, created, warning = await self._import(
+                                        item.photo, category, plan.sensitive
+                                    )
+                                    if warning:
+                                        warnings.append(warning)
+                                    if not asset or preserved_counts[asset.id] >= reuse:
+                                        continue
+                                    item.asset = asset
+                                    source_of_asset[asset.id] = "pinterest"
+                                    if all(a.id != asset.id for a in available[context]):
+                                        available[context].append(asset)
+                                    if created:
+                                        imported_ids.add(asset.id)
+                                        report.downloaded_assets += 1
+                                    materialized.append(item)
+                                    break
                                 if item.reference:
                                     assert self.archive
                                     try:
@@ -606,6 +763,7 @@ class CampaignMediaPlanner:
                                         imported_ids.add(asset.id)
                                         report.downloaded_assets += 1
                                     item.asset = asset
+                                    source_of_asset[asset.id] = "vk_archive"
                                     archive_sources[sid] = {asset.id: item.reference.id}
                                     materialized.append(item)
                                     break
@@ -768,6 +926,9 @@ class CampaignMediaPlanner:
                 if submission.id in assignments:
                     report.newly_assigned += int(originals[submission.id] is None)
                     submission.media_asset_id = assignments[submission.id]
+                    report.source_contributions[
+                        source_of_asset.get(submission.media_asset_id, "library")
+                    ]["selected"] += 1
                 elif data.force and submission.status == SubmissionStatus.pending:
                     submission.media_asset_id = None
             assigned_ids = {s.media_asset_id for s in current if s.media_asset_id}

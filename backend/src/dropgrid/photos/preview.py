@@ -13,6 +13,7 @@ from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
 from dropgrid.photos.category_archive import CategoryLibraryStats, VKCategoryArchivePhotoProvider
 from dropgrid.photos.concepts import car_model
 from dropgrid.photos.conflicts import PhotoConflict
+from dropgrid.photos.discovery import discover
 from dropgrid.photos.domain import normalize_category
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, archive_pool, rank_pool
@@ -26,7 +27,7 @@ from dropgrid.photos.reference_schemas import (
     ReferenceMatch,
     VisualEngineRead,
 )
-from dropgrid.photos.retrieval import RetrievalResult, RetrievedPhoto, retrieve_photos
+from dropgrid.photos.retrieval import RetrievedPhoto
 from dropgrid.photos.timings import collect_timings, stage
 from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.catalog import ConflictError, get_entity
@@ -87,14 +88,31 @@ async def _photo_preview(
     )
     pixabay: list[PoolCandidate] = []
     warnings: list[str] = []
-    await emit("pixabay_search", 0, 4)
     with stage("query_retrieval"):
-        retrieval = (
-            await retrieve_photos(planner.cache, plan, planner.policy)
-            if data.include_pixabay
-            else RetrievalResult()
+        discovery = await discover(
+            planner.pinterest_preview,
+            planner.cache,
+            plan,
+            community_id,
+            planner.settings,
+            planner.policy,
+            include_primary=data.include_pinterest,
+            include_fallback=data.include_pixabay,
         )
-    warnings.extend(retrieval.warnings)
+    retrieval = discovery.fallback
+    ranked_pinterest = discovery.pins
+    pins_retrieved = discovery.pins_retrieved
+    pin_queries = discovery.pin_queries
+    warnings.extend(discovery.warnings)
+    pinterest_status = (
+        ("ready" if ranked_pinterest else "search_unavailable")
+        if (planner.pinterest_preview and data.include_pinterest)
+        else planner.pinterest_status
+    )
+    for item in ranked_pinterest:
+        item.photo = item.photo.model_copy(
+            update={"publication_eligible": planner.settings.pinterest_publication_enabled}
+        )
     provenance: dict[UUID, list[str]] = {}
 
     async def import_one(retrieved: RetrievedPhoto) -> tuple[RetrievedPhoto, MediaAsset | None]:
@@ -216,28 +234,6 @@ async def _photo_preview(
             update={"retrieval_queries": provenance.get(item.asset.id, []) if item.asset else []}
         )
 
-    ranked_pinterest: list[PoolCandidate] = []
-    pins_retrieved = 0
-    pin_queries: dict[str, list[str]] = {}
-    pinterest_status = planner.pinterest_status
-    if planner.pinterest_preview and data.include_pinterest:
-        await emit("pinterest_search", 0, 4)
-        with stage("pinterest"):
-            (
-                ranked_pinterest,
-                pins_retrieved,
-                pin_queries,
-                pin_warnings,
-            ) = await planner.pinterest_preview.compare(community_id, plan)
-        warnings.extend(pin_warnings)
-        pinterest_status = (
-            "ready"
-            if not pin_warnings
-            else "search_unavailable"
-            if not pins_retrieved
-            else "partial"
-        )
-
     def pin_output(item: PoolCandidate) -> PhotoPreviewItem:
         return preview_item(item).model_copy(
             update={"retrieval_queries": pin_queries.get(item.photo.provider_asset_id, [])}
@@ -299,16 +295,44 @@ async def _photo_preview(
                     for key, value in stats[query].items()
                     if key in {"raw_pins", "valid_image_pins", "pages"} and type(value) is int
                 }
+    contribution = {}
+    for provider, items in {
+        "pinterest": ranked_pinterest,
+        "pixabay": pixabay,
+        "library": [i for i in pool if i.source == "library"],
+        "vk_archive": archive,
+        "vk_category_archive": category_pool,
+    }.items():
+        contribution[provider] = {
+            "retrieved": pins_retrieved
+            if provider == "pinterest"
+            else len(retrieval.items)
+            if provider == "pixabay"
+            else len(items),
+            "deduplicated": sum(i.source == provider for i in best),
+            "materialized": discovery.pins_materialized if provider == "pinterest" else len(items),
+            "embedded": sum(i.embedding is not None for i in items),
+            "top_10": sum(i.source == provider for i in best[:10]),
+            "selected": 0,
+        }
     return PhotoPreviewRead(
+        source_contributions=contribution,
+        pixabay_requests=retrieval.requests,
+        pixabay_cache_hits=retrieval.cache_hits,
+        pixabay_status=discovery.fallback_reason,
         pinterest_stats=pin_stats,
-        pinterest_materialized=len(ranked_pinterest),
+        pinterest_materialized=discovery.pins_materialized,
         best_matches=[pin_output(i) if i.source == "pinterest" else output(i) for i in best[:32]],
         category_library=[output(i) for i in category_pool[: data.candidate_limit]],
         category_library_stats=asdict(library_stats),
         pinterest_status=pinterest_status,
-        pinterest_queries=[v.query for v in plan.variants],
+        pinterest_queries=[
+            v.query
+            for v in plan.variants
+            if any(v.query in queries for queries in pin_queries.values())
+        ],
         pinterest_retrieved=pins_retrieved,
-        pinterest_embedded=sum(item.embedding is not None for item in ranked_pinterest),
+        pinterest_embedded=discovery.pins_embedded,
         pinterest=[
             pin_output(i)
             for i in sorted(

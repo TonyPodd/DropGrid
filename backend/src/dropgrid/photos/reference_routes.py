@@ -3,10 +3,17 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from dropgrid.api.dependencies import Session
-from dropgrid.db.models import Community, CommunityReferencePhoto, PhotoPreviewCache
+from dropgrid.db.models import (
+    Community,
+    CommunityPhotoFeedback,
+    CommunityReferencePhoto,
+    PhotoPreviewCache,
+    utcnow,
+)
 from dropgrid.photos.archive import ArchiveDiscovery
 from dropgrid.photos.domain import PhotoError
 from dropgrid.photos.operation_jobs import OperationInput, PhotoJobs
@@ -15,6 +22,8 @@ from dropgrid.photos.reference_jobs import ReferenceJobs
 from dropgrid.photos.reference_schemas import (
     ArchiveSyncInput,
     ArchiveSyncRead,
+    PhotoFeedbackInput,
+    PhotoFeedbackRead,
     PhotoPreviewInput,
     PhotoPreviewRead,
     ProfileInput,
@@ -171,3 +180,52 @@ async def latest_photo_operation(
     kind: Annotated[str, Query(pattern="^(archive|preview)$")] = "preview",
 ) -> dict[str, object] | None:
     return await PhotoJobs(engine, service).latest(community_id, kind)
+
+
+@router.get("/communities/{community_id}/photo-feedback", response_model=list[PhotoFeedbackRead])
+async def photo_feedback_list(community_id: UUID, session: Session) -> list[PhotoFeedbackRead]:
+    await get_entity(session, Community, community_id)
+    rows = (
+        await session.scalars(
+            select(CommunityPhotoFeedback)
+            .where(CommunityPhotoFeedback.community_id == community_id)
+            .order_by(CommunityPhotoFeedback.created_at.desc())
+            .limit(500)
+        )
+    ).all()
+    return [PhotoFeedbackRead.model_validate(r) for r in rows]
+
+
+@router.put("/communities/{community_id}/photo-feedback", response_model=PhotoFeedbackRead)
+async def photo_feedback_save(
+    community_id: UUID, data: PhotoFeedbackInput, session: Session
+) -> PhotoFeedbackRead:
+    await get_entity(session, Community, community_id)
+    await session.execute(
+        insert(CommunityPhotoFeedback)
+        .values(community_id=community_id, **data.model_dump(), created_at=utcnow())
+        .on_conflict_do_update(
+            index_elements=["community_id", "provider", "source_identity"],
+            set_={"rating": data.rating},
+        )
+    )
+    row = await session.get(
+        CommunityPhotoFeedback,
+        (community_id, data.provider, data.source_identity),
+        populate_existing=True,
+    )
+    return PhotoFeedbackRead.model_validate(row)
+
+
+@router.delete("/communities/{community_id}/photo-feedback", status_code=204)
+async def photo_feedback_delete(
+    community_id: UUID, provider: str, source_identity: str, session: Session
+) -> None:
+    await get_entity(session, Community, community_id)
+    await session.execute(
+        delete(CommunityPhotoFeedback).where(
+            CommunityPhotoFeedback.community_id == community_id,
+            CommunityPhotoFeedback.provider == provider,
+            CommunityPhotoFeedback.source_identity == source_identity,
+        )
+    )

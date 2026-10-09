@@ -1,4 +1,4 @@
-"""Experimental public Pin retrieval behind a replaceable hosted search backend."""
+"""Public Pin discovery; explicit publication policy is enforced at import boundary."""
 
 import asyncio
 import re

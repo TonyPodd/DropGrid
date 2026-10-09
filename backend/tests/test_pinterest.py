@@ -153,12 +153,12 @@ async def test_multiple_queries_bounded_materialization_cached_and_no_campaign_s
         )
         plan = PhotoQueryBuilder().build("ХОНДА АККОРД")
         ranked, retrieved, queries, warnings = await preview.compare(cid, plan)
-        assert len(backend.calls) == 4 and retrieved == 84
+        assert len(backend.calls) == 2 and retrieved == 40
         assert len(downloads) == embedder.calls == MATERIALIZATION_LIMIT
-        assert len(queries) == 84 and not warnings
+        assert len(queries) == 40 and not warnings
         await preview.compare(cid, plan)
         assert len(downloads) == embedder.calls == MATERIALIZATION_LIMIT
-        assert len(backend.calls) == 4
+        assert len(backend.calls) == 2
     async with sessions() as session:
         assert (
             await session.scalar(select(func.count()).select_from(PhotoPreviewCache))

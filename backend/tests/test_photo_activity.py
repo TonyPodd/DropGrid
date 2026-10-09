@@ -38,7 +38,7 @@ async def test_preview_durable_progress_conflict_result_and_activity(sessions, m
             references=[],
             category_only=[],
             community_aware=[],
-            warnings=["pinterest_search_unavailable"],
+            warnings=["pinterest_fallback_used"],
         )
 
     monkeypatch.setattr("dropgrid.photos.operation_jobs.photo_preview", preview)
@@ -51,11 +51,12 @@ async def test_preview_durable_progress_conflict_result_and_activity(sessions, m
     assert await jobs.tick() == 1 and await jobs.tick() == 0
     restored = await PhotoJobs(engine, SimpleNamespace(sessions=sessions)).latest(cid, "preview")
     assert restored["state"] == "ready" and restored["result"]["warnings"] == [
-        "pinterest_search_unavailable"
+        "pinterest_fallback_used"
     ]
     async with sessions() as session:
         item = (await list_activity(session))[0]
         assert item.state == "warning" and item.label.endswith("Honda Accord")
+        assert item.message == "Pinterest недоступен — использован резервный источник"
 
 
 async def test_photo_job_failure_sanitized_and_exhausted_lease(sessions, monkeypatch):

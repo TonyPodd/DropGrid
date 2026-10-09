@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -140,6 +141,10 @@ class ArchiveShortlistItem(Output):
 
 
 class PhotoPreviewRead(Output):
+    source_contributions: dict[str, dict[str, int]] = Field(default_factory=dict)
+    pixabay_requests: int = 0
+    pixabay_cache_hits: int = 0
+    pixabay_status: str = "not_needed"
     category_library_stats: dict[str, object] = Field(default_factory=dict)
     category_library: list[PhotoPreviewItem] = Field(default_factory=list)
     best_matches: list[PhotoPreviewItem] = Field(default_factory=list)
@@ -187,3 +192,17 @@ class ArchiveSyncRead(Output):
     crossed_max_age: bool = False
     exhausted: bool = False
     warnings: list[str] = Field(default_factory=list)
+
+
+class PhotoFeedbackInput(Input):
+    provider: str = Field(min_length=1, max_length=50, pattern=r"^[a-z0-9_]+$")
+    source_identity: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9_:\-]+$")
+    rating: Literal["like", "dislike"]
+
+
+class PhotoFeedbackRead(Output):
+    community_id: UUID
+    provider: str
+    source_identity: str
+    rating: str
+    created_at: datetime

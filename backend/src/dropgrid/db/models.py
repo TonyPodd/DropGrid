@@ -239,6 +239,20 @@ class MediaProviderImport(Base):
         ForeignKey("communities.id"), index=True
     )
     source_post_id: Mapped[int | None] = mapped_column(BigInteger)
+    image_source_url: Mapped[str | None] = mapped_column(Text)
+    retrieval_query: Mapped[str | None] = mapped_column(String(100))
+
+
+class CommunityPhotoFeedback(Base):
+    __tablename__ = "community_photo_feedback"
+    __table_args__ = (CheckConstraint("rating IN ('like', 'dislike')", name="feedback_rating"),)
+    community_id: Mapped[UUID] = mapped_column(
+        ForeignKey("communities.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(50), primary_key=True)
+    source_identity: Mapped[str] = mapped_column(String(100), primary_key=True)
+    rating: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class CommunityMediaUsage(Identity, Base):

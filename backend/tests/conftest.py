@@ -49,7 +49,9 @@ async def sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncS
 async def client(
     sessions: async_sessionmaker[AsyncSession], database_url: str
 ) -> AsyncIterator[AsyncClient]:
-    app = create_app(Settings(_env_file=None, database_url=database_url))
+    app = create_app(
+        Settings(_env_file=None, database_url=database_url, pinterest_direct_enabled=False)
+    )
 
     async def test_session() -> AsyncIterator[AsyncSession]:
         async with sessions() as value, value.begin():

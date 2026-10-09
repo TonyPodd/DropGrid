@@ -16,7 +16,7 @@ from dropgrid.photos.images import LocalMediaStorage, normalize_image
 from dropgrid.photos.pinterest import PinterestPolicy
 from dropgrid.photos.pool import PoolCandidate, rank_pool
 from dropgrid.photos.progress import emit
-from dropgrid.photos.retrieval import retrieve_photos
+from dropgrid.photos.retrieval import RetrievalResult, retrieve_photos
 from dropgrid.photos.visual import deserialize_embedding, serialize_embedding
 from dropgrid.photos.visual_library import VisualLibrary
 
@@ -40,6 +40,9 @@ class PinterestPreview:
             visual,
         )
         self.lock = asyncio.Lock()
+        self.target_candidates = 32
+        self.last_materialized = self.last_embedded = 0
+        self.last_retrieval: RetrievalResult | None = None
 
     async def materialize(self, candidate: PhotoCandidate) -> PoolCandidate:
         # Local lock coalesces downloads; DB uniqueness covers other API processes.
@@ -139,7 +142,9 @@ class PinterestPreview:
     async def compare(
         self, community_id: UUID, plan: PhotoQueryPlan
     ) -> tuple[list[PoolCandidate], int, dict[str, list[str]], list[str]]:
-        result = await retrieve_photos(self.cache, plan, PinterestPolicy())
+        result = await retrieve_photos(
+            self.cache, plan, PinterestPolicy(), target=self.target_candidates, max_candidates=40
+        )
         pool = []
         queries = {item.photo.provider_asset_id: item.queries for item in result.items[:100]}
         warnings = list(result.warnings)
@@ -157,8 +162,12 @@ class PinterestPreview:
             pins_materialized=len(pool),
             pins_embedded=sum(item.embedding is not None for item in pool),
         )
+        ranked = await rank_pool(self.visual, community_id, pool, plan.category)
+        self.last_retrieval = result
+        self.last_materialized = len(pool)
+        self.last_embedded = sum(item.embedding is not None for item in pool)
         return (
-            await rank_pool(self.visual, community_id, pool, plan.category),
+            ranked,
             min(len(result.items), 100),
             queries,
             warnings,

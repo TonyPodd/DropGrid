@@ -23,7 +23,11 @@ class Settings(BaseSettings):
 
     pixabay_api_key: SecretStr | None = None
     pinterest_search_enabled: bool = False
-    pinterest_direct_enabled: bool = False
+    pinterest_direct_enabled: bool = True
+    pinterest_publication_enabled: bool = False
+    photo_primary_min_candidates: int = Field(default=16, ge=1, le=32)
+    photo_primary_target_candidates: int = Field(default=32, ge=16, le=40)
+    photo_fallback_diversity_candidates: int = Field(default=0, ge=0, le=8)
     cross_community_reuse_enabled: bool = False
     apify_api_token: SecretStr | None = None
     pinterest_apify_actor: str = ""
