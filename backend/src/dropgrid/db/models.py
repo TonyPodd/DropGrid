@@ -393,3 +393,19 @@ class ReferenceSyncJob(Identity, Updated, Base):
     progress: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict, server_default="{}")
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class PhotoPreviewCache(Identity, Updated, Base):
+    """Preview bytes only; no FK to MediaAsset, Campaign or Submission."""
+
+    __tablename__ = "photo_preview_cache"
+    __table_args__ = (UniqueConstraint("provider", "provider_asset_id", name="uq_preview_pin"),)
+    provider: Mapped[str] = mapped_column(String(50))
+    provider_asset_id: Mapped[str] = mapped_column(String(100))
+    candidate: Mapped[dict[str, object]] = mapped_column(JSONB)
+    storage_key: Mapped[str] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(CHAR(64))
+    perceptual_hash: Mapped[str] = mapped_column(String(16))
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
+    embedding_model: Mapped[str | None] = mapped_column(String(200))
+    embedding_dimensions: Mapped[int | None] = mapped_column(Integer)

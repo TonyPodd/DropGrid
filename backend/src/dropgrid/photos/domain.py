@@ -61,6 +61,10 @@ class PhotoCandidate(BaseModel):
     provider_asset_id: str
     source_page_url: str
     candidate_download_url: str = Field(repr=False)
+    publication_eligible: bool = True
+    title: str = ""
+    description: str = ""
+    alt_text: str = ""
     creator_name: str = ""
     creator_url: str | None = None
     width: int = Field(gt=0)

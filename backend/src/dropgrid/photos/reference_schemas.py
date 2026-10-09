@@ -46,6 +46,7 @@ class ReferenceSyncRead(Output):
     references_created: int = 0
     references_existing: int = 0
     references_embedded: int = 0
+    embeddings_available: int = 0
     downloads_succeeded: int = 0
     warnings: list[str] = Field(default_factory=list)
 
@@ -94,6 +95,10 @@ class ReferenceMatch(Output):
 
 
 class PhotoPreviewItem(Output):
+    preview_id: UUID | None = None
+    publication_eligible: bool = True
+    pin_url: str | None = None
+    title: str = ""
     top_references: list[ReferenceMatch] = Field(default_factory=list)
     provider: str = ""
     media_asset_id: UUID | None = None
@@ -123,6 +128,12 @@ class ArchiveShortlistItem(Output):
 
 
 class PhotoPreviewRead(Output):
+    pinterest_status: str = "disabled"
+    pinterest_queries: list[str] = Field(default_factory=list)
+    pinterest_retrieved: int = 0
+    pinterest_embedded: int = 0
+    pinterest: list[PhotoPreviewItem] = Field(default_factory=list)
+    community_ranked_pinterest: list[PhotoPreviewItem] = Field(default_factory=list)
     visual_engine: VisualEngineRead = Field(default_factory=VisualEngineRead)
     timings_ms: dict[str, float] | None = None
     community_id: UUID

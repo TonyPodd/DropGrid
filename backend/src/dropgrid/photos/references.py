@@ -409,6 +409,7 @@ class CommunityReferenceCollector:
                                 report.references_embedded += int(
                                     await self._embed_existing(existing)
                                 )
+                                report.embeddings_available += int(self.embedder is not None)
                             except PhotoError as e:
                                 report.warnings.append(e.code)
                         else:
@@ -489,6 +490,7 @@ class CommunityReferenceCollector:
                                 report.references_created += int(existing is None)
                                 report.references_existing += int(existing is not None)
                                 report.references_embedded += int(embedding is not None)
+                                report.embeddings_available += int(embedding is not None)
                                 seen.add(identity)
                             except PhotoError as e:
                                 report.warnings.append(e.code)

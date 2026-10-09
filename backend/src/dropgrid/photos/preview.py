@@ -33,6 +33,10 @@ def preview_item(item: PoolCandidate) -> PhotoPreviewItem:
     assert item.score
     score = item.score
     return PhotoPreviewItem(
+        preview_id=item.preview_id,
+        publication_eligible=item.photo.publication_eligible,
+        pin_url=item.photo.source_page_url if item.photo.provider == "pinterest" else None,
+        title=item.photo.title,
         top_references=[
             ReferenceMatch(reference_id=id, similarity=similarity)
             for id, similarity in item.reference_matches
@@ -116,8 +120,7 @@ async def _photo_preview(
                     )
                 )
     ranked_pixabay = await rank_pool(visual, community_id, pixabay, category)
-    # Scoring the mixed pool may choose legacy fallback. Keep the Pixabay-only
-    # comparison independent so its scores/order cannot be overwritten.
+    # Keep each lane independent: mixed-pool scoring cannot mutate source scores.
     pool = [replace(item, score=None, age_reuse_score=0) for item in pixabay]
     async with planner.sessions() as session:
         library = (
@@ -197,21 +200,65 @@ async def _photo_preview(
             update={"retrieval_queries": provenance.get(item.asset.id, []) if item.asset else []}
         )
 
-    embeddings = sum(item.embedding is not None for item in ranked_pixabay)
+    ranked_pinterest: list[PoolCandidate] = []
+    pins_retrieved = 0
+    pin_queries: dict[str, list[str]] = {}
+    pinterest_status = planner.pinterest_status
+    if planner.pinterest_preview:
+        (
+            ranked_pinterest,
+            pins_retrieved,
+            pin_queries,
+            pin_warnings,
+        ) = await planner.pinterest_preview.compare(community_id, plan)
+        warnings.extend(pin_warnings)
+        pinterest_status = (
+            "ready"
+            if not pin_warnings
+            else "search_unavailable"
+            if not pins_retrieved
+            else "partial"
+        )
+
+    def pin_output(item: PoolCandidate) -> PhotoPreviewItem:
+        return preview_item(item).model_copy(
+            update={"retrieval_queries": pin_queries.get(item.photo.provider_asset_id, [])}
+        )
+
+    diagnostic_candidates = ranked_pixabay + ranked_pinterest
+    embeddings = sum(item.embedding is not None for item in diagnostic_candidates)
     reason = None
     if visual.embedder is None:
         reason = "model_disabled"
     elif any(
         item.embedding_error in {"visual_model_unavailable", "visual_embedding_unavailable"}
-        for item in ranked_pixabay
+        for item in diagnostic_candidates
     ):
         reason = "model_unavailable"
     elif not reference_ids:
         reason = "no_compatible_references"
-    elif embeddings < len(ranked_pixabay) or not embeddings:
+    elif embeddings < len(diagnostic_candidates) or not embeddings:
         reason = "candidate_embedding_unavailable"
-    active = any(item.score and item.score.visual_score is not None for item in ranked_pixabay)
+    active = any(
+        item.score and item.score.visual_score is not None for item in diagnostic_candidates
+    )
+    if not active and reason is None:
+        reason = "no_compatible_references"
     return PhotoPreviewRead(
+        pinterest_status=pinterest_status,
+        pinterest_queries=[v.query for v in plan.variants],
+        pinterest_retrieved=pins_retrieved,
+        pinterest_embedded=sum(item.embedding is not None for item in ranked_pinterest),
+        pinterest=[
+            pin_output(i)
+            for i in sorted(
+                ranked_pinterest,
+                key=lambda c: (-(c.score.base_score if c.score else 0), c.identity),
+            )[: data.candidate_limit]
+        ],
+        community_ranked_pinterest=[
+            pin_output(i) for i in ranked_pinterest[: data.candidate_limit]
+        ],
         visual_engine=VisualEngineRead(
             enabled=visual.embedder is not None,
             model=visual.embedder.model if visual.embedder else None,
@@ -261,6 +308,14 @@ async def _timed_preview(
                 community_aware=[],
                 mixed_source=[],
                 warnings=["photo_preview_timeout"],
+                visual_engine=VisualEngineRead(
+                    enabled=visual.embedder is not None,
+                    model=visual.embedder.model if visual.embedder else None,
+                    reason_if_inactive="candidate_embedding_unavailable"
+                    if visual.embedder
+                    else "model_disabled",
+                ),
+                pinterest_status=planner.pinterest_status,
             )
         if data.diagnostics and planner.settings.app_env == "development":
             result.timings_ms = {key: round(value, 2) for key, value in timings.items()}

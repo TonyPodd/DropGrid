@@ -90,13 +90,15 @@ class VisualLibrary:
                         .order_by(
                             CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id
                         )
-                        .limit(profile.reference_target_count if profile else 100)
+                        .limit(300)
                     )
                 ).all()
             )
         assessments, _ = assess_references(rows, self.embedder)
         core = {a.id for a in assessments if a.role == "core"}
-        return [row for row in rows if row.id in core], profile
+        return [row for row in rows if row.id in core][
+            : (profile.reference_target_count if profile else 100)
+        ], profile
 
     @timed("reference_loading")
     async def references(

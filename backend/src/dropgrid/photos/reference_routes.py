@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 
 from dropgrid.api.dependencies import Session
-from dropgrid.db.models import Community, CommunityReferencePhoto
+from dropgrid.db.models import Community, CommunityReferencePhoto, PhotoPreviewCache
 from dropgrid.photos.archive import ArchiveDiscovery
 from dropgrid.photos.domain import PhotoError
 from dropgrid.photos.preview import photo_preview
@@ -135,3 +135,21 @@ async def latest_reference_study(
     community_id: UUID, service: Collector
 ) -> dict[str, object] | None:
     return await ReferenceJobs(service).latest(community_id)
+
+
+@router.get("/photo-previews/{preview_id}/content")
+async def pin_preview_content(preview_id: UUID, session: Session, engine: Engine) -> FileResponse:
+    row = await session.get(PhotoPreviewCache, preview_id)
+    if not row or row.provider != "pinterest":
+        raise NotFoundError("Preview content not found")
+    try:
+        path = engine.pinterest_storage.path(row.storage_key)
+        if not path.is_file():
+            raise NotFoundError("Preview content not found")
+    except PhotoError:
+        raise NotFoundError("Preview content not found") from None
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400"},
+    )

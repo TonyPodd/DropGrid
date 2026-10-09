@@ -120,7 +120,7 @@ class ReferenceJobs:
                     "photo_posts_found": report.photo_posts_found,
                     "downloads_done": report.downloads_succeeded,
                     "downloads_total": report.photo_posts_found - report.references_existing,
-                    "embeddings_done": report.references_embedded,
+                    "embeddings_done": report.embeddings_available,
                     "embeddings_total": report.photo_posts_found,
                 }
 

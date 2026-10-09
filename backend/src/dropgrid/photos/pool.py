@@ -56,6 +56,7 @@ class PoolCandidate:
     perceptual_hash: str | None = None
     score: RankedPhoto | None = None
     age_reuse_score: float = 0
+    preview_id: UUID | None = None
     reference_matches: list[tuple[UUID, float]] = field(default_factory=list)
     embedding_error: str | None = None
 
@@ -113,6 +114,7 @@ async def rank_pool(
     kept = []
     search = PhotoQueryBuilder().build(category).variants[0]
     for item in deduplicate_pool(pool):
+        item.reference_matches = []
         if recently_used(
             usage,
             *item.identity,

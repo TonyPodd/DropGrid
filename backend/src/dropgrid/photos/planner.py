@@ -112,12 +112,17 @@ class CampaignMediaPlanner:
 
         self.archive: VKArchivePhotoProvider | None = None
         self.dedup = Deduplicator(self.policy.hamming_threshold)
+        from dropgrid.photos.pinterest_preview import PinterestPreview
+
+        self.pinterest_preview: PinterestPreview | None = None
+        self.pinterest_status = "disabled"
         self.builder, self.ranker = PhotoQueryBuilder(), PhotoRanker()
         self.semaphore = asyncio.Semaphore(settings.photo_download_concurrency)
 
     def eligible(self, asset: MediaAsset, sensitive: bool = False) -> bool:
         if (
-            not asset.enabled
+            asset.provider == "pinterest"
+            or not asset.enabled
             or not asset.sha256
             or not asset.license_code
             or not asset.provider
@@ -153,6 +158,8 @@ class CampaignMediaPlanner:
     async def _import(
         self, candidate: PhotoCandidate, category: str, sensitive: bool
     ) -> tuple[MediaAsset | None, bool, str | None]:
+        if candidate.provider == "pinterest" or not candidate.publication_eligible:
+            return None, False, "publication_ineligible"
         async with self.semaphore:
             try:
                 logger.info(

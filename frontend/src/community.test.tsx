@@ -213,3 +213,54 @@ it("recovers durable study progress and disables conflicting operations", async 
   await screen.findByText(/Строим embeddings: 7\/12/);
   expect(screen.getByRole("button", { name: /Изучить/ })).toBeDisabled();
 });
+
+it("renders Pinterest as local preview with provenance and reference explanation", async () => {
+  vi.mocked(communityVisualApi.preview).mockResolvedValue({
+    warnings: [],
+    category_only: [],
+    community_aware: [],
+    pinterest_status: "ready",
+    pinterest_retrieved: 25,
+    pinterest_embedded: 24,
+    pinterest: [
+      {
+        preview_id: "pin-cache",
+        media_asset_id: null,
+        source: "pinterest",
+        source_identity: "12345",
+        pin_url: "https://www.pinterest.com/pin/12345/",
+        publication_eligible: false,
+        base_score: 4,
+        visual_score: 0.8,
+        final_score: 0.7,
+        top_references: [{ reference_id: "r1", similarity: 0.9 }],
+      },
+    ],
+    visual_engine: {
+      enabled: true,
+      model: "clip",
+      compatible_reference_count: 6,
+      candidate_embeddings_available: 24,
+      active: true,
+      reason_if_inactive: null,
+    },
+  });
+  open();
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Сравнить/ }),
+  );
+  expect(
+    await screen.findByText(/publication_eligible=false/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: "Кандидат фото" })).toHaveAttribute(
+    "src",
+    expect.stringContaining("/photo-previews/pin-cache/content"),
+  );
+  expect(screen.getByRole("link", { name: /Pin/ })).toHaveAttribute(
+    "href",
+    "https://www.pinterest.com/pin/12345/",
+  );
+  expect(
+    screen.getByRole("img", { name: "Ближайший CORE reference" }),
+  ).toHaveAttribute("src", expect.stringContaining("/references/r1/content"));
+});

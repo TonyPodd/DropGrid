@@ -10,6 +10,8 @@ from dropgrid.photos.cache import SearchCache
 from dropgrid.photos.domain import PhotoPolicy
 from dropgrid.photos.download import PhotoDownloader, PinnedPhotoTransport
 from dropgrid.photos.images import LocalMediaStorage
+from dropgrid.photos.pinterest import ApifyPinterestBackend, PinterestPhotoProvider, PinterestPolicy
+from dropgrid.photos.pinterest_preview import PinterestPreview
 from dropgrid.photos.pixabay import PixabayPhotoProvider
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.references import VKReferencePolicy
@@ -52,6 +54,45 @@ class PhotoEngine:
             self.reference_client, reference_policy, slots=download_slots
         )
         self.reference_storage = LocalMediaStorage(settings.media_storage_dir / "references")
+        self.pinterest_status = (
+            "disabled" if not settings.pinterest_search_enabled else "backend_unavailable"
+        )
+        self.pinterest: PinterestPreview | None = None
+        self.pinterest_storage = LocalMediaStorage(
+            settings.media_storage_dir / "previews" / "pinterest"
+        )
+        self.pinterest_client = httpx.AsyncClient(
+            transport=PinnedPhotoTransport(PinterestPolicy()),
+            timeout=httpx.Timeout(10, connect=5),
+            trust_env=False,
+            follow_redirects=False,
+            headers={"Accept-Encoding": "identity"},
+        )
+        if (
+            settings.pinterest_search_enabled
+            and settings.apify_api_token
+            and settings.apify_api_token.get_secret_value()
+            and settings.pinterest_apify_actor
+        ):
+            try:
+                backend = ApifyPinterestBackend(
+                    settings.apify_api_token, settings.pinterest_apify_actor, self.search_client
+                )
+                self.pinterest = PinterestPreview(
+                    db.sessions,
+                    SearchCache(
+                        db.sessions,
+                        PinterestPhotoProvider(backend),
+                        settings.photo_search_cache_hours,
+                        namespace="pinterest:" + settings.pinterest_apify_actor,
+                    ),
+                    PhotoDownloader(self.pinterest_client, PinterestPolicy(), slots=download_slots),
+                    self.pinterest_storage,
+                    self.visual,
+                )
+                self.pinterest_status = "configured"
+            except Exception:
+                self.pinterest_status = "backend_unavailable"
         self.planner = CampaignMediaPlanner(
             db.sessions,
             SearchCache(
@@ -65,8 +106,11 @@ class PhotoEngine:
             policy,
             self.visual,
         )
+        self.planner.pinterest_preview = self.pinterest
+        self.planner.pinterest_status = self.pinterest_status
 
     async def aclose(self) -> None:
         await self.search_client.aclose()
         await self.download_client.aclose()
         await self.reference_client.aclose()
+        await self.pinterest_client.aclose()

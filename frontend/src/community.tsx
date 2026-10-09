@@ -5,6 +5,7 @@ import {
   errorMessage,
   mediaContentUrl,
   referenceContentUrl,
+  photoPreviewContentUrl,
 } from "./api/client";
 import { Pager, State, date, useLoad } from "./shared";
 
@@ -44,6 +45,10 @@ type Reference = {
   embedding_model: string | null;
 };
 type Score = {
+  preview_id?: string | null;
+  publication_eligible?: boolean;
+  pin_url?: string | null;
+  title?: string;
   top_references?: { reference_id: string; similarity: number }[];
   media_asset_id: string | null;
   reference_id?: string | null;
@@ -58,6 +63,12 @@ type Score = {
   final_score: number;
 };
 type Preview = {
+  pinterest_status?: string;
+  pinterest_queries?: string[];
+  pinterest_retrieved?: number;
+  pinterest_embedded?: number;
+  pinterest?: Score[];
+  community_ranked_pinterest?: Score[];
   visual_engine?: {
     enabled: boolean;
     model: string | null;
@@ -155,14 +166,27 @@ function CandidateScores({
           >
             <img
               src={
-                item.reference_id
-                  ? referenceContentUrl(communityId, item.reference_id)
-                  : mediaContentUrl(item.media_asset_id ?? "")
+                item.preview_id
+                  ? photoPreviewContentUrl(item.preview_id)
+                  : item.reference_id
+                    ? referenceContentUrl(communityId, item.reference_id)
+                    : mediaContentUrl(item.media_asset_id ?? "")
               }
               alt="Кандидат фото"
               loading="lazy"
             />
             <figcaption>
+              {item.publication_eligible === false && (
+                <strong>
+                  EXPERIMENTAL · preview only · publication_eligible=false
+                  <br />
+                </strong>
+              )}
+              {item.pin_url && (
+                <a href={item.pin_url} target="_blank" rel="noreferrer">
+                  Pin · {item.title || item.source_identity}
+                </a>
+              )}
               #{rank + 1} · {item.source ?? "pixabay"} · {item.source_identity}
               <br />
               {item.original_posted_at && (
@@ -568,6 +592,27 @@ export function CommunityDetailPage() {
                 : "Pixabay · визуальное сравнение недоступно"
             }
             items={preview.community_aware}
+          />
+          <p className="note">
+            Pinterest: {preview.pinterest_status ?? "disabled"} · retrieved:{" "}
+            {preview.pinterest_retrieved ?? 0} · embedded:{" "}
+            {preview.pinterest_embedded ?? 0} · queries:{" "}
+            {(preview.pinterest_queries ?? []).join(" · ")}
+          </p>
+          {!["ready", "partial"].includes(preview.pinterest_status ?? "") && (
+            <p role="status">
+              Pinterest недоступен. Настройте experimental search backend.
+            </p>
+          )}
+          <CandidateScores
+            communityId={id}
+            title="Pinterest · experimental preview"
+            items={preview.pinterest ?? []}
+          />
+          <CandidateScores
+            communityId={id}
+            title="Community-ranked Pinterest · experimental preview"
+            items={preview.community_ranked_pinterest ?? []}
           />
           <CandidateScores
             communityId={id}

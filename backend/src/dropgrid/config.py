@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     worker_poll_seconds: float = Field(default=10, gt=0)
 
     pixabay_api_key: SecretStr | None = None
+    pinterest_search_enabled: bool = False
+    apify_api_token: SecretStr | None = None
+    pinterest_apify_actor: str = ""
     media_storage_dir: Path = Path("media")
     photo_max_reuse_per_asset: int = Field(default=3, ge=1, le=20)
     photo_search_cache_hours: int = Field(default=24, ge=24, le=168)

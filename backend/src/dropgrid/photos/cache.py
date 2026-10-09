@@ -21,11 +21,16 @@ logger = logging.getLogger(__name__)
 
 class SearchCache:
     def __init__(
-        self, sessions: async_sessionmaker[AsyncSession], provider: PhotoProvider, hours: int = 24
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        provider: PhotoProvider,
+        hours: int = 24,
+        namespace: str | None = None,
     ) -> None:
         if hours < 24:
             raise ValueError("Search cache must retain responses for at least 24 hours")
         self.sessions, self.provider, self.hours = sessions, provider, hours
+        self.namespace = namespace or provider.name
 
     async def _rate_slot(self) -> None:
         now = utcnow()
@@ -52,7 +57,7 @@ class SearchCache:
         await asyncio.sleep(delay)
 
     async def search(self, search: PhotoSearch) -> tuple[tuple[PhotoCandidate, ...], bool]:
-        key = search.cache_key(self.provider.name)
+        key = search.cache_key(self.namespace)
         token = uuid4()
         deadline = time.monotonic() + 65
         while True:
