@@ -27,6 +27,7 @@ from dropgrid.photos.domain import (
     PhotoQueryBuilder,
 )
 from dropgrid.photos.images import NormalizedPhoto
+from dropgrid.photos.progress import emit
 from dropgrid.photos.rotation import archive_age_penalty, community_usage, recently_used
 from dropgrid.photos.timings import stage, timed
 from dropgrid.photos.visual import (
@@ -117,7 +118,9 @@ async def rank_pool(
     refs, _ = await visual.reference_rows(community_id)
     kept = []
     search = PhotoQueryBuilder().build(category).variants[0]
-    for item in deduplicate_pool(pool):
+    unique_pool = deduplicate_pool(pool)
+    for index, item in enumerate(unique_pool):
+        await emit("ranking", index, len(unique_pool))
         item.reference_matches = []
         if recently_used(
             usage,
@@ -172,6 +175,7 @@ async def rank_pool(
             item.posted_at, now, profile.archive_reuse_min_age_days if profile else 180
         )
         kept.append(item)
+    await emit("ranking", len(unique_pool), len(unique_pool))
     for item in kept:
         item.reference_matches = sorted(item.reference_matches, key=lambda x: (-x[1], str(x[0])))[
             :5

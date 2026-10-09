@@ -23,6 +23,7 @@ from dropgrid.photos.archive_retrieval import WallDateSeeker, stratified_sample
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoPolicy, PhotoQueryBuilder
 from dropgrid.photos.images import normalize_image
+from dropgrid.photos.progress import emit
 from dropgrid.photos.reference_schemas import ArchiveSyncRead
 from dropgrid.photos.references import (
     CommunityReferenceCollector,
@@ -110,8 +111,15 @@ class ArchiveDiscovery:
             lower = now - timedelta(days=max_age)
             upper = now - timedelta(days=min_age)
             async with asyncio.timeout(ARCHIVE_TIMEOUT_SECONDS):
+                await emit("archive_seek", min_age_days=min_age, max_age_days=max_age)
+                seek_calls = 0
 
                 async def fetch(offset: int, count: int) -> WallPosts:
+                    nonlocal seek_calls
+                    seek_calls += 1
+                    await emit(
+                        "archive_seek", seek_calls, min_age_days=min_age, max_age_days=max_age
+                    )
                     return await service.client.get_community_wall_history(
                         group, access_token=token, account_id=aid, count=count, offset=offset
                     )
@@ -127,6 +135,7 @@ class ArchiveDiscovery:
                 offset = max(0, (start or 0) - 100)
                 report.start_offset = offset
                 stop_offset = end + 200 if end is not None else None
+                await emit("archive_scan", 0, (stop_offset - offset) if stop_offset else None)
                 for _ in range(max_pages):
                     page = await service.client.get_community_wall_history(
                         group,
@@ -207,6 +216,13 @@ class ArchiveDiscovery:
                                 )
                                 await s.flush()
                                 report.candidates_discovered += 1
+                    await emit(
+                        "archive_scan",
+                        report.posts_scanned,
+                        (stop_offset - report.start_offset) if stop_offset else None,
+                        photos=report.candidates_discovered + report.candidates_existing,
+                        pages=report.pages_read,
+                    )
                     report.end_offset = offset + len(page.items)
                     if report.crossed_max_age:
                         finished = True

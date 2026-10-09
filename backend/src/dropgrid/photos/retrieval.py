@@ -13,6 +13,7 @@ from dropgrid.photos.domain import (
     PhotoRanker,
     PhotoSearch,
 )
+from dropgrid.photos.progress import emit
 
 
 @dataclass
@@ -38,7 +39,15 @@ async def retrieve_photos(
         return result
     by_identity: dict[tuple[str, str], RetrievedPhoto] = {}
     lanes: list[list[tuple[str, str]]] = []
-    for search in plan.variants[:MAX_RETRIEVAL_QUERIES]:
+    searches = plan.variants[:MAX_RETRIEVAL_QUERIES]
+    for query_index, search in enumerate(searches):
+        await emit(
+            "pinterest_search"
+            if getattr(cache.provider, "name", "") == "pinterest"
+            else "pixabay_search",
+            query_index,
+            len(searches),
+        )
         try:
             found, hit = await cache.search(search)
             result.requests += int(not hit)
@@ -58,6 +67,14 @@ async def retrieve_photos(
             if identity not in lane:
                 lane.append(identity)
         lanes.append(lane)
+    await emit(
+        "pinterest_search"
+        if getattr(cache.provider, "name", "") == "pinterest"
+        else "pixabay_search",
+        len(lanes),
+        len(searches),
+        raw_candidates=len(by_identity),
+    )
     seen: set[tuple[str, str]] = set()
     # Interleave searches so a broad category cannot consume every import slot.
     for i in range(MAX_CANDIDATES_PER_QUERY):

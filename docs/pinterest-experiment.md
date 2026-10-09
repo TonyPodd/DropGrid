@@ -135,3 +135,10 @@ An empty, withheld, malformed or blocked feed becomes
 Protocol reference and attribution: [tamnd/pinterest-cli](https://github.com/tamnd/pinterest-cli),
 Apache-2.0; see [notice](third-party/NOTICE.md) and retained license. The native
 Python adapter does not shell out to the reference project's binary.
+
+Current live follow-up (2026-10-09): both Honda Accord and BMW E60 comparisons
+ran with the direct backend. Anonymous public search returned a safe
+`pinterest_search_unavailable` warning and zero Pins for both; other sources
+remained operational. No bypass was attempted. The earlier Apify/Honda-only
+notes above are the historical baseline. See [current results and activity
+workflow](photo-lab-activity.md).

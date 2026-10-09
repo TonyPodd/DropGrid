@@ -9,6 +9,7 @@ from dropgrid.api.dependencies import Session
 from dropgrid.db.models import Community, CommunityReferencePhoto, PhotoPreviewCache
 from dropgrid.photos.archive import ArchiveDiscovery
 from dropgrid.photos.domain import PhotoError
+from dropgrid.photos.operation_jobs import OperationInput, PhotoJobs
 from dropgrid.photos.preview import photo_preview
 from dropgrid.photos.reference_jobs import ReferenceJobs
 from dropgrid.photos.reference_schemas import (
@@ -153,3 +154,20 @@ async def pin_preview_content(preview_id: UUID, session: Session, engine: Engine
         media_type="image/jpeg",
         headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "public, max-age=86400"},
     )
+
+
+@router.post("/communities/{community_id}/photo-jobs", status_code=202)
+async def queue_photo_operation(
+    community_id: UUID, data: OperationInput, engine: Engine, service: Collector
+) -> dict[str, object]:
+    return await PhotoJobs(engine, service).enqueue(community_id, data)
+
+
+@router.get("/communities/{community_id}/photo-jobs/latest")
+async def latest_photo_operation(
+    community_id: UUID,
+    engine: Engine,
+    service: Collector,
+    kind: Annotated[str, Query(pattern="^(archive|preview)$")] = "preview",
+) -> dict[str, object] | None:
+    return await PhotoJobs(engine, service).latest(community_id, kind)

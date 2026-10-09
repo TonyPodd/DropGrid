@@ -65,3 +65,55 @@ async def test_shortlist_excludes_target_wrong_models_and_uses_embeddings(sessio
     )
     assert stats.candidate_rows == stats.compatible_embeddings == 2 and stats.shortlist == 2
     assert stats.source_communities == [good_id] and embedder.calls == 0
+
+
+def test_canonical_vk_photo_dedup_across_source_names():
+    from photo_fixtures import candidate
+
+    from dropgrid.photos.pool import PoolCandidate, deduplicate_pool
+
+    photo = SimpleNamespace(vk_photo_owner_id=-123, vk_photo_id=456)
+    own = PoolCandidate(
+        candidate("own").model_copy(update={"provider": "vk_archive"}),
+        "vk_archive",
+        reference=photo,
+    )
+    other = PoolCandidate(
+        candidate("other").model_copy(update={"provider": "vk_category_archive"}),
+        "vk_category_archive",
+        reference=photo,
+    )
+    assert deduplicate_pool([own, other]) == [own]
+
+
+@pytest.mark.integration
+async def test_category_preview_degrades_safely_on_read_failure(sessions, tmp_path, monkeypatch):
+    from photo_fixtures import candidate
+
+    from dropgrid.photos.category_archive import CategoryLibraryStats
+    from dropgrid.photos.domain import PhotoError
+    from dropgrid.photos.pool import PoolCandidate
+
+    visual = VisualLibrary(sessions, LocalMediaStorage(tmp_path), FakeVisualEmbedder())
+
+    async def prepare(row):
+        raise PhotoError("vk_credentials_unavailable")
+
+    provider = VKCategoryArchivePhotoProvider(SimpleNamespace(prepare=prepare), visual)
+
+    async def shortlist(*args):
+        return [
+            PoolCandidate(candidate("x"), "vk_category_archive", reference=SimpleNamespace())
+        ], CategoryLibraryStats(candidate_rows=1, shortlist=1)
+
+    monkeypatch.setattr(provider, "shortlist", shortlist)
+    # Empty rank pool still requires a real target for profile/usage reads.
+    async with sessions() as session, session.begin():
+        target = Community(domain="target")
+        session.add(target)
+        await session.flush()
+        identity = target.id
+    pool, stats, warnings = await provider.preview(identity, "cats", None)
+    assert (
+        pool == [] and stats.shortlist == 1 and warnings == ["category_library_photo_unavailable"]
+    )

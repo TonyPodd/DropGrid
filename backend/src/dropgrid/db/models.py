@@ -413,3 +413,35 @@ class PhotoPreviewCache(Identity, Updated, Base):
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary)
     embedding_model: Mapped[str | None] = mapped_column(String(200))
     embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
+
+
+class PhotoOperationJob(Identity, Updated, Base):
+    """One bounded read-only queue for archive and preview operations."""
+
+    __tablename__ = "photo_operation_jobs"
+    __table_args__ = (
+        CheckConstraint("kind IN ('archive', 'preview')", name="kind"),
+        CheckConstraint("state IN ('queued', 'running', 'ready', 'failed')", name="state"),
+        Index(
+            "ix_photo_operation_active",
+            "community_id",
+            unique=True,
+            postgresql_where=text("state NOT IN ('ready', 'failed')"),
+        ),
+        Index("ix_photo_operation_due", "state", "lease_until"),
+    )
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(16))
+    state: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
+    stage: Mapped[str] = mapped_column(String(32), default="queued", server_default="queued")
+    current: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    total: Mapped[int | None] = mapped_column(Integer)
+    counters: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict, server_default="{}")
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict, server_default="{}")
+    result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_token: Mapped[UUID | None]
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

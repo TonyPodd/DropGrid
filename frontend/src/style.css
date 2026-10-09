@@ -537,6 +537,290 @@ tbody tr:hover {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 1rem;
 }
-.reference-grid figure { margin: 0; }
-.reference-grid img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; }
-.reference-grid figcaption { font-size: .85rem; overflow-wrap: anywhere; }
+.reference-grid figure {
+  margin: 0;
+}
+.reference-grid img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.reference-grid figcaption {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.workspace-status {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 20px;
+}
+.activity-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: #fff;
+  border: 1px solid #dce5e1;
+  border-radius: 22px;
+  color: #31473e;
+}
+.activity-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #b8cfc4;
+  border-top-color: #247253;
+  border-radius: 50%;
+  animation: activity-spin 1s linear infinite;
+}
+@keyframes activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.activity-list {
+  display: grid;
+  gap: 14px;
+}
+.activity-card {
+  padding: 18px;
+  margin: 12px 0;
+  border: 1px solid #d6e1da;
+  border-radius: 14px;
+  background: white;
+}
+.activity-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.activity-card progress {
+  width: 100%;
+  height: 8px;
+  accent-color: #247253;
+}
+.activity-card small {
+  color: #64736b;
+}
+.state-failed {
+  border-color: #d99191;
+}
+.state-warning {
+  border-color: #ddc279;
+}
+.activity-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  padding: 16px;
+  background: #173e30;
+  color: white;
+  border-radius: 12px;
+  max-width: min(420px, 90vw);
+  box-shadow: 0 8px 30px #0003;
+}
+.activity-toast button {
+  margin-left: 12px;
+}
+.photo-lab-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  padding: 28px;
+  background: #e9f1ec;
+  border-radius: 20px;
+  margin-bottom: 18px;
+}
+.photo-lab-header h1 {
+  margin: 8px 0;
+}
+.visual-active,
+.visual-inactive {
+  font-size: 12px;
+  border-radius: 16px;
+  padding: 10px;
+  white-space: nowrap;
+}
+.visual-active {
+  background: #d3ecdb;
+  color: #215539;
+}
+.visual-inactive {
+  background: #f0e5ce;
+  color: #76622e;
+}
+.lab-counters {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.lab-counters span {
+  background: white;
+  padding: 14px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+.lab-counters strong {
+  display: block;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.provider-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 18px 0;
+}
+.provider-toggles label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.source-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.source-filters button[aria-pressed="true"] {
+  background: #235b44;
+  color: white;
+}
+.match-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px;
+}
+.match-card {
+  text-align: left;
+  padding: 0 0 14px;
+  overflow: hidden;
+  border: 1px solid #dce5e0;
+  background: #fff;
+  border-radius: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #253b30;
+}
+.match-card img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+.match-card strong,
+.match-card span,
+.match-card small {
+  margin: 0 12px;
+}
+.match-card small {
+  color: #6b786e;
+}
+.match-card:hover {
+  box-shadow: 0 5px 20px #173e3020;
+}
+.photo-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #102219bb;
+  z-index: 110;
+  display: flex;
+  justify-content: flex-end;
+}
+.photo-modal {
+  width: min(660px, 100%);
+  height: 100%;
+  overflow: auto;
+  padding: 24px;
+  background: white;
+  overflow-wrap: anywhere;
+}
+.candidate-large {
+  display: block;
+  width: 100%;
+  max-height: 55vh;
+  object-fit: contain;
+  margin-top: 18px;
+}
+.reference-matches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.reference-matches figure {
+  margin: 0;
+  width: 85px;
+}
+.reference-matches img {
+  width: 85px;
+  height: 85px;
+  object-fit: cover;
+}
+.reference-section {
+  margin-top: 24px;
+}
+details > summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+}
+.app-shell main {
+  min-width: 0;
+}
+.reference-grid figure {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .lab-counters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .photo-lab-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .match-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .app-shell {
+    display: block;
+  }
+  .app-shell aside {
+    position: static;
+    width: auto;
+  }
+  .app-shell main {
+    padding: 16px;
+  }
+  .match-card img {
+    height: 150px;
+  }
+  .match-card strong,
+  .match-card span {
+    font-size: 12px;
+  }
+  .lab-counters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .photo-modal {
+    padding: 16px;
+  }
+  .workspace-status {
+    justify-content: flex-start;
+  }
+}
+.provider-toggles label {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.provider-toggles input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  flex: none;
+}

@@ -16,6 +16,7 @@ from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import normalize_category
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, archive_pool, rank_pool
+from dropgrid.photos.progress import emit
 from dropgrid.photos.reference_schemas import (
     ArchiveAgeStratum,
     ArchiveShortlistItem,
@@ -86,6 +87,7 @@ async def _photo_preview(
     )
     pixabay: list[PoolCandidate] = []
     warnings: list[str] = []
+    await emit("pixabay_search", 0, 4)
     with stage("query_retrieval"):
         retrieval = (
             await retrieve_photos(planner.cache, plan, planner.policy)
@@ -113,6 +115,7 @@ async def _photo_preview(
                 warnings.append(warning)
         return retrieved, asset
 
+    await emit("materializing", 0, min(len(retrieval.items), data.candidate_limit))
     imports = await asyncio.gather(
         *(import_one(item) for item in retrieval.items[: data.candidate_limit])
     )
@@ -130,6 +133,7 @@ async def _photo_preview(
                         perceptual_hash=asset.perceptual_hash,
                     )
                 )
+    await emit("ranking", len(imports), len(imports))
     ranked_pixabay = await rank_pool(visual, community_id, pixabay, category)
     # Keep each lane independent: mixed-pool scoring cannot mutate source scores.
     pool = [replace(item, score=None, age_reuse_score=0) for item in pixabay]
@@ -161,6 +165,7 @@ async def _photo_preview(
             break
     archive = []
     if data.include_archive:
+        await emit("own_archive")
         archive = await archive_pool(planner.archive, community_id, warnings, category)
         pool += archive
     strata = []
@@ -216,12 +221,14 @@ async def _photo_preview(
     pin_queries: dict[str, list[str]] = {}
     pinterest_status = planner.pinterest_status
     if planner.pinterest_preview and data.include_pinterest:
-        (
-            ranked_pinterest,
-            pins_retrieved,
-            pin_queries,
-            pin_warnings,
-        ) = await planner.pinterest_preview.compare(community_id, plan)
+        await emit("pinterest_search", 0, 4)
+        with stage("pinterest"):
+            (
+                ranked_pinterest,
+                pins_retrieved,
+                pin_queries,
+                pin_warnings,
+            ) = await planner.pinterest_preview.compare(community_id, plan)
         warnings.extend(pin_warnings)
         pinterest_status = (
             "ready"
@@ -243,12 +250,15 @@ async def _photo_preview(
         and planner.archive
         and planner.settings.cross_community_reuse_enabled
     ):
-        category_pool, library_stats, category_warnings = await VKCategoryArchivePhotoProvider(
-            planner.archive, visual
-        ).preview(community_id, category, effective_hint, data.grid_id)
+        await emit("category_shortlist")
+        with stage("category_library"):
+            category_pool, library_stats, category_warnings = await VKCategoryArchivePhotoProvider(
+                planner.archive, visual
+            ).preview(community_id, category, effective_hint, data.grid_id)
         warnings.extend(category_warnings)
     elif data.include_category_library:
         warnings.append("category_library_disabled")
+    await emit("ranking", 0, len(mixed) + len(ranked_pinterest) + len(category_pool))
     best = await rank_pool(
         visual,
         community_id,
@@ -258,6 +268,7 @@ async def _photo_preview(
         ],
         category,
     )
+    await emit("finalizing", len(best), len(best), candidates=len(best))
     diagnostic_candidates = mixed + ranked_pinterest + category_pool
     embeddings = sum(item.embedding is not None for item in diagnostic_candidates)
     reason = None
@@ -277,7 +288,20 @@ async def _photo_preview(
     )
     if not active and reason is None:
         reason = "no_compatible_references"
+    pin_stats: dict[str, dict[str, int]] = {}
+    if planner.pinterest_preview:
+        backend = getattr(planner.pinterest_preview.cache.provider, "backend", None)
+        stats = getattr(backend, "stats", {})
+        for query in (v.query for v in plan.variants):
+            if query in stats:
+                pin_stats[query] = {
+                    key: value
+                    for key, value in stats[query].items()
+                    if key in {"raw_pins", "valid_image_pins", "pages"} and type(value) is int
+                }
     return PhotoPreviewRead(
+        pinterest_stats=pin_stats,
+        pinterest_materialized=len(ranked_pinterest),
         best_matches=[pin_output(i) if i.source == "pinterest" else output(i) for i in best[:32]],
         category_library=[output(i) for i in category_pool[: data.candidate_limit]],
         category_library_stats=asdict(library_stats),

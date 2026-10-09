@@ -117,9 +117,20 @@ async def profile_read(session: AsyncSession, community_id: UUID) -> ProfileRead
             )
         )
     ).one()
+    core_count = await session.scalar(
+        select(func.count())
+        .select_from(CommunityReferencePhoto)
+        .where(
+            CommunityReferencePhoto.community_id == community_id,
+            CommunityReferencePhoto.is_style_reference.is_(True),
+            CommunityReferencePhoto.reference_role == "core",
+        )
+    )
     return data.model_copy(
         update={
             "reference_count": count or 0,
+            "reference_core_count": core_count or 0,
+            "reference_aux_count": (count or 0) - (core_count or 0),
             "archive_discovered_count": discovered or 0,
             "archive_eligible_count": eligible if data.archive_reuse_enabled else 0,
             "archive_oldest_eligible_at": oldest if data.archive_reuse_enabled else None,

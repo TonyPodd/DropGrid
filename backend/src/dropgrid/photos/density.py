@@ -105,7 +105,7 @@ def assess_references(
         unseen -= component
         components.append(component)
     sizes = {identity: len(group) for group in components for identity in group}
-    minimum_cluster = max(3, math.ceil(len(unique) * 0.05))
+    minimum_cluster = max(3, math.ceil(len(unique) * 0.10))
     sizeable = [group for group in components if len(group) >= minimum_cluster]
     reasons: dict[UUID, str] = {}
     core: set[UUID] = set()

@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from dropgrid.api.activity import router as activity_router
 from dropgrid.api.dependencies import database
 from dropgrid.api.routes import router
 from dropgrid.config import Settings
@@ -76,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
     )
     app.include_router(router)
+    app.include_router(activity_router)
     app.include_router(photo_router)
     app.include_router(reference_router)
     app.include_router(preparation_router)

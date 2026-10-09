@@ -1,15 +1,18 @@
 """Preview-only, embedding-first retrieval from other indexed communities."""
 
+import asyncio
 from dataclasses import dataclass, field
 from uuid import UUID
 
 from sqlalchemy import select
 
 from dropgrid.db.models import Community, CommunityReferencePhoto, GridCommunity, utcnow
+from dropgrid.integrations.vk.errors import VKError
 from dropgrid.photos.archive import VKArchivePhotoProvider, archive_identity
 from dropgrid.photos.concepts import car_model
 from dropgrid.photos.domain import PhotoError, PhotoPolicy, normalize_category
 from dropgrid.photos.pool import PoolCandidate, deduplicate_pool, rank_pool
+from dropgrid.photos.progress import emit
 from dropgrid.photos.rotation import community_usage, recently_used
 from dropgrid.photos.visual import CommunityVisualRanker, deserialize_embedding
 from dropgrid.photos.visual_library import VisualLibrary
@@ -182,17 +185,43 @@ class VKCategoryArchivePhotoProvider:
     ) -> tuple[list[PoolCandidate], CategoryLibraryStats, list[str]]:
         pool, stats = await self.shortlist(target_id, category, hint, grid_id)
         materialized, warnings = [], []
-        for item in pool[:MAX_MATERIALIZED]:
+        selected = pool[:MAX_MATERIALIZED]
+        await emit(
+            "category_shortlist",
+            len(pool),
+            len(pool),
+            category_candidates=stats.candidate_rows,
+            category_shortlist=stats.shortlist,
+        )
+        for index, item in enumerate(selected):
+            await emit("category_materializing", index, len(selected))
             try:
                 assert item.reference
-                item.reference = await self.archive.prepare(item.reference)
+                async with asyncio.timeout(15):
+                    item.reference = await self.archive.prepare(item.reference)
+                if (
+                    item.reference.embedding
+                    and item.reference.embedding_model
+                    and item.reference.embedding_dimensions
+                ):
+                    item.embedding = deserialize_embedding(
+                        item.reference.embedding,
+                        item.reference.embedding_model,
+                        item.reference.embedding_dimensions,
+                    )
                 item.sha256, item.perceptual_hash = (
                     item.reference.sha256,
                     item.reference.perceptual_hash,
                 )
                 materialized.append(item)
-            except (PhotoError, OSError):
+            except (PhotoError, OSError, VKError, TimeoutError):
                 warnings.append("category_library_photo_unavailable")
+        await emit(
+            "category_materializing",
+            len(selected),
+            len(selected),
+            category_materialized=len(materialized),
+        )
         return (
             await rank_pool(self.visual, target_id, materialized, category),
             stats,

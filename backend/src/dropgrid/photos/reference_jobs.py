@@ -4,9 +4,16 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
-from dropgrid.db.models import Community, CommunityContentProfile, ReferenceSyncJob, utcnow
+from dropgrid.db.models import (
+    Community,
+    CommunityContentProfile,
+    PhotoOperationJob,
+    ReferenceSyncJob,
+    utcnow,
+)
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.reference_schemas import ReferenceSyncInput, ReferenceSyncRead
 from dropgrid.photos.references import CommunityReferenceCollector
@@ -40,6 +47,11 @@ class ReferenceJobs:
         try:
             async with self.sessions() as session, session.begin():
                 await get_entity(session, Community, community_id)
+                await session.execute(
+                    insert(CommunityContentProfile)
+                    .values(community_id=community_id)
+                    .on_conflict_do_nothing()
+                )
                 profile = await session.get(
                     CommunityContentProfile, community_id, with_for_update=True
                 )
@@ -51,6 +63,20 @@ class ReferenceJobs:
                     ):
                         if until and until > utcnow():
                             raise PhotoConflict(code)
+                operation = await session.scalar(
+                    select(PhotoOperationJob)
+                    .where(
+                        PhotoOperationJob.community_id == community_id,
+                        PhotoOperationJob.state.not_in(("ready", "failed")),
+                    )
+                    .limit(1)
+                )
+                if operation:
+                    raise PhotoConflict(
+                        "archive_sync_in_progress"
+                        if operation.kind == "archive"
+                        else "preview_in_progress"
+                    )
                 row = ReferenceSyncJob(
                     community_id=community_id,
                     account_id=data.account_id,

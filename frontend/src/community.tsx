@@ -7,6 +7,7 @@ import {
   referenceContentUrl,
   photoPreviewContentUrl,
 } from "./api/client";
+import { CommunityActivities } from "./activity";
 import { Pager, State, date, useLoad } from "./shared";
 
 type ProfileInput = {
@@ -21,6 +22,8 @@ type ProfileInput = {
 type Profile = ProfileInput & {
   community_id: string;
   reference_count: number;
+  reference_core_count?: number;
+  reference_aux_count?: number;
   references_last_synced_at: string | null;
   archive_discovered_count?: number;
   archive_eligible_count?: number;
@@ -36,6 +39,8 @@ type StudyJob = {
   result: { warnings: string[] } | null;
 };
 type Reference = {
+  reference_cluster_size?: number | null;
+  reference_role_reason?: string;
   reference_role?: string;
   reference_density?: number | null;
   reference_nearest_similarity?: number | null;
@@ -45,6 +50,10 @@ type Reference = {
   embedding_model: string | null;
 };
 type Score = {
+  source_community_id?: string | null;
+  source_post_id?: number | null;
+  vk_photo_owner_id?: number | null;
+  vk_photo_id?: number | null;
   preview_id?: string | null;
   publication_eligible?: boolean;
   pin_url?: string | null;
@@ -63,6 +72,9 @@ type Score = {
   final_score: number;
 };
 type Preview = {
+  best_matches?: Score[];
+  category_library?: Score[];
+  category_library_stats?: Record<string, unknown>;
   pinterest_status?: string;
   pinterest_queries?: string[];
   pinterest_retrieved?: number;
@@ -92,6 +104,33 @@ type Preview = {
   }[];
   archive_shortlist?: { source_identity: string; age_days: number }[];
   warnings: string[];
+};
+type PhotoJob = {
+  id: string;
+  kind: string;
+  state: string;
+  stage: string;
+  current: number;
+  total: number | null;
+  elapsed_seconds: number;
+  counters: Record<string, number>;
+  result:
+    | Preview
+    | {
+        posts_scanned: number;
+        candidates_discovered: number;
+        candidates_existing: number;
+        warnings: string[];
+      }
+    | null;
+  error_code: string | null;
+};
+type Providers = {
+  include_pixabay: boolean;
+  include_archive: boolean;
+  include_category_library: boolean;
+  include_pinterest: boolean;
+  include_library: boolean;
 };
 const defaults: ProfileInput = {
   desired_content: null,
@@ -124,23 +163,32 @@ export const communityVisualApi = {
     request<StudyJob | null>(`/communities/${id}/references/jobs/latest`, {
       signal,
     }),
+  metadata: (id: string, signal?: AbortSignal) =>
+    request<{ name: string | null; domain: string; category: string | null }>(
+      `/communities/${id}`,
+      { signal },
+    ),
+  latest: (id: string, kind: string, signal?: AbortSignal) =>
+    request<PhotoJob | null>(
+      `/communities/${id}/photo-jobs/latest?kind=${kind}`,
+      { signal },
+    ),
   archive: (id: string) =>
-    request<{
-      posts_scanned: number;
-      candidates_discovered: number;
-      candidates_existing: number;
-      warnings: string[];
-    }>(`/communities/${id}/archive/sync`, {
+    request<PhotoJob>(`/communities/${id}/photo-jobs`, {
       method: "POST",
-      body: { max_pages: 20 },
+      body: { kind: "archive", archive: { max_pages: 20 } },
     }),
-  preview: (id: string, gridId?: string) =>
-    request<Preview>(`/communities/${id}/photo-preview`, {
+  preview: (id: string, gridId?: string, providers?: Providers) =>
+    request<PhotoJob>(`/communities/${id}/photo-jobs`, {
       method: "POST",
       body: {
-        candidate_limit: 8,
-        diagnostics: true,
-        ...(gridId ? { grid_id: gridId } : {}),
+        kind: "preview",
+        preview: {
+          candidate_limit: 8,
+          diagnostics: true,
+          ...(gridId ? { grid_id: gridId } : {}),
+          ...providers,
+        },
       },
     }),
 };
@@ -169,7 +217,10 @@ function CandidateScores({
                 item.preview_id
                   ? photoPreviewContentUrl(item.preview_id)
                   : item.reference_id
-                    ? referenceContentUrl(communityId, item.reference_id)
+                    ? referenceContentUrl(
+                        item.source_community_id ?? communityId,
+                        item.reference_id,
+                      )
                     : mediaContentUrl(item.media_asset_id ?? "")
               }
               alt="Кандидат фото"
@@ -227,15 +278,93 @@ function CandidateScores({
   );
 }
 
+const sources: Record<string, string> = {
+  pinterest: "Pinterest",
+  vk_category_archive: "VK category library",
+  vk_archive: "Own archive",
+  pixabay: "Pixabay",
+  library: "Library",
+};
+function imageUrl(item: Score, id: string) {
+  return item.preview_id
+    ? photoPreviewContentUrl(item.preview_id)
+    : item.reference_id
+      ? referenceContentUrl(item.source_community_id ?? id, item.reference_id)
+      : mediaContentUrl(item.media_asset_id ?? "");
+}
+function styleScore(item: Score) {
+  return item.visual_score == null
+    ? "Стиль не оценён"
+    : `Совпадение со стилем: ${Math.round(Math.max(0, Math.min(1, item.visual_score)) * 100)}%`;
+}
+const roleReasons: Record<string, string> = {
+  duplicate: "Повтор похожего фото",
+  small_cluster: "Небольшой визуальный кластер",
+  coherent_cluster: "Плотная группа похожих фото",
+  low_density: "Меньше сходства с основным стилем",
+  small_reference_fallback: "Пока мало уникальных примеров",
+  incompatible_embedding: "Нет совместимых визуальных признаков",
+  density_fallback: "Отбор по плотности сходства",
+};
+function PhotoProgress({ job }: { job: PhotoJob }) {
+  const stages: Record<string, string> = {
+    queued: "В очереди",
+    archive_seek: "Ищем начало диапазона архива",
+    archive_scan: "Индексируем посты",
+    pixabay_search: "Ищем фото в Pixabay",
+    pinterest_search: "Ищем публичные Pins",
+    category_shortlist: "Сравниваем фото других групп",
+    materializing: "Подготавливаем изображения",
+    ranking: "Ранжируем по стилю",
+    finalizing: "Сохраняем результат",
+    own_archive: "Подбираем собственный архив",
+    ready: "Готово",
+    failed: "Задача не завершена. Повторите позже.",
+  };
+  return (
+    <article className="activity-card" role="status">
+      <strong>
+        {job.kind === "archive" ? "Индексация архива" : "Сравнение фото"}
+      </strong>
+      <p>
+        {stages[job.stage] ?? "Выполняется"}
+        {job.total != null
+          ? ` · ${job.current} / ${job.total}`
+          : job.current
+            ? ` · ${job.current}`
+            : ""}{" "}
+        · {job.elapsed_seconds} сек.
+      </p>
+      {!["ready", "failed"].includes(job.state) && (
+        <progress
+          aria-label="Прогресс фото"
+          {...(job.total ? { value: job.current, max: job.total } : {})}
+        />
+      )}
+      {job.counters.photos != null && (
+        <p>Найдено: {job.counters.photos} фото</p>
+      )}
+      {job.counters.min_age_days != null && (
+        <p>
+          {job.counters.min_age_days}–{job.counters.max_age_days} дней
+        </p>
+      )}
+    </article>
+  );
+}
 export function CommunityDetailPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
-  const gridId = searchParams.get("grid");
+  const gridId = searchParams.get("grid") ?? undefined;
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState(1);
   const state = useLoad(
     (signal) => communityVisualApi.profile(id, signal),
     [id, revision],
+  );
+  const metadata = useLoad(
+    (signal) => communityVisualApi.metadata(id, signal),
+    [id],
   );
   const refs = useLoad(
     (signal) => communityVisualApi.references(id, page, signal),
@@ -244,10 +373,23 @@ export function CommunityDetailPage() {
   const [body, setBody] = useState<ProfileInput>(defaults);
   const [busy, setBusy] = useState(false);
   const [study, setStudy] = useState<StudyJob | null>(null);
-  const studying = !!study && !["ready", "failed"].includes(study.state);
+  const [jobs, setJobs] = useState<PhotoJob[]>([]);
+  const [pollRevision, setPollRevision] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<Preview>();
+  const [selected, setSelected] = useState<Score>();
+  const [source, setSource] = useState("all");
+  const [providers, setProviders] = useState<Providers>({
+    include_pixabay: true,
+    include_archive: true,
+    include_category_library: true,
+    include_pinterest: true,
+    include_library: true,
+  });
+  const studying = !!study && !["ready", "failed"].includes(study.state);
+  const working =
+    studying || jobs.some((job) => !["ready", "failed"].includes(job.state));
   useEffect(() => {
     if (state.data) {
       const {
@@ -271,213 +413,188 @@ export function CommunityDetailPage() {
     }
   }, [state.data]);
   useEffect(() => {
+    const controller = new AbortController();
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
     async function poll() {
       try {
-        const job = await communityVisualApi.study(id, controller.signal);
+        const [studyJob, archive, comparison] = await Promise.all([
+          communityVisualApi.study(id, controller.signal),
+          communityVisualApi.latest(id, "archive", controller.signal),
+          communityVisualApi.latest(id, "preview", controller.signal),
+        ]);
         if (disposed) return;
-        setStudy(job);
-        if (job && !["ready", "failed"].includes(job.state))
-          timer = setTimeout(() => void poll(), 1000);
-        else if (job) setRevision((n) => n + 1);
+        setStudy(studyJob);
+        const photoJobs = [archive, comparison].filter(
+          (job): job is PhotoJob => !!job,
+        );
+        setJobs(photoJobs);
+        if (
+          comparison?.state === "ready" &&
+          comparison.result &&
+          "category_only" in comparison.result
+        )
+          setPreview(comparison.result);
+        if (
+          archive?.state === "ready" &&
+          archive.result &&
+          "posts_scanned" in archive.result
+        )
+          setMessage(
+            `Архив: просмотрено ${archive.result.posts_scanned}, новых ${archive.result.candidates_discovered}, существующих ${archive.result.candidates_existing}.`,
+          );
+        if (
+          [studyJob, ...photoJobs].some(
+            (job) => job && !["ready", "failed"].includes(job.state),
+          )
+        )
+          timer = setTimeout(() => void poll(), 1500);
+        else setRevision((n) => n + 1);
       } catch (err) {
-        if (!disposed) setError(errorMessage(err));
+        if (!disposed) {
+          setError(errorMessage(err));
+          timer = setTimeout(() => void poll(), 3000);
+        }
       }
     }
+    setPreview(undefined);
+    setSelected(undefined);
     void poll();
     return () => {
       disposed = true;
       controller.abort();
       clearTimeout(timer);
     };
-  }, [id, study?.id]);
+  }, [id, pollRevision]);
   async function run(operation: "save" | "sync" | "archive" | "preview") {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      if (operation === "preview")
-        setPreview(
-          await (gridId
-            ? communityVisualApi.preview(id, gridId)
-            : communityVisualApi.preview(id)),
-        );
-      else {
+      if (operation === "preview") {
+        const job = await communityVisualApi.preview(id, gridId, providers);
+        setJobs((old) => [...old.filter((row) => row.kind !== "preview"), job]);
+      } else {
         await communityVisualApi.save(id, body);
-        if (operation === "sync") {
-          setStudy(await communityVisualApi.sync(id));
-        } else if (operation === "archive") {
-          const result = await communityVisualApi.archive(id);
-          setMessage(
-            `Архив: просмотрено ${result.posts_scanned}, новых ${result.candidates_discovered}, существующих ${result.candidates_existing}. ${result.warnings.join(", ")}`,
-          );
+        if (operation === "sync") setStudy(await communityVisualApi.sync(id));
+        else if (operation === "archive") {
+          const job = await communityVisualApi.archive(id);
+          setJobs((old) => [
+            ...old.filter((row) => row.kind !== "archive"),
+            job,
+          ]);
         } else setMessage("Профиль сохранён.");
-        setRevision((n) => n + 1);
       }
+      if (operation !== "save") setPollRevision((n) => n + 1);
+      setRevision((n) => n + 1);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
   }
+  useEffect(() => {
+    if (!selected) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelected(undefined);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [selected]);
+  const best =
+    preview?.best_matches ??
+    preview?.mixed_source ??
+    preview?.community_aware ??
+    [];
   return (
     <>
       <Link to="/communities">← Communities</Link>
-      <h1>Визуальный профиль сообщества</h1>
-      <State {...state} retry={state.reload}>
-        {state.data && (
-          <>
-            <p>
-              Референсов: {state.data.reference_count} · Последнее изучение:{" "}
-              {state.data.references_last_synced_at
-                ? date(state.data.references_last_synced_at)
-                : "—"}
-            </p>
-            <p>
-              Архив: обнаружено {state.data.archive_discovered_count ?? 0},
-              доступно {state.data.archive_eligible_count ?? 0}.{" "}
-              {state.data.archive_oldest_eligible_at && (
-                <>
-                  Диапазон: {date(state.data.archive_oldest_eligible_at)} —{" "}
-                  {date(
-                    state.data.archive_newest_eligible_at ??
-                      state.data.archive_oldest_eligible_at,
-                  )}
-                </>
-              )}
-            </p>
-            <form
-              className="form-card"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void run("save");
-              }}
-            >
-              <fieldset disabled={busy || studying}>
-                <label>
-                  Желаемый контент
-                  <textarea
-                    maxLength={3000}
-                    value={body.desired_content ?? ""}
-                    onChange={(e) =>
-                      setBody({
-                        ...body,
-                        desired_content: e.target.value || null,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Избегать
-                  <textarea
-                    maxLength={3000}
-                    value={body.avoid_content ?? ""}
-                    onChange={(e) =>
-                      setBody({
-                        ...body,
-                        avoid_content: e.target.value || null,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Заметки о стиле
-                  <textarea
-                    maxLength={3000}
-                    value={body.style_notes ?? ""}
-                    onChange={(e) =>
-                      setBody({ ...body, style_notes: e.target.value || null })
-                    }
-                  />
-                </label>
-                <label>
-                  Количество референсов
-                  <input
-                    type="number"
-                    min={1}
-                    max={300}
-                    required
-                    value={body.reference_target_count}
-                    onChange={(e) =>
-                      setBody({
-                        ...body,
-                        reference_target_count: Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={body.archive_reuse_enabled}
-                    onChange={(e) =>
-                      setBody({
-                        ...body,
-                        archive_reuse_enabled: e.target.checked,
-                      })
-                    }
-                  />
-                  Разрешить использование архивных фото
-                </label>
-                <label>
-                  Минимальный возраст архивного фото (дней)
-                  <input
-                    type="number"
-                    min={0}
-                    max={3649}
-                    required
-                    value={body.archive_reuse_min_age_days}
-                    onChange={(e) =>
-                      setBody({
-                        ...body,
-                        archive_reuse_min_age_days: Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Максимальный возраст архивного фото (дней)
-                  <input
-                    type="number"
-                    required
-                    min={body.archive_reuse_min_age_days + 1}
-                    max={3650}
-                    value={body.archive_reuse_max_age_days}
-                    onChange={(e) =>
-                      setBody({
-                        ...body,
-                        archive_reuse_max_age_days: Number(e.target.value),
-                      })
-                    }
-                  />
-                </label>
-                <p className="note">
-                  Недавние references определяют стиль. Архив индексируется
-                  отдельно по возрасту. При явном разрешении старые фото только
-                  этого сообщества участвуют в подборе вместе с Pixabay.
-                  Индексация и preview ничего не отправляют в VK.
-                </p>
-                <div className="actions">
-                  <button>Сохранить профиль</button>
-                  <button type="button" onClick={() => void run("sync")}>
-                    Изучить последние посты
-                  </button>
-                  <button type="button" onClick={() => void run("archive")}>
-                    Проиндексировать архив
-                  </button>
-                  <button type="button" onClick={() => void run("preview")}>
-                    Сравнить подбор фото
-                  </button>
-                </div>
-              </fieldset>
-            </form>
-          </>
-        )}
-      </State>
+      <section className="photo-lab-header">
+        <div>
+          <small>PHOTO LAB</small>
+          <h1>
+            {metadata.data?.name ||
+              metadata.data?.domain ||
+              "Визуальный профиль сообщества"}
+          </h1>
+          <p>
+            {metadata.data?.domain} ·{" "}
+            {preview?.category ??
+              metadata.data?.category ??
+              "Категория не задана"}
+          </p>
+          <p>
+            Комментарий: {preview?.comment ?? "—"} · Контент:{" "}
+            {preview?.content_hint ?? body.desired_content ?? "—"}
+          </p>
+        </div>
+        <span
+          className={
+            preview?.visual_engine?.active ? "visual-active" : "visual-inactive"
+          }
+        >
+          Визуальный движок:{" "}
+          {preview?.visual_engine?.active ? "ACTIVE" : "INACTIVE"}
+        </span>
+      </section>
+      <div className="lab-counters">
+        <span>
+          Референсы <strong>{state.data?.reference_count ?? 0}</strong>
+        </span>
+        <span>
+          CORE{" "}
+          <strong>
+            {state.data?.reference_core_count ??
+              preview?.visual_engine?.compatible_reference_count ??
+              "—"}
+          </strong>
+        </span>
+        <span>
+          AUX{" "}
+          <strong>
+            {state.data?.reference_aux_count ??
+              (preview?.visual_engine
+                ? Math.max(
+                    0,
+                    (state.data?.reference_count ?? 0) -
+                      preview.visual_engine.compatible_reference_count,
+                  )
+                : "—")}
+          </strong>
+        </span>
+        <span>
+          Архив <strong>{state.data?.archive_discovered_count ?? 0}</strong>
+        </span>
+        <span>
+          Другие группы{" "}
+          <strong>
+            {String(
+              preview?.category_library_stats?.compatible_embeddings ?? 0,
+            )}
+          </strong>
+        </span>
+        <span>
+          Pinterest{" "}
+          <strong>
+            {(
+              {
+                ready: "Доступен",
+                partial: "Частично",
+                search_unavailable: "Нет результатов",
+                disabled: "Выключен",
+                direct: "Готов к поиску",
+                backend_unavailable: "Не настроен",
+              } as Record<string, string>
+            )[preview?.pinterest_status ?? ""] ?? "Не проверен"}
+          </strong>
+        </span>
+      </div>
+      <CommunityActivities id={id} />
+      {jobs.map((job) => (
+        <PhotoProgress key={job.id} job={job} />
+      ))}
       {study && (
-        <p role="status">
+        <article className="activity-card" role="status">
           {
             (
               {
@@ -492,134 +609,402 @@ export function CommunityDetailPage() {
             )[study.state]
           }{" "}
           · {study.elapsed_seconds} сек.
-          {study.result?.warnings?.length
-            ? ` · ${study.result.warnings.join(", ")}`
-            : ""}
-        </p>
+          {studying && <progress aria-label="Прогресс изучения" />}
+        </article>
       )}
+      <State {...state} retry={state.reload}>
+        {state.data && (
+          <>
+            <section className="form-card">
+              <h2>Сравнить источники</h2>
+              <div className="provider-toggles">
+                {(
+                  Object.entries({
+                    include_pixabay: "Pixabay",
+                    include_archive: "Own VK archive",
+                    include_category_library: "VK category library",
+                    include_pinterest: "Pinterest",
+                    include_library: "Existing library",
+                  }) as [keyof Providers, string][]
+                ).map(([key, label]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={providers[key]}
+                      onChange={(e) =>
+                        setProviders({ ...providers, [key]: e.target.checked })
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <button
+                disabled={busy || working}
+                onClick={() => void run("preview")}
+              >
+                Сравнить подбор фото
+              </button>
+              <p className="note">
+                Pinterest и фото других сообществ доступны только для
+                исследования. Визуальное сходство — не вероятность качества.
+              </p>
+            </section>
+            <details className="form-card">
+              <summary>Настройки профиля и индексации</summary>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void run("save");
+                }}
+              >
+                <fieldset disabled={busy || working}>
+                  {(
+                    ["desired_content", "avoid_content", "style_notes"] as const
+                  ).map((key, i) => (
+                    <label key={key}>
+                      {["Желаемый контент", "Избегать", "Заметки о стиле"][i]}
+                      <textarea
+                        maxLength={3000}
+                        value={body[key] ?? ""}
+                        onChange={(e) =>
+                          setBody({ ...body, [key]: e.target.value || null })
+                        }
+                      />
+                    </label>
+                  ))}
+                  <label>
+                    Количество референсов
+                    <input
+                      type="number"
+                      min={1}
+                      max={300}
+                      required
+                      value={body.reference_target_count}
+                      onChange={(e) =>
+                        setBody({
+                          ...body,
+                          reference_target_count: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={body.archive_reuse_enabled}
+                      onChange={(e) =>
+                        setBody({
+                          ...body,
+                          archive_reuse_enabled: e.target.checked,
+                        })
+                      }
+                    />
+                    Разрешить использование архивных фото
+                  </label>
+                  <label>
+                    Минимальный возраст архивного фото (дней)
+                    <input
+                      type="number"
+                      min={0}
+                      max={3649}
+                      required
+                      value={body.archive_reuse_min_age_days}
+                      onChange={(e) =>
+                        setBody({
+                          ...body,
+                          archive_reuse_min_age_days: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Максимальный возраст архивного фото (дней)
+                    <input
+                      type="number"
+                      min={body.archive_reuse_min_age_days + 1}
+                      max={3650}
+                      required
+                      value={body.archive_reuse_max_age_days}
+                      onChange={(e) =>
+                        setBody({
+                          ...body,
+                          archive_reuse_max_age_days: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <div className="actions">
+                    <button>Сохранить профиль</button>
+                    <button type="button" onClick={() => void run("sync")}>
+                      Изучить последние посты
+                    </button>
+                    <button type="button" onClick={() => void run("archive")}>
+                      Проиндексировать архив
+                    </button>
+                  </div>
+                </fieldset>
+              </form>
+            </details>
+          </>
+        )}
+      </State>
       {message && <p role="status">{message}</p>}
       {error && <p role="alert">{error}</p>}
-      <h2>Визуальные референсы</h2>
-      <State {...refs} retry={refs.reload}>
-        <div className="reference-grid">
-          {refs.data?.items.map((ref) => (
-            <figure key={ref.id}>
-              <img
-                src={referenceContentUrl(id, ref.id)}
-                alt={`Референс поста ${ref.vk_post_id}`}
-                loading="lazy"
-              />
-              <figcaption>
-                <strong>
-                  {ref.reference_role === "auxiliary" ? "AUX" : "CORE"}
-                </strong>{" "}
-                · {date(ref.posted_at)}
-                <br />
-                density: {ref.reference_density?.toFixed(3) ?? "—"} · nearest:{" "}
-                {ref.reference_nearest_similarity?.toFixed(3) ?? "—"}
-              </figcaption>
-            </figure>
-          ))}
-        </div>
-      </State>
-      <Pager
-        page={page}
-        onPage={setPage}
-        hasNext={page * 20 < (refs.data?.total ?? 0)}
-        disabled={refs.loading}
-      />
       {preview && (
-        <>
+        <section>
           {!preview.visual_engine?.active && (
             <p role="alert">
-              Визуальное сравнение сейчас не используется ·{" "}
-              {preview.visual_engine?.reason_if_inactive ??
-                "no_compatible_references"}
+              Визуальное сравнение сейчас не используется.{" "}
+              {preview.visual_engine?.reason_if_inactive === "model_disabled"
+                ? "CLIP-модель не запущена."
+                : "Нужны совместимые референсы и изображения."}
             </p>
           )}
-          {preview.visual_engine && (
-            <p className="note">
-              Visual engine: {preview.visual_engine.model ?? "disabled"} · CORE:{" "}
-              {preview.visual_engine.compatible_reference_count} · candidate
-              embeddings: {preview.visual_engine.candidate_embeddings_available}
+          {preview.warnings.map((code) => (
+            <p className="note" key={code}>
+              {(
+                {
+                  pinterest_search_unavailable:
+                    "Pinterest временно не вернул результаты.",
+                  category_library_disabled:
+                    "Библиотека других групп отключена в настройках окружения.",
+                  photo_preview_timeout:
+                    "Сравнение не успело завершиться. Повторите вручную.",
+                } as Record<string, string>
+              )[code] ??
+                "Часть источников недоступна; сравнение остальных сохранено."}
+            </p>
+          ))}
+          <h2>BEST MATCHES</h2>
+          <div className="source-filters" aria-label="Источники">
+            {["all", ...Object.keys(sources)].map((key) => (
+              <button
+                aria-pressed={source === key}
+                key={key}
+                onClick={() => setSource(key)}
+              >
+                {key === "all" ? "All" : sources[key]}
+              </button>
+            ))}
+          </div>
+          <div className="match-grid">
+            {best
+              .filter((item) => source === "all" || item.source === source)
+              .map((item) => (
+                <button
+                  className="match-card"
+                  key={`${item.source}:${item.source_identity ?? item.media_asset_id ?? item.reference_id}`}
+                  onClick={() => setSelected(item)}
+                >
+                  <img
+                    src={imageUrl(item, id)}
+                    alt="Подобранное фото"
+                    loading="lazy"
+                  />
+                  <strong>
+                    #{best.indexOf(item) + 1} ·{" "}
+                    {sources[item.source ?? "library"] ?? item.source}
+                  </strong>
+                  <span>{styleScore(item)}</span>
+                  {item.publication_eligible === false && (
+                    <small>Только просмотр</small>
+                  )}
+                </button>
+              ))}
+          </div>
+          {best.length === 0 && (
+            <p>
+              Подходящих фото пока нет. Проверьте источники и визуальные
+              референсы.
             </p>
           )}
-          <p>
-            Порядок и scores доступны для сравнения; улучшение качества требует
-            визуальной оценки.
-          </p>
           <p className="note">
-            Category: {preview.category ?? "—"} · Comment:{" "}
-            {preview.comment ?? "—"} · Content hint:{" "}
-            {preview.content_hint ?? "—"}
+            Другие группы:{" "}
+            {String(preview.category_library_stats?.communities_indexed ?? 0)} ·
+            Фото:{" "}
+            {String(preview.category_library_stats?.reference_photos ?? 0)} ·
+            Архив: {String(preview.category_library_stats?.archive_photos ?? 0)}{" "}
+            · Совместимых:{" "}
+            {String(preview.category_library_stats?.compatible_embeddings ?? 0)}
           </p>
-          <p className="note">
-            Search queries:{" "}
-            {(preview.generated_queries ?? []).join(" · ") || "—"}
-          </p>
-          {preview.timings_ms && (
-            <p className="note">
-              Stage timings (ms):{" "}
-              {Object.entries(preview.timings_ms)
-                .map(([stage, ms]) => `${stage}: ${ms.toFixed(0)}`)
-                .join(" · ")}
+          <details>
+            <summary>Подробное сравнение</summary>
+            <p>Search queries: {preview.generated_queries?.join(" · ")}</p>
+            <p>
+              Категория: {preview.category} · Комментарий: {preview.comment} ·
+              Контент: {preview.content_hint}
             </p>
-          )}
-          {(preview.archive_age_strata?.length ?? 0) > 0 && (
-            <p className="note">
-              Архивный shortlist:{" "}
-              {preview
-                .archive_age_strata!.map(
-                  (band) =>
-                    `${band.min_age_days}–${band.max_age_days} дней: ${band.candidate_count}`,
-                )
-                .join("; ")}
+            <p>
+              Pinterest: {preview.pinterest_status} · retrieved:{" "}
+              {preview.pinterest_retrieved ?? 0} · embedded:{" "}
+              {preview.pinterest_embedded ?? 0}
             </p>
-          )}
-          {preview.warnings.length > 0 && (
-            <p className="note">{preview.warnings.join(", ")}</p>
-          )}
-          <CandidateScores
-            communityId={id}
-            title="Pixabay"
-            items={preview.category_only}
-          />
-          <CandidateScores
-            communityId={id}
-            title={
-              preview.visual_engine?.active
-                ? "Community-ranked Pixabay"
-                : "Pixabay · визуальное сравнение недоступно"
-            }
-            items={preview.community_aware}
-          />
-          <p className="note">
-            Pinterest: {preview.pinterest_status ?? "disabled"} · retrieved:{" "}
-            {preview.pinterest_retrieved ?? 0} · embedded:{" "}
-            {preview.pinterest_embedded ?? 0} · queries:{" "}
-            {(preview.pinterest_queries ?? []).join(" · ")}
-          </p>
-          {!["ready", "partial"].includes(preview.pinterest_status ?? "") && (
-            <p role="status">
-              Pinterest недоступен. Настройте experimental search backend.
+            {preview.archive_age_strata && (
+              <p>
+                Архивный shortlist:{" "}
+                {preview.archive_age_strata
+                  .map(
+                    (band) =>
+                      `${band.min_age_days}–${band.max_age_days} дней: ${band.candidate_count}`,
+                  )
+                  .join("; ")}
+              </p>
+            )}
+            {preview.timings_ms && (
+              <p>
+                {Object.entries(preview.timings_ms)
+                  .map(([stage, ms]) => `${stage}: ${ms.toFixed(0)} ms`)
+                  .join(" · ")}
+              </p>
+            )}
+            <CandidateScores
+              communityId={id}
+              title="Pixabay"
+              items={preview.category_only}
+            />
+            <CandidateScores
+              communityId={id}
+              title={
+                preview.visual_engine?.active
+                  ? "Community-ranked Pixabay"
+                  : "Pixabay · визуальное сравнение недоступно"
+              }
+              items={preview.community_aware}
+            />
+            <CandidateScores
+              communityId={id}
+              title="Pinterest · experimental preview"
+              items={preview.pinterest ?? []}
+            />
+            <CandidateScores
+              communityId={id}
+              title="Community-ranked Pinterest"
+              items={preview.community_ranked_pinterest ?? []}
+            />
+            <CandidateScores
+              communityId={id}
+              title="VK category library"
+              items={preview.category_library ?? []}
+            />
+            <CandidateScores
+              communityId={id}
+              title="Pixabay + архив + библиотека"
+              items={preview.mixed_source ?? []}
+            />
+          </details>
+        </section>
+      )}
+      <details className="reference-section">
+        <summary>Визуальные референсы · CORE / AUX</summary>
+        <State {...refs} retry={refs.reload}>
+          <div className="reference-grid">
+            {refs.data?.items.map((ref) => (
+              <figure key={ref.id}>
+                <img
+                  src={referenceContentUrl(id, ref.id)}
+                  alt={`Референс поста ${ref.vk_post_id}`}
+                  loading="lazy"
+                />
+                <figcaption>
+                  <strong>
+                    {ref.reference_role === "auxiliary" ? "AUX" : "CORE"}
+                  </strong>{" "}
+                  · {date(ref.posted_at)}
+                  <p>
+                    {roleReasons[ref.reference_role_reason ?? ""] ??
+                      "Отбор по визуальному сходству"}{" "}
+                    · Кластер: {ref.reference_cluster_size ?? "—"}
+                  </p>
+                  <small>
+                    density: {ref.reference_density?.toFixed(3) ?? "—"} ·
+                    nearest:{" "}
+                    {ref.reference_nearest_similarity?.toFixed(3) ?? "—"}
+                  </small>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </State>
+        <Pager
+          page={page}
+          onPage={setPage}
+          hasNext={page * 20 < (refs.data?.total ?? 0)}
+          disabled={refs.loading}
+        />
+      </details>
+      {selected && (
+        <div
+          className="photo-modal-backdrop"
+          onClick={() => setSelected(undefined)}
+        >
+          <section
+            className="photo-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Почему это фото"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button autoFocus onClick={() => setSelected(undefined)}>
+              Закрыть
+            </button>
+            <img
+              className="candidate-large"
+              src={imageUrl(selected, id)}
+              alt="Выбранное фото"
+            />
+            <h2>Почему это фото</h2>
+            <p>
+              {styleScore(selected)} · {sources[selected.source ?? "library"]}
             </p>
-          )}
-          <CandidateScores
-            communityId={id}
-            title="Pinterest · experimental preview"
-            items={preview.pinterest ?? []}
-          />
-          <CandidateScores
-            communityId={id}
-            title="Community-ranked Pinterest · experimental preview"
-            items={preview.community_ranked_pinterest ?? []}
-          />
-          <CandidateScores
-            communityId={id}
-            title="Pixabay + архив + библиотека"
-            items={preview.mixed_source ?? []}
-          />
-        </>
+            <p>
+              Запрос:{" "}
+              {selected.retrieval_queries?.join(" · ") ||
+                "Индексированная библиотека"}
+            </p>
+            {selected.pin_url && (
+              <a href={selected.pin_url} target="_blank" rel="noreferrer">
+                Открыть Pin
+              </a>
+            )}
+            {selected.source_community_id && (
+              <p>
+                Источник:{" "}
+                <Link to={`/communities/${selected.source_community_id}`}>
+                  {selected.source_community_id}
+                </Link>{" "}
+                · Пост: {selected.source_post_id} · Фото:{" "}
+                {selected.vk_photo_owner_id}_{selected.vk_photo_id}
+              </p>
+            )}
+            <p>
+              Дата:{" "}
+              {selected.original_posted_at
+                ? date(selected.original_posted_at)
+                : "—"}
+            </p>
+            <h3>Похоже на эти посты группы</h3>
+            <div className="reference-matches">
+              {selected.top_references?.slice(0, 5).map((ref) => (
+                <figure key={ref.reference_id}>
+                  <img
+                    src={referenceContentUrl(id, ref.reference_id)}
+                    alt="Похожий пост группы"
+                  />
+                  <figcaption>{Math.round(ref.similarity * 100)}%</figcaption>
+                </figure>
+              ))}
+            </div>
+            <details>
+              <summary>Диагностика оценки</summary>
+              <p>
+                base: {selected.base_score.toFixed(3)} · visual:{" "}
+                {selected.visual_score?.toFixed(3) ?? "—"} · final:{" "}
+                {selected.final_score.toFixed(3)}
+              </p>
+            </details>
+          </section>
+        </div>
       )}
     </>
   );

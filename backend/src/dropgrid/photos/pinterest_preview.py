@@ -15,6 +15,7 @@ from dropgrid.photos.download import PhotoDownloader
 from dropgrid.photos.images import LocalMediaStorage, normalize_image
 from dropgrid.photos.pinterest import PinterestPolicy
 from dropgrid.photos.pool import PoolCandidate, rank_pool
+from dropgrid.photos.progress import emit
 from dropgrid.photos.retrieval import retrieve_photos
 from dropgrid.photos.visual import deserialize_embedding, serialize_embedding
 from dropgrid.photos.visual_library import VisualLibrary
@@ -142,11 +143,20 @@ class PinterestPreview:
         pool = []
         queries = {item.photo.provider_asset_id: item.queries for item in result.items[:100]}
         warnings = list(result.warnings)
-        for item in result.items[:MATERIALIZATION_LIMIT]:
+        materialization = result.items[:MATERIALIZATION_LIMIT]
+        for index, item in enumerate(materialization):
+            await emit("pinterest_materializing", index, len(materialization))
             try:
                 pool.append(await self.materialize(item.photo))
             except (PhotoError, OSError):
                 warnings.append("pinterest_preview_unavailable")
+        await emit(
+            "pinterest_materializing",
+            len(materialization),
+            len(materialization),
+            pins_materialized=len(pool),
+            pins_embedded=sum(item.embedding is not None for item in pool),
+        )
         return (
             await rank_pool(self.visual, community_id, pool, plan.category),
             min(len(result.items), 100),

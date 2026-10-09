@@ -73,3 +73,13 @@ def test_multiple_sizeable_clusters_preserved_tiny_cluster_auxiliary():
     assert all(
         value.role == "auxiliary" and value.reason == "small_cluster" for value in values[-2:]
     )
+
+
+def test_small_coherent_cluster_remains_aux_in_large_profile():
+    rows = [reference(i + 1, (1, 0.005 * i, 0)) for i in range(40)]
+    rows += [reference(i + 101, (0, 0.005 * i, 1)) for i in range(40)]
+    rows += [reference(i + 201, (0.001 * i, 1, 0.001)) for i in range(6)]
+    values, _ = assess_references(rows, FakeVisualEmbedder())
+    assert all(value.role == "auxiliary" for value in values[-6:])
+    assert any(value.role == "core" for value in values[:40])
+    assert any(value.role == "core" for value in values[40:80])

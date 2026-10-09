@@ -1,9 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 import { CommunityDetailPage, communityVisualApi } from "./community";
-
 const profile = {
   community_id: "c1",
   desired_content: null,
@@ -13,19 +12,87 @@ const profile = {
   archive_reuse_enabled: false,
   archive_reuse_min_age_days: 180,
   archive_reuse_max_age_days: 540,
-  reference_count: 1,
+  reference_count: 12,
   references_last_synced_at: null,
 };
+const candidate = {
+  media_asset_id: null,
+  reference_id: "r2",
+  source_community_id: "other",
+  source: "vk_category_archive",
+  source_identity: "1_2",
+  publication_eligible: false,
+  base_score: 1,
+  visual_score: 0.86,
+  final_score: 0.8,
+  top_references: [{ reference_id: "r1", similarity: 0.9 }],
+};
+const result = {
+  category: "HONDA ACCORD",
+  comment: "comment",
+  content_hint: "Honda Accord",
+  warnings: [] as string[],
+  category_only: [],
+  community_aware: [],
+  best_matches: [
+    candidate,
+    {
+      ...candidate,
+      reference_id: null,
+      media_asset_id: "m1",
+      source: "pixabay",
+      source_identity: "pix1",
+    },
+  ],
+  visual_engine: {
+    enabled: true,
+    model: "clip",
+    active: true,
+    compatible_reference_count: 9,
+    candidate_embeddings_available: 2,
+    reason_if_inactive: null,
+  },
+};
+function photoJob(kind = "preview", state = "ready") {
+  return {
+    id: "p1",
+    kind,
+    state,
+    stage: state === "running" ? "pinterest_search" : state,
+    current: 0,
+    total: null,
+    elapsed_seconds: 4,
+    counters: {},
+    error_code: null,
+    result:
+      kind === "preview"
+        ? result
+        : {
+            posts_scanned: 200,
+            candidates_discovered: 3,
+            candidates_existing: 0,
+            warnings: [],
+          },
+  };
+}
 beforeEach(() => {
   vi.spyOn(communityVisualApi, "profile").mockResolvedValue(profile);
+  vi.spyOn(communityVisualApi, "metadata").mockResolvedValue({
+    name: "Honda Accord",
+    domain: "accordclubrus",
+    category: "Honda",
+  });
   vi.spyOn(communityVisualApi, "references").mockResolvedValue({
-    total: 21,
+    total: 1,
     items: [
       {
         id: "r1",
-        posted_at: "2026-10-08T10:00:00Z",
         vk_post_id: 5,
-        embedding_model: null,
+        posted_at: "2026-10-08T10:00:00Z",
+        embedding_model: "clip",
+        reference_role: "auxiliary",
+        reference_role_reason: "small_cluster",
+        reference_cluster_size: 2,
       },
     ],
   });
@@ -39,38 +106,22 @@ beforeEach(() => {
     result: { warnings: [] },
     error_code: null,
   });
-  vi.spyOn(communityVisualApi, "archive").mockResolvedValue({
-    posts_scanned: 200,
-    candidates_discovered: 3,
-    candidates_existing: 0,
-    warnings: [],
+  vi.spyOn(communityVisualApi, "latest").mockResolvedValue(null);
+  vi.spyOn(communityVisualApi, "preview").mockImplementation(async () => {
+    vi.mocked(communityVisualApi.latest).mockImplementation(
+      async (_id, kind) => (kind === "preview" ? photoJob() : null),
+    );
+    return photoJob();
   });
-  vi.spyOn(communityVisualApi, "preview").mockResolvedValue({
-    archive_age_strata: [
-      { min_age_days: 180, max_age_days: 270, candidate_count: 7 },
-      { min_age_days: 450, max_age_days: 540, candidate_count: 7 },
-    ],
-    warnings: [],
-    category_only: [
-      {
-        media_asset_id: "m1",
-        base_score: 5,
-        visual_score: 0.8,
-        final_score: 0.7,
-      },
-    ],
-    community_aware: [
-      {
-        media_asset_id: "m1",
-        base_score: 5,
-        visual_score: 0.8,
-        final_score: 0.7,
-      },
-    ],
+  vi.spyOn(communityVisualApi, "archive").mockImplementation(async () => {
+    vi.mocked(communityVisualApi.latest).mockImplementation(
+      async (_id, kind) => (kind === "archive" ? photoJob("archive") : null),
+    );
+    return photoJob("archive");
   });
 });
 function open(entry = "/communities/c1") {
-  render(
+  return render(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/communities/:id" element={<CommunityDetailPage />} />
@@ -78,66 +129,112 @@ function open(entry = "/communities/c1") {
     </MemoryRouter>,
   );
 }
-it("loads bounded references and saves explicit profile without starting VK sync", async () => {
+async function settings() {
+  await screen.findByText("Настройки профиля и индексации");
+  await userEvent.click(screen.getByText("Настройки профиля и индексации"));
+}
+it("loads profile without starting operations and preserves explicit archive opt-in", async () => {
   open();
-  const field = await screen.findByLabelText("Желаемый контент");
+  await settings();
   expect(
     screen.getByLabelText("Разрешить использование архивных фото"),
   ).not.toBeChecked();
-  expect(
-    screen.getByLabelText("Минимальный возраст архивного фото (дней)"),
-  ).toHaveValue(180);
-  await userEvent.type(field, "dogs");
+  await userEvent.type(screen.getByLabelText("Желаемый контент"), "cars");
   await userEvent.click(
     screen.getByRole("button", { name: "Сохранить профиль" }),
   );
   await waitFor(() =>
     expect(communityVisualApi.save).toHaveBeenCalledWith(
       "c1",
-      expect.objectContaining({ desired_content: "dogs" }),
+      expect.objectContaining({ desired_content: "cars" }),
     ),
   );
   expect(communityVisualApi.sync).not.toHaveBeenCalled();
   expect(communityVisualApi.preview).not.toHaveBeenCalled();
-  expect(communityVisualApi.references).toHaveBeenCalledWith(
-    "c1",
-    1,
-    expect.any(AbortSignal),
-  );
-  expect(screen.getByRole("img")).toHaveAttribute(
-    "src",
-    expect.stringContaining("/references/r1/content"),
-  );
-});
-it("runs one sync only after explicit click and shows bounded preview scores", async () => {
-  open();
-  await screen.findByLabelText("Желаемый контент");
-  expect(communityVisualApi.sync).not.toHaveBeenCalled();
-  await userEvent.click(
-    screen.getByRole("button", { name: "Изучить последние посты" }),
-  );
-  await waitFor(() => expect(communityVisualApi.sync).toHaveBeenCalled());
-  expect(communityVisualApi.sync).toHaveBeenCalledExactlyOnceWith("c1");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Сравнить подбор фото" }),
-  );
-  await screen.findByRole("heading", {
-    name: "Pixabay · визуальное сравнение недоступно",
-  });
-  expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith("c1");
-  expect(
-    screen.getByText(/180–270 дней: 7; 450–540 дней: 7/),
-  ).toBeInTheDocument();
-  expect(screen.getAllByText(/visual: 0.800/)).toHaveLength(2);
-});
-
-it("indexes archive only on click, keeps opt-in off and submits an explicit age window", async () => {
-  open();
-  await screen.findByLabelText("Максимальный возраст архивного фото (дней)");
-  expect(
-    screen.getByLabelText("Максимальный возраст архивного фото (дней)"),
-  ).toHaveValue(540);
   expect(communityVisualApi.archive).not.toHaveBeenCalled();
+});
+it("submits provider toggles and explicit grid context only after click", async () => {
+  open("/communities/c1?grid=g1");
+  await screen.findByRole("button", { name: /Сравнить подбор/ });
+  await userEvent.click(screen.getByLabelText("Pixabay"));
+  await userEvent.click(
+    screen.getByRole("button", { name: /Сравнить подбор/ }),
+  );
+  await screen.findByRole("heading", { name: "BEST MATCHES" });
+  expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith(
+    "c1",
+    "g1",
+    expect.objectContaining({
+      include_pixabay: false,
+      include_category_library: true,
+      include_pinterest: true,
+    }),
+  );
+});
+it("shows one ranked grid, filters sources and explains source vs target images", async () => {
+  vi.mocked(communityVisualApi.latest).mockImplementation(async (_id, kind) =>
+    kind === "preview" ? photoJob() : null,
+  );
+  open();
+  await screen.findByRole("heading", { name: "BEST MATCHES" });
+  expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(2);
+  await userEvent.click(
+    screen.getByRole("button", { name: "VK category library" }),
+  );
+  expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(1);
+  expect(screen.getByAltText("Подобранное фото")).toHaveAttribute(
+    "src",
+    expect.stringContaining("/communities/other/references/r2/content"),
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: /#1 · VK category/ }),
+  );
+  const dialog = screen.getByRole("dialog", { name: "Почему это фото" });
+  expect(
+    within(dialog).getByText(/Совпадение со стилем: 86%/),
+  ).toBeInTheDocument();
+  expect(within(dialog).getByAltText("Похожий пост группы")).toHaveAttribute(
+    "src",
+    expect.stringContaining("/communities/c1/references/r1/content"),
+  );
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Закрыть" }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+it("recovers queued preview after reload and shows actual stage", async () => {
+  vi.mocked(communityVisualApi.latest).mockImplementation(async (_id, kind) =>
+    kind === "preview" ? photoJob("preview", "running") : null,
+  );
+  const view = open();
+  await screen.findByText(/Ищем публичные Pins/);
+  expect(
+    screen.getByRole("button", { name: /Сравнить подбор/ }),
+  ).toBeDisabled();
+  view.unmount();
+  open();
+  await screen.findByText(/Ищем публичные Pins/);
+  expect(communityVisualApi.preview).not.toHaveBeenCalled();
+});
+it("recovers reference progress and explains small-cluster AUX", async () => {
+  vi.mocked(communityVisualApi.study).mockResolvedValue({
+    id: "j2",
+    state: "embedding",
+    elapsed_seconds: 14,
+    progress: { embeddings_done: 7, embeddings_total: 12 },
+    error_code: null,
+    result: null,
+  });
+  open();
+  await screen.findByText(/Строим embeddings: 7\/12/);
+  await userEvent.click(screen.getByText("Визуальные референсы · CORE / AUX"));
+  expect(screen.getByText(/Небольшой визуальный кластер/)).toBeInTheDocument();
+  await settings();
+  expect(screen.getByRole("button", { name: /Изучить/ })).toBeDisabled();
+});
+it("archive uses a durable operation and explicit age window", async () => {
+  open();
+  await settings();
   await userEvent.click(
     screen.getByRole("button", { name: "Проиндексировать архив" }),
   );
@@ -152,115 +249,13 @@ it("indexes archive only on click, keeps opt-in off and submits an explicit age 
     }),
   );
 });
-
-it("uses explicit grid context and shows query diagnostics", async () => {
-  vi.mocked(communityVisualApi.preview).mockResolvedValue({
-    category: "МУЗЫКА",
-    comment: "Д-П",
-    content_hint: "девушка с машиной",
-    generated_queries: ["woman car", "girl car"],
-    warnings: [],
-    category_only: [],
-    community_aware: [],
-  });
-  open("/communities/c1?grid=g1");
-  await userEvent.click(
-    await screen.findByRole("button", { name: /Сравнить/ }),
+it("shows safe provider warning while retaining other results", async () => {
+  const job = photoJob();
+  job.result = { ...result, warnings: ["pinterest_search_unavailable"] };
+  vi.mocked(communityVisualApi.latest).mockImplementation(async (_id, kind) =>
+    kind === "preview" ? job : null,
   );
-  await screen.findByText(/Search queries: woman car · girl car/);
-  expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith(
-    "c1",
-    "g1",
-  );
-});
-
-it("shows a visible inactive warning and CORE/AUX diagnostics", async () => {
-  vi.mocked(communityVisualApi.references).mockResolvedValue({
-    total: 1,
-    items: [
-      {
-        id: "r2",
-        vk_post_id: 6,
-        posted_at: "2026-10-08T10:00:00Z",
-        embedding_model: "clip",
-        reference_role: "auxiliary",
-        reference_density: 0.23,
-        reference_nearest_similarity: 0.4,
-      },
-    ],
-  });
   open();
-  await screen.findByText("AUX");
-  await userEvent.click(
-    await screen.findByRole("button", { name: /Сравнить/ }),
-  );
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Визуальное сравнение сейчас не используется",
-  );
-  expect(screen.getByText(/density: 0.230/)).toBeInTheDocument();
-});
-
-it("recovers durable study progress and disables conflicting operations", async () => {
-  vi.mocked(communityVisualApi.study).mockResolvedValue({
-    id: "j2",
-    state: "embedding",
-    elapsed_seconds: 14,
-    progress: { embeddings_done: 7, embeddings_total: 12 },
-    result: null,
-    error_code: null,
-  });
-  open();
-  await screen.findByText(/Строим embeddings: 7\/12/);
-  expect(screen.getByRole("button", { name: /Изучить/ })).toBeDisabled();
-});
-
-it("renders Pinterest as local preview with provenance and reference explanation", async () => {
-  vi.mocked(communityVisualApi.preview).mockResolvedValue({
-    warnings: [],
-    category_only: [],
-    community_aware: [],
-    pinterest_status: "ready",
-    pinterest_retrieved: 25,
-    pinterest_embedded: 24,
-    pinterest: [
-      {
-        preview_id: "pin-cache",
-        media_asset_id: null,
-        source: "pinterest",
-        source_identity: "12345",
-        pin_url: "https://www.pinterest.com/pin/12345/",
-        publication_eligible: false,
-        base_score: 4,
-        visual_score: 0.8,
-        final_score: 0.7,
-        top_references: [{ reference_id: "r1", similarity: 0.9 }],
-      },
-    ],
-    visual_engine: {
-      enabled: true,
-      model: "clip",
-      compatible_reference_count: 6,
-      candidate_embeddings_available: 24,
-      active: true,
-      reason_if_inactive: null,
-    },
-  });
-  open();
-  await userEvent.click(
-    await screen.findByRole("button", { name: /Сравнить/ }),
-  );
-  expect(
-    await screen.findByText(/publication_eligible=false/),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("img", { name: "Кандидат фото" })).toHaveAttribute(
-    "src",
-    expect.stringContaining("/photo-previews/pin-cache/content"),
-  );
-  expect(screen.getByRole("link", { name: /Pin/ })).toHaveAttribute(
-    "href",
-    "https://www.pinterest.com/pin/12345/",
-  );
-  expect(
-    screen.getByRole("img", { name: "Ближайший CORE reference" }),
-  ).toHaveAttribute("src", expect.stringContaining("/references/r1/content"));
+  await screen.findByText("Pinterest временно не вернул результаты.");
+  expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(2);
 });

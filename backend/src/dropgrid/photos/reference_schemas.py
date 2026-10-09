@@ -26,6 +26,8 @@ class ProfileRead(ProfileInput, Output):
     community_id: UUID
     references_last_synced_at: datetime | None = None
     reference_count: int = 0
+    reference_core_count: int = 0
+    reference_aux_count: int = 0
     archive_discovered_count: int = 0
     archive_eligible_count: int = 0
     archive_oldest_eligible_at: datetime | None = None
@@ -141,6 +143,8 @@ class PhotoPreviewRead(Output):
     category_library_stats: dict[str, object] = Field(default_factory=dict)
     category_library: list[PhotoPreviewItem] = Field(default_factory=list)
     best_matches: list[PhotoPreviewItem] = Field(default_factory=list)
+    pinterest_stats: dict[str, dict[str, int]] = Field(default_factory=dict)
+    pinterest_materialized: int = 0
     pinterest_status: str = "disabled"
     pinterest_queries: list[str] = Field(default_factory=list)
     pinterest_retrieved: int = 0
