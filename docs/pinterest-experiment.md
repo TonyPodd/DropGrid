@@ -123,9 +123,11 @@ optional bookmark. Pin parsing accepts image-bearing public Pin rows only.
 Search caps two pages/query, 25 pins/query, four queries and 100 deduped identities.
 The CLIP shortlist is now bounded at 32, with normalized-byte/embedding cache.
 
-Only the anonymous `csrftoken` cookie is echoed during the operation; the cookie
-jar is cleared before/after each search, never persisted. Authorization and
-account/session cookies are never sent. Redirects are host-restricted, bodies
+Only cookies learned by the dedicated anonymous client during public warmup/
+resource requests are echoed, including anonymous session cookies required by
+the public flow. The jar and transport authorization set are cleared before/
+after each search, never persisted. Imported account cookies and Authorization
+headers are not sent. Redirects are host-restricted, bodies
 bounded to 4 MiB, timeouts bounded and responses cached under `direct-v1`.
 The normal stable User-Agent identifies DropGrid; there is no fingerprint
 spoofing, proxy rotation, login, CAPTCHA handling or request retry loop.
@@ -142,3 +144,52 @@ ran with the direct backend. Anonymous public search returned a safe
 remained operational. No bypass was attempted. The earlier Apify/Honda-only
 notes above are the historical baseline. See [current results and activity
 workflow](photo-lab-activity.md).
+
+
+## Protocol control and parity fix, 2026-10-10
+
+Upstream control used an unmodified local build of `tamnd/pinterest-cli` at
+`c6886bbff4e18b1f430134bea863779f9b26f2d1` on the same machine/network, with cache
+and proxy environment disabled. `pin search "honda accord" --limit 10 -o json`
+and `pin search "bmw e60" --limit 10 -o json` each exited 0 with 10 records.
+No proxy, login, CAPTCHA work or network substitution was used.
+
+DropGrid baseline `b172286`, retested in that same runtime, returned
+`pinterest_search_unavailable` and zero Pins for both. This confirms an
+implementation mismatch rather than establishing network withholding.
+The fix mirrors only upstream behavior:
+
+- resource URL includes `_` as current Unix milliseconds;
+- `source_url` uses query escaping (spaces as `+`), fixed resource page size 25;
+- resource Accept and `X-Pinterest-PWS-Handler` headers match upstream;
+- public homepage Accept matches upstream;
+- the dedicated anonymous jar's warmup/resource cookies are kept in memory for
+  that search, instead of discarding every non-CSRF cookie;
+- decoder uses `data` when the `results` array is empty, as upstream does.
+
+DropGrid retains its stable identifying User-Agent, bounded redirects, DNS
+pinning, HTTPS hosts, response/time/page bounds, and public safe fallback. No
+browser fingerprint emulation, retry loop, ranking or sender change.
+These parity differences were fixed together; the control does not attribute
+the failure to one parameter alone.
+
+Internal DEBUG diagnostics expose only `http_status`, normalized
+`response_content_type`, fixed `resource_status`, `has_data`, and
+`raw_result_count`. They never include body, URL, headers or cookies. Tests cover
+403, HTML/login response, empty JSON feed and parser mismatch. Public errors
+remain `pinterest_search_unavailable`.
+
+Direct live retest: Honda 46 raw rows over two pages, 27 distinct valid image
+Pins, 25 returned at the requested limit. BMW 50 raw rows over two pages, 16
+valid/returned Pins. Both ended with HTTP 200 JSON, resource success and data
+present; cookie jars and transport cookie authorization were cleared afterwards.
+Search and image caches retain public metadata/normalized bytes, never cookies.
+
+Existing Photo Lab comparison with unchanged ranking: Honda was ready in 71.7s,
+71 Pinterest candidates retrieved, 32 materialized/embedded, 19 Pinterest
+candidates in `best_matches`; its existing bounded query set was `honda accord`,
+`honda accord car`, `honda accord aesthetic`, `honda accord street`. One safe
+`image_dimensions_rejected` warning. BMW was ready in 48.8s, 41 retrieved, 31
+materialized/embedded, 10 Pinterest candidates in `best_matches`, no warnings.
+Both used the existing visual/category/Pixabay comparison path; VK writes stayed
+disabled and the write allowlist stayed empty. No sender was run.

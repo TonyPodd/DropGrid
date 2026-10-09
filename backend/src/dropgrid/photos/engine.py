@@ -55,8 +55,9 @@ class PhotoEngine:
             self.reference_client, reference_policy, slots=download_slots
         )
         self.reference_storage = LocalMediaStorage(settings.media_storage_dir / "references")
+        self.pinterest_search_transport = PinterestAnonymousTransport()
         self.pinterest_search_client = httpx.AsyncClient(
-            transport=PinterestAnonymousTransport(),
+            transport=self.pinterest_search_transport,
             timeout=httpx.Timeout(10, connect=5),
             trust_env=False,
             follow_redirects=False,
@@ -102,7 +103,9 @@ class PhotoEngine:
             except Exception:
                 self.pinterest_status = "backend_unavailable"
         if settings.pinterest_direct_enabled:
-            direct = PinterestDirectBackend(self.pinterest_search_client)
+            direct = PinterestDirectBackend(
+                self.pinterest_search_client, self.pinterest_search_transport
+            )
             self.pinterest = PinterestPreview(
                 db.sessions,
                 SearchCache(
