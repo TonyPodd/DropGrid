@@ -65,6 +65,8 @@ class PhotoCandidate(BaseModel):
     title: str = ""
     description: str = ""
     alt_text: str = ""
+    thumbnail_url: str | None = None
+    retrieval_query: str | None = None
     creator_name: str = ""
     creator_url: str | None = None
     width: int = Field(gt=0)

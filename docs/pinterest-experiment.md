@@ -111,3 +111,27 @@ Apify credentials/actor were absent: **zero live Pinterest pins retrieved or
 embedded**. Fixture-backed validation is separate from live quality validation.
 The second niche experiment is deferred until Honda Pinterest retrieval can
 be configured and visually verified. No VK writes were performed.
+
+## Direct public search (primary experiment)
+
+`PINTEREST_DIRECT_ENABLED=false` by default. Explicitly enabling it selects the
+native `PinterestDirectBackend` ahead of optional Apify, without an API key.
+It uses a dedicated DNS-pinned anonymous client: homepage handshake, then
+`GET /resource/BaseSearchResource/get/` with `source_url`, encoded options and
+optional bookmark. Pin parsing accepts image-bearing public Pin rows only.
+`search_page(query, limit, cursor)` exposes normalized images and continuation.
+Search caps two pages/query, 25 pins/query, four queries and 100 deduped identities.
+The CLIP shortlist is now bounded at 32, with normalized-byte/embedding cache.
+
+Only the anonymous `csrftoken` cookie is echoed during the operation; the cookie
+jar is cleared before/after each search, never persisted. Authorization and
+account/session cookies are never sent. Redirects are host-restricted, bodies
+bounded to 4 MiB, timeouts bounded and responses cached under `direct-v1`.
+The normal stable User-Agent identifies DropGrid; there is no fingerprint
+spoofing, proxy rotation, login, CAPTCHA handling or request retry loop.
+An empty, withheld, malformed or blocked feed becomes
+`pinterest_search_unavailable`, preserving other-provider fallback.
+
+Protocol reference and attribution: [tamnd/pinterest-cli](https://github.com/tamnd/pinterest-cli),
+Apache-2.0; see [notice](third-party/NOTICE.md) and retained license. The native
+Python adapter does not shell out to the reference project's binary.

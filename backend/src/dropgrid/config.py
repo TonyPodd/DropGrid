@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     pixabay_api_key: SecretStr | None = None
     pinterest_search_enabled: bool = False
+    pinterest_direct_enabled: bool = False
+    cross_community_reuse_enabled: bool = False
     apify_api_token: SecretStr | None = None
     pinterest_apify_actor: str = ""
     media_storage_dir: Path = Path("media")

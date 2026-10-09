@@ -19,7 +19,7 @@ from dropgrid.photos.retrieval import retrieve_photos
 from dropgrid.photos.visual import deserialize_embedding, serialize_embedding
 from dropgrid.photos.visual_library import VisualLibrary
 
-MATERIALIZATION_LIMIT = 24
+MATERIALIZATION_LIMIT = 32
 
 
 class PinterestPreview:

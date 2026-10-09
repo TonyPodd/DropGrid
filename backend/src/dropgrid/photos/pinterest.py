@@ -118,6 +118,7 @@ def pin_candidate(row: dict[str, object], position: int) -> PhotoCandidate:
         return value[:2000] if isinstance(value, str) else ""
 
     title, description, alt = text("title"), text("description"), text("alt")
+    thumbnail, query = row.get("thumbnailUrl"), row.get("query")
     return PhotoCandidate(
         provider="pinterest",
         provider_asset_id=identity,
@@ -131,6 +132,8 @@ def pin_candidate(row: dict[str, object], position: int) -> PhotoCandidate:
         title=title,
         description=description,
         alt_text=alt,
+        thumbnail_url=thumbnail if isinstance(thumbnail, str) else None,
+        retrieval_query=query if isinstance(query, str) else None,
         provider_position=position,
         license_code="unverified-public-pin",
         license_name="Publication rights unverified",
