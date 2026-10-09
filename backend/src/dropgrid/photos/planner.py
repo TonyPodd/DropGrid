@@ -121,7 +121,7 @@ class CampaignMediaPlanner:
 
     def eligible(self, asset: MediaAsset, sensitive: bool = False) -> bool:
         if (
-            asset.provider == "pinterest"
+            asset.provider in {"pinterest", "vk_category_archive"}
             or not asset.enabled
             or not asset.sha256
             or not asset.license_code
@@ -158,7 +158,10 @@ class CampaignMediaPlanner:
     async def _import(
         self, candidate: PhotoCandidate, category: str, sensitive: bool
     ) -> tuple[MediaAsset | None, bool, str | None]:
-        if candidate.provider == "pinterest" or not candidate.publication_eligible:
+        if (
+            candidate.provider in {"pinterest", "vk_category_archive"}
+            or not candidate.publication_eligible
+        ):
             return None, False, "publication_ineligible"
         async with self.semaphore:
             try:

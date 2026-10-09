@@ -47,10 +47,16 @@ def concept_queries(text: str | None) -> tuple[str, ...]:
 
 def car_model(text: str | None) -> str | None:
     words = set(re.findall(r"[a-zа-яё0-9]+", (text or "").casefold()))
-    if words & {"honda", "хонда"} and words & {"accord", "аккорд"}:
-        return "Honda Accord"
+    if words & {"honda", "хонда"}:
+        for aliases, model in (
+            ({"accord", "аккорд"}, "Accord"),
+            ({"civic", "сивик"}, "Civic"),
+            ({"crv", "cr"}, "CR-V"),
+        ):
+            if words & aliases:
+                return "Honda " + model
     if words & {"bmw", "бмв"}:
-        for model in ("60", "38"):
+        for model in ("60", "38", "46", "39", "90"):
             if words & {"e" + model, "е" + model}:
                 return "BMW E" + model
     if "w201" in words:

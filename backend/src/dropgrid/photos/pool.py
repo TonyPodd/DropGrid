@@ -86,6 +86,10 @@ def deduplicate_pool(pool: list[PoolCandidate]) -> list[PoolCandidate]:
     for item in sorted(pool, key=lambda c: (c.asset is None, c.identity)):
         if any(
             item.identity == old.identity
+            or item.reference
+            and old.reference
+            and (item.reference.vk_photo_owner_id, item.reference.vk_photo_id)
+            == (old.reference.vk_photo_owner_id, old.reference.vk_photo_id)
             or item.sha256
             and item.sha256 == old.sha256
             or Deduplicator().near(item.perceptual_hash, old.perceptual_hash)

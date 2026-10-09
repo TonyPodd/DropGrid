@@ -206,6 +206,10 @@ class CommunityReferencePhoto(Identity, Base):
     reuse_eligible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     reference_role: Mapped[str] = mapped_column(String(12), default="core", server_default="core")
+    reference_cluster_size: Mapped[int | None] = mapped_column(Integer)
+    reference_role_reason: Mapped[str] = mapped_column(
+        String(40), default="density", server_default="density"
+    )
     reference_density: Mapped[float | None] = mapped_column(Float)
     reference_nearest_similarity: Mapped[float | None] = mapped_column(Float)
     reference_duplicate: Mapped[bool] = mapped_column(

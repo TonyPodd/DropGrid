@@ -37,7 +37,7 @@ def test_relative_density_collapses_duplicate_and_selects_core():
     duplicate.sha256 = rows[0].sha256
     rows.append(duplicate)
     values, _ = assess_references(rows, FakeVisualEmbedder())
-    assert sum(v.role == "core" for v in values) == 8
+    assert sum(v.role == "core" for v in values) == 6
     assert values[-1].duplicate and values[-1].role == "auxiliary"
     assert values[8].role == values[9].role == "auxiliary"
     assert values == assess_references(list(reversed(rows)), FakeVisualEmbedder())[0][::-1]
@@ -58,3 +58,18 @@ def test_car_queries(category, hint, expected):
         expected + suffix for suffix in ("", " car", " aesthetic", " street")
     ]
     assert all(q.lang == "en" for q in queries)
+
+
+def test_multiple_sizeable_clusters_preserved_tiny_cluster_auxiliary():
+    rows = []
+    for group in range(2):
+        for i in range(12):
+            vector = (1, 0.02 * i, 0) if group == 0 else (0, 0.02 * i, 1)
+            rows.append(reference(group * 20 + i + 1, vector))
+    rows += [reference(80, (0, 1, 0.01)), reference(81, (0, 1, 0.02))]
+    values, _ = assess_references(rows, FakeVisualEmbedder())
+    assert any(value.role == "core" for value in values[:12])
+    assert any(value.role == "core" for value in values[12:24])
+    assert all(
+        value.role == "auxiliary" and value.reason == "small_cluster" for value in values[-2:]
+    )

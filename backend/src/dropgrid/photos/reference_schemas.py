@@ -60,6 +60,8 @@ class ReferenceRead(Output):
     posted_at: datetime
     embedding_model: str | None
     reference_role: str = "core"
+    reference_cluster_size: int | None = None
+    reference_role_reason: str = "density"
     reference_density: float | None = None
     reference_nearest_similarity: float | None = None
     reference_duplicate: bool = False
@@ -77,6 +79,10 @@ class PhotoPreviewInput(Input):
     grid_id: UUID | None = None
     candidate_limit: int = Field(default=8, ge=1, le=12)
     include_archive: bool = True
+    include_pixabay: bool = True
+    include_library: bool = True
+    include_pinterest: bool = True
+    include_category_library: bool = False
     diagnostics: bool = False
 
 
@@ -98,6 +104,10 @@ class PhotoPreviewItem(Output):
     preview_id: UUID | None = None
     publication_eligible: bool = True
     pin_url: str | None = None
+    source_community_id: UUID | None = None
+    source_post_id: int | None = None
+    vk_photo_owner_id: int | None = None
+    vk_photo_id: int | None = None
     title: str = ""
     top_references: list[ReferenceMatch] = Field(default_factory=list)
     provider: str = ""
@@ -128,6 +138,9 @@ class ArchiveShortlistItem(Output):
 
 
 class PhotoPreviewRead(Output):
+    category_library_stats: dict[str, object] = Field(default_factory=dict)
+    category_library: list[PhotoPreviewItem] = Field(default_factory=list)
+    best_matches: list[PhotoPreviewItem] = Field(default_factory=list)
     pinterest_status: str = "disabled"
     pinterest_queries: list[str] = Field(default_factory=list)
     pinterest_retrieved: int = 0

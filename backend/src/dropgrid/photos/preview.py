@@ -1,7 +1,7 @@
 """Bounded source comparison; archive candidates never become MediaAsset here."""
 
 import asyncio
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -10,6 +10,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from dropgrid.db.models import Community, CommunityContentProfile, GridCommunity, MediaAsset, utcnow
 from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
+from dropgrid.photos.category_archive import CategoryLibraryStats, VKCategoryArchivePhotoProvider
+from dropgrid.photos.concepts import car_model
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import normalize_category
 from dropgrid.photos.planner import CampaignMediaPlanner
@@ -23,7 +25,7 @@ from dropgrid.photos.reference_schemas import (
     ReferenceMatch,
     VisualEngineRead,
 )
-from dropgrid.photos.retrieval import RetrievedPhoto, retrieve_photos
+from dropgrid.photos.retrieval import RetrievalResult, RetrievedPhoto, retrieve_photos
 from dropgrid.photos.timings import collect_timings, stage
 from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.catalog import ConflictError, get_entity
@@ -43,6 +45,10 @@ def preview_item(item: PoolCandidate) -> PhotoPreviewItem:
         ],
         media_asset_id=item.asset.id if item.asset else None,
         reference_id=item.reference.id if item.reference else None,
+        source_community_id=item.reference.community_id if item.reference else None,
+        source_post_id=item.reference.vk_post_id if item.reference else None,
+        vk_photo_owner_id=item.reference.vk_photo_owner_id if item.reference else None,
+        vk_photo_id=item.reference.vk_photo_id if item.reference else None,
         source=item.source,
         provider=item.photo.provider,
         source_identity=item.photo.provider_asset_id,
@@ -74,13 +80,18 @@ async def _photo_preview(
                 raise ConflictError("Community is not in supplied grid")
             category = relation.category
             comment, content_hint = relation.comment, relation.content_hint
+    effective_hint = content_hint or car_model(community.name)
     plan = planner.builder.build(
-        category, content_hint, profile.desired_content if profile else None
+        category, effective_hint, profile.desired_content if profile else None
     )
     pixabay: list[PoolCandidate] = []
     warnings: list[str] = []
     with stage("query_retrieval"):
-        retrieval = await retrieve_photos(planner.cache, plan, planner.policy)
+        retrieval = (
+            await retrieve_photos(planner.cache, plan, planner.policy)
+            if data.include_pixabay
+            else RetrievalResult()
+        )
     warnings.extend(retrieval.warnings)
     provenance: dict[UUID, list[str]] = {}
 
@@ -131,7 +142,7 @@ async def _photo_preview(
                 .limit(100)
             )
         ).all()
-    for asset in library:
+    for asset in library if data.include_library else []:
         if (
             normalize_category(asset.category) == plan.category
             and planner.eligible(asset, plan.sensitive)
@@ -204,7 +215,7 @@ async def _photo_preview(
     pins_retrieved = 0
     pin_queries: dict[str, list[str]] = {}
     pinterest_status = planner.pinterest_status
-    if planner.pinterest_preview:
+    if planner.pinterest_preview and data.include_pinterest:
         (
             ranked_pinterest,
             pins_retrieved,
@@ -225,7 +236,29 @@ async def _photo_preview(
             update={"retrieval_queries": pin_queries.get(item.photo.provider_asset_id, [])}
         )
 
-    diagnostic_candidates = ranked_pixabay + ranked_pinterest
+    category_pool: list[PoolCandidate] = []
+    library_stats = CategoryLibraryStats(category=category or "")
+    if (
+        data.include_category_library
+        and planner.archive
+        and planner.settings.cross_community_reuse_enabled
+    ):
+        category_pool, library_stats, category_warnings = await VKCategoryArchivePhotoProvider(
+            planner.archive, visual
+        ).preview(community_id, category, effective_hint, data.grid_id)
+        warnings.extend(category_warnings)
+    elif data.include_category_library:
+        warnings.append("category_library_disabled")
+    best = await rank_pool(
+        visual,
+        community_id,
+        [
+            replace(item, score=None, reference_matches=[])
+            for item in mixed + ranked_pinterest + category_pool
+        ],
+        category,
+    )
+    diagnostic_candidates = mixed + ranked_pinterest + category_pool
     embeddings = sum(item.embedding is not None for item in diagnostic_candidates)
     reason = None
     if visual.embedder is None:
@@ -245,6 +278,9 @@ async def _photo_preview(
     if not active and reason is None:
         reason = "no_compatible_references"
     return PhotoPreviewRead(
+        best_matches=[pin_output(i) if i.source == "pinterest" else output(i) for i in best[:32]],
+        category_library=[output(i) for i in category_pool[: data.candidate_limit]],
+        category_library_stats=asdict(library_stats),
         pinterest_status=pinterest_status,
         pinterest_queries=[v.query for v in plan.variants],
         pinterest_retrieved=pins_retrieved,
