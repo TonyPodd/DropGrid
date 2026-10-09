@@ -259,3 +259,58 @@ it("shows safe provider warning while retaining other results", async () => {
   await screen.findByText("Pinterest временно не вернул результаты.");
   expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(2);
 });
+it("shows source contributions, publication boundary and stores feedback", async () => {
+  const job = photoJob();
+  job.result = {
+    ...result,
+    pinterest_retrieved: 27,
+    pinterest_embedded: 24,
+    pixabay_status: "not_needed",
+    source_contributions: {
+      pinterest: {
+        retrieved: 27,
+        deduplicated: 24,
+        materialized: 24,
+        embedded: 24,
+        top_10: 6,
+        selected: 0,
+      },
+    },
+    best_matches: [
+      {
+        ...candidate,
+        source: "pinterest",
+        provider: "pinterest",
+        reference_id: null,
+        preview_id: "pin-preview",
+        pin_url: "https://www.pinterest.com/pin/123450001/",
+        source_identity: "123450001",
+      },
+    ],
+  } as unknown as typeof result;
+  vi.mocked(communityVisualApi.latest).mockImplementation(async (_id, kind) =>
+    kind === "preview" ? job : null,
+  );
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(JSON.stringify({ rating: "like" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  open();
+  await screen.findByText(/27 найдено/);
+  expect(screen.getByText(/не понадобился/)).toBeInTheDocument();
+  await userEvent.click(screen.getByAltText("Подобранное фото"));
+  expect(
+    screen.getByText(/Права на публикацию не проверены/),
+  ).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "👍 подходит" }));
+  await screen.findByText(/Оценка сохранена/);
+  expect(fetch).toHaveBeenCalledWith(
+    expect.stringContaining("/photo-feedback"),
+    expect.objectContaining({
+      method: "PUT",
+      body: expect.stringContaining('"rating":"like"'),
+    }),
+  );
+});

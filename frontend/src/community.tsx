@@ -50,6 +50,7 @@ type Reference = {
   embedding_model: string | null;
 };
 type Score = {
+  provider?: string;
   source_community_id?: string | null;
   source_post_id?: number | null;
   vk_photo_owner_id?: number | null;
@@ -72,6 +73,9 @@ type Score = {
   final_score: number;
 };
 type Preview = {
+  source_contributions?: Record<string, Record<string, number>>;
+  pixabay_status?: string;
+  pixabay_requests?: number;
   best_matches?: Score[];
   category_library?: Score[];
   category_library_stats?: Record<string, unknown>;
@@ -229,7 +233,7 @@ function CandidateScores({
             <figcaption>
               {item.publication_eligible === false && (
                 <strong>
-                  EXPERIMENTAL · preview only · publication_eligible=false
+                  Только предпросмотр
                   <br />
                 </strong>
               )}
@@ -767,6 +771,8 @@ export function CommunityDetailPage() {
                 {
                   pinterest_search_unavailable:
                     "Pinterest временно не вернул результаты.",
+                  pinterest_fallback_used:
+                    "Pinterest недоступен — использован резервный источник",
                   category_library_disabled:
                     "Библиотека других групп отключена в настройках окружения.",
                   photo_preview_timeout:
@@ -777,6 +783,65 @@ export function CommunityDetailPage() {
             </p>
           ))}
           <h2>BEST MATCHES</h2>
+          <p>
+            Лучшее совпадение не означает разрешение использовать фото в
+            кампании.
+          </p>
+          <p>
+            Pinterest: {preview.pinterest_retrieved ?? 0} найдено ·{" "}
+            {preview.pinterest_embedded ?? 0} проверено. Pixabay:{" "}
+            {preview.pixabay_status === "not_needed"
+              ? "не понадобился"
+              : "резервный источник"}
+            {" · "}
+            {preview.pixabay_requests ?? 0} запросов.
+          </p>
+          <p>
+            VK category:{" "}
+            {preview.source_contributions?.vk_category_archive?.retrieved ?? 0}{" "}
+            · Library: {preview.source_contributions?.library?.retrieved ?? 0} ·
+            Собственный архив:{" "}
+            {preview.source_contributions?.vk_archive?.retrieved ?? 0}
+          </p>
+          {preview.source_contributions && (
+            <details>
+              <summary>Вклад источников</summary>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Источник</th>
+                      <th>Найдено</th>
+                      <th>После dedup</th>
+                      <th>Проверено</th>
+                      <th>Embedded</th>
+                      <th>Top 10</th>
+                      <th>Выбрано</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(preview.source_contributions).map(
+                      ([provider, counts]) => (
+                        <tr key={provider}>
+                          <td>{sources[provider] ?? provider}</td>
+                          {[
+                            "retrieved",
+                            "deduplicated",
+                            "materialized",
+                            "embedded",
+                            "top_10",
+                            "selected",
+                          ].map((k) => (
+                            <td key={k}>{counts[k] ?? 0}</td>
+                          ))}
+                        </tr>
+                      ),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
           <div className="source-filters" aria-label="Источники">
             {["all", ...Object.keys(sources)].map((key) => (
               <button
@@ -807,8 +872,13 @@ export function CommunityDetailPage() {
                     {sources[item.source ?? "library"] ?? item.source}
                   </strong>
                   <span>{styleScore(item)}</span>
+                  {(item.provider === "pinterest" ||
+                    item.source === "pinterest") &&
+                    item.publication_eligible === true && (
+                      <small>Разрешено настройкой</small>
+                    )}
                   {item.publication_eligible === false && (
-                    <small>Только просмотр</small>
+                    <small>Только предпросмотр</small>
                   )}
                 </button>
               ))}
@@ -962,6 +1032,43 @@ export function CommunityDetailPage() {
               {selected.retrieval_queries?.join(" · ") ||
                 "Индексированная библиотека"}
             </p>
+            {(selected.provider === "pinterest" ||
+              selected.source === "pinterest") && (
+              <p>
+                {selected.publication_eligible
+                  ? "Разрешено настройкой"
+                  : "Только предпросмотр"}
+                . Права на публикацию не проверены.
+              </p>
+            )}
+            <div className="actions">
+              {["like", "dislike"].map((rating) => (
+                <button
+                  key={rating}
+                  onClick={async () => {
+                    try {
+                      await request(`/communities/${id}/photo-feedback`, {
+                        method: "PUT",
+                        body: {
+                          provider:
+                            selected.provider ?? selected.source ?? "library",
+                          source_identity:
+                            selected.source_identity ?? selected.media_asset_id,
+                          rating,
+                        },
+                      });
+                      setMessage(
+                        "Оценка сохранена. Она пока не влияет на подбор.",
+                      );
+                    } catch (e) {
+                      setError(errorMessage(e));
+                    }
+                  }}
+                >
+                  {rating === "like" ? "👍 подходит" : "👎 не подходит"}
+                </button>
+              ))}
+            </div>
             {selected.pin_url && (
               <a href={selected.pin_url} target="_blank" rel="noreferrer">
                 Открыть Pin
