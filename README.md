@@ -245,3 +245,5 @@ docs/                    architecture, security
 ```
 
 Photo retrieval context: [Grid comments and content hints](docs/photo-content-hints.md).
+
+Scalable real-grid preparation: [policy, endpoints and worker](docs/grid-media-preparation.md).

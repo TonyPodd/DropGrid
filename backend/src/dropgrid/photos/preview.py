@@ -18,7 +18,8 @@ from dropgrid.photos.reference_schemas import (
     PhotoPreviewItem,
     PhotoPreviewRead,
 )
-from dropgrid.photos.retrieval import retrieve_photos
+from dropgrid.photos.retrieval import RetrievedPhoto, retrieve_photos
+from dropgrid.photos.timings import collect_timings, stage
 from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.catalog import ConflictError, get_entity
 
@@ -30,6 +31,7 @@ def preview_item(item: PoolCandidate) -> PhotoPreviewItem:
         media_asset_id=item.asset.id if item.asset else None,
         reference_id=item.reference.id if item.reference else None,
         source=item.source,
+        provider=item.photo.provider,
         source_identity=item.photo.provider_asset_id,
         original_posted_at=item.posted_at,
         age_days=(utcnow() - item.posted_at).total_seconds() / 86400 if item.posted_at else None,
@@ -64,10 +66,12 @@ async def _photo_preview(
     )
     pixabay: list[PoolCandidate] = []
     warnings: list[str] = []
-    retrieval = await retrieve_photos(planner.cache, plan, planner.policy)
+    with stage("query_retrieval"):
+        retrieval = await retrieve_photos(planner.cache, plan, planner.policy)
     warnings.extend(retrieval.warnings)
     provenance: dict[UUID, list[str]] = {}
-    for retrieved in retrieval.items[: data.candidate_limit]:
+
+    async def import_one(retrieved: RetrievedPhoto) -> tuple[RetrievedPhoto, MediaAsset | None]:
         candidate = retrieved.photo
         async with planner.sessions() as session:
             known = await session.scalar(
@@ -83,6 +87,12 @@ async def _photo_preview(
             asset, _, warning = await planner._import(candidate, plan.category, plan.sensitive)
             if warning:
                 warnings.append(warning)
+        return retrieved, asset
+
+    imports = await asyncio.gather(
+        *(import_one(item) for item in retrieval.items[: data.candidate_limit])
+    )
+    for retrieved, asset in imports:
         if asset:
             produced = provenance.setdefault(asset.id, [])
             produced.extend(q for q in retrieved.queries if q not in produced)
@@ -161,6 +171,18 @@ async def _photo_preview(
     if not reference_ids:
         warnings.append("visual_references_unavailable")
 
+    def unique_lane(items: list[PoolCandidate]) -> list[PoolCandidate]:
+        seen: set[tuple[str, str]] = set()
+        result = []
+        for item in items:
+            if item.identity not in seen:
+                result.append(item)
+                seen.add(item.identity)
+        return result
+
+    ranked_pixabay = unique_lane(ranked_pixabay)
+    mixed = unique_lane(mixed)
+
     def output(item: PoolCandidate) -> PhotoPreviewItem:
         return preview_item(item).model_copy(
             update={"retrieval_queries": provenance.get(item.asset.id, []) if item.asset else []}
@@ -195,16 +217,20 @@ async def photo_preview(
     community_id: UUID,
     data: PhotoPreviewInput,
 ) -> PhotoPreviewRead:
-    try:
-        async with asyncio.timeout(planner.policy.plan_timeout_seconds):
-            return await _photo_preview(planner, visual, community_id, data)
-    except TimeoutError:
-        return PhotoPreviewRead(
-            community_id=community_id,
-            category=None,
-            references=[],
-            category_only=[],
-            community_aware=[],
-            mixed_source=[],
-            warnings=["photo_preview_timeout"],
-        )
+    with collect_timings() as timings:
+        try:
+            async with asyncio.timeout(planner.policy.plan_timeout_seconds):
+                result = await _photo_preview(planner, visual, community_id, data)
+        except TimeoutError:
+            result = PhotoPreviewRead(
+                community_id=community_id,
+                category=None,
+                references=[],
+                category_only=[],
+                community_aware=[],
+                mixed_source=[],
+                warnings=["photo_preview_timeout"],
+            )
+        if data.diagnostics and planner.settings.app_env == "development":
+            result.timings_ms = {key: round(value, 2) for key, value in timings.items()}
+        return result

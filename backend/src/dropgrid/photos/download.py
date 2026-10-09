@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 import httpx
 
 from dropgrid.photos.domain import PhotoError, PhotoPolicy
+from dropgrid.photos.timings import timed
 
 Resolver = Callable[[str], Awaitable[list[str]]]
 
@@ -96,9 +97,14 @@ class PinnedPhotoTransport(httpx.AsyncBaseTransport):
 
 class PhotoDownloader:
     def __init__(
-        self, client: httpx.AsyncClient, policy: PhotoPolicy, resolver: Resolver = resolve_public
+        self,
+        client: httpx.AsyncClient,
+        policy: PhotoPolicy,
+        resolver: Resolver = resolve_public,
+        slots: asyncio.Semaphore | None = None,
     ) -> None:
         self.client, self.policy, self.resolver = client, policy, resolver
+        self.slots = slots or asyncio.Semaphore(4)
 
     @asynccontextmanager
     async def _stream(self, url: str) -> AsyncIterator[httpx.Response]:
@@ -113,7 +119,12 @@ class PhotoDownloader:
         finally:
             await response.aclose()
 
+    @timed("downloads")
     async def download(self, url: str) -> bytes:
+        async with self.slots:
+            return await self._download(url)
+
+    async def _download(self, url: str) -> bytes:
         try:
             async with asyncio.timeout(self.policy.timeout_seconds):
                 for redirect in range(self.policy.max_redirects + 1):

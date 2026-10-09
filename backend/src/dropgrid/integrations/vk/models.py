@@ -118,3 +118,20 @@ class SavedPhoto(ResponseModel):
 
     def attachment(self) -> VKAttachment:
         return VKAttachment("photo", self.owner_id, self.id, self.access_key)
+
+
+type ResolutionStatus = Literal[
+    "resolved",
+    "not_found",
+    "deactivated",
+    "private_or_unavailable",
+    "transient_error",
+    "unresolved",
+]
+
+
+class CommunityResolution(ResponseModel):
+    reference: str
+    status: ResolutionStatus
+    group: VKCommunity | None = None
+    error_code: int | None = None

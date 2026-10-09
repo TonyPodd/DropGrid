@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { GridReadinessPanel } from "./grid-readiness";
 import { gridsApi } from "./api/grids";
 import { errorMessage } from "./api/client";
 import type { GridPreview } from "./api/types";
@@ -358,6 +359,7 @@ export function GridDetailPage() {
           </>
         )}
       </State>
+      <GridReadinessPanel gridId={id} />
       <State {...members} retry={members.reload}>
         {members.data?.items.length ? (
           <div className="table-wrap">
@@ -385,7 +387,10 @@ export function GridDetailPage() {
                         reload={members.reload}
                       />
                     </td>
-                    <td>{c.vk_group_id ? "Resolved" : "Not resolved"}</td>
+                    <td>
+                      {c.resolution_status ??
+                        (c.vk_group_id ? "Unverified ID" : "Unresolved")}
+                    </td>
                     <td>{c.is_active ? "Да" : "Нет"}</td>
                   </tr>
                 ))}

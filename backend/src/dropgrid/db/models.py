@@ -75,6 +75,11 @@ class Community(Identity, Updated, Base):
         Enum(GenderTag, name="gender_tag")
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    resolution_status: Mapped[str] = mapped_column(
+        String(32), default="unresolved", server_default="unresolved"
+    )
+    resolution_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_error_code: Mapped[int | None] = mapped_column(Integer)
 
 
 class Grid(Identity, Updated, Base):
@@ -88,6 +93,7 @@ class GridCommunity(Base):
     community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"), primary_key=True)
     # Keep the import category per grid without overwriting another grid's category.
     category: Mapped[str | None] = mapped_column(String(200))
+    source_reference: Mapped[str | None] = mapped_column(String(64))
     comment: Mapped[str | None] = mapped_column(Text)
     content_hint: Mapped[str | None] = mapped_column(Text)
 
@@ -318,3 +324,23 @@ class VKNotificationCursor(Base):
     next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     lease_token: Mapped[UUID | None] = mapped_column()
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MediaPreparationJob(Identity, Updated, Base):
+    __tablename__ = "media_preparation_jobs"
+    __table_args__ = (
+        UniqueConstraint("grid_id", "community_id", "account_id", name="uq_media_prep_context"),
+        CheckConstraint(
+            "state IN ('queued', 'running', 'ready', 'failed', 'transient')", name="state"
+        ),
+        Index("ix_media_prep_claim", "state", "lease_until"),
+    )
+    grid_id: Mapped[UUID] = mapped_column(ForeignKey("grids.id", ondelete="CASCADE"))
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id", ondelete="CASCADE"))
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
+    state: Mapped[str] = mapped_column(String(16), default="queued", server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_token: Mapped[UUID | None]
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    error_code: Mapped[str | None] = mapped_column(String(64))

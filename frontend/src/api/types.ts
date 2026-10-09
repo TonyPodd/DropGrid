@@ -27,6 +27,7 @@ export type Account = {
   status: string;
 };
 export type Community = {
+  resolution_status?: string;
   id: string;
   domain: string;
   name: string | null;

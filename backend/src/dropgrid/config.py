@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     photo_max_reuse_per_asset: int = Field(default=3, ge=1, le=20)
     photo_search_cache_hours: int = Field(default=24, ge=24, le=168)
     photo_download_concurrency: int = Field(default=4, ge=1, le=6)
+    campaign_reference_warmup_target: int = Field(default=12, ge=1, le=20)
+    campaign_reference_recent_days: int = Field(default=180, ge=1, le=365)
+    media_preparation_concurrency: int = Field(default=2, ge=1, le=4)
+    vk_read_concurrency: int = Field(default=1, ge=1, le=3)
+    photo_download_timeout_seconds: float = Field(default=10, gt=0, le=25)
     photo_download_spare: int = Field(default=3, ge=0, le=5)
     visual_embedding_enabled: bool = False
     visual_model_path: Path = Path("models/clip-vision-int8.onnx")

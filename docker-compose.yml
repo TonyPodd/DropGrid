@@ -41,7 +41,7 @@ services:
 
   api:
     <<: *backend
-    environment:
+    environment: &photo-env
       <<: *backend-env
       VK_API_VERSION: ${VK_API_VERSION:-5.199}
       VK_TIMEOUT_SECONDS: ${VK_TIMEOUT_SECONDS:-10}
@@ -61,6 +61,11 @@ services:
       PHOTO_SEARCH_CACHE_HOURS: ${PHOTO_SEARCH_CACHE_HOURS:-24}
       PHOTO_DOWNLOAD_CONCURRENCY: ${PHOTO_DOWNLOAD_CONCURRENCY:-4}
       PHOTO_DOWNLOAD_SPARE: ${PHOTO_DOWNLOAD_SPARE:-3}
+      PHOTO_DOWNLOAD_TIMEOUT_SECONDS: ${PHOTO_DOWNLOAD_TIMEOUT_SECONDS:-10}
+      CAMPAIGN_REFERENCE_WARMUP_TARGET: ${CAMPAIGN_REFERENCE_WARMUP_TARGET:-12}
+      CAMPAIGN_REFERENCE_RECENT_DAYS: ${CAMPAIGN_REFERENCE_RECENT_DAYS:-180}
+      MEDIA_PREPARATION_CONCURRENCY: ${MEDIA_PREPARATION_CONCURRENCY:-2}
+      VK_READ_CONCURRENCY: ${VK_READ_CONCURRENCY:-1}
     volumes:
       - media_data:/app/media
     ports:
@@ -77,6 +82,22 @@ services:
   worker:
     <<: *backend
     command: ["python", "-m", "dropgrid.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  media-preparation:
+    <<: *backend
+    profiles: ["media-preparation"]
+    command: ["python", "-m", "dropgrid.photos.preparation_worker"]
+    environment:
+      <<: *photo-env
+      # This worker is read-only even when another diagnostic enables writes.
+      VK_WRITE_ENABLED: "false"
+      VK_TEST_ACCESS_TOKEN: ""
+      VK_TEST_ALLOWED_COMMUNITY_IDS: ""
+    volumes:
+      - media_data:/app/media
     depends_on:
       migrate:
         condition: service_completed_successfully

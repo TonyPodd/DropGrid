@@ -46,6 +46,7 @@ type Score = {
   final_score: number;
 };
 type Preview = {
+  timings_ms?: Record<string, number> | null;
   category?: string | null;
   comment?: string | null;
   content_hint?: string | null;
@@ -104,7 +105,11 @@ export const communityVisualApi = {
   preview: (id: string, gridId?: string) =>
     request<Preview>(`/communities/${id}/photo-preview`, {
       method: "POST",
-      body: { candidate_limit: 8, ...(gridId ? { grid_id: gridId } : {}) },
+      body: {
+        candidate_limit: 8,
+        diagnostics: true,
+        ...(gridId ? { grid_id: gridId } : {}),
+      },
     }),
 };
 
@@ -427,6 +432,14 @@ export function CommunityDetailPage() {
             Search queries:{" "}
             {(preview.generated_queries ?? []).join(" · ") || "—"}
           </p>
+          {preview.timings_ms && (
+            <p className="note">
+              Stage timings (ms):{" "}
+              {Object.entries(preview.timings_ms)
+                .map(([stage, ms]) => `${stage}: ${ms.toFixed(0)}`)
+                .join(" · ")}
+            </p>
+          )}
           {(preview.archive_age_strata?.length ?? 0) > 0 && (
             <p className="note">
               Архивный shortlist:{" "}

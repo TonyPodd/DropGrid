@@ -19,6 +19,7 @@ from dropgrid.photos.domain import (
     PhotoSearch,
     normalize_category,
 )
+from dropgrid.photos.timings import timed
 
 MODEL_REVISION = "d15189d7028b43f1d3e65039190477f6af591c2a"
 MODEL = f"Xenova/clip-vit-base-patch32:vision-int8@{MODEL_REVISION}:preprocess-v1"
@@ -99,6 +100,7 @@ class FakeVisualEmbedder:
     def __init__(self) -> None:
         self.calls = 0
 
+    @timed("candidate_embedding")
     async def embed_image(self, image_bytes: bytes) -> VisualEmbedding:
         self.calls += 1
         values = hashlib.sha256(image_bytes).digest()[:3]
@@ -152,6 +154,7 @@ class OnnxCLIPEmbedder:
         except Exception:
             raise PhotoError("visual_embedding_unavailable") from None
 
+    @timed("candidate_embedding")
     async def embed_image(self, image_bytes: bytes) -> VisualEmbedding:
         async with self.lock:
             return await asyncio.to_thread(self._embed, image_bytes)

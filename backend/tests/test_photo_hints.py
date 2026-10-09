@@ -62,3 +62,25 @@ async def test_multi_query_bounds_dedup_provenance_and_fair_quota():
     duplicate = next(i for i in result.items if i.photo.provider_asset_id == "000-same")
     assert duplicate.queries == [s.query for s in cache.calls]
     assert len({q for item in result.items[:8] for q in item.queries}) == len(cache.calls)
+
+
+async def test_clip_cpu_concurrency_remains_one(tmp_path, monkeypatch):
+    import asyncio
+    import time
+
+    from dropgrid.photos.visual import OnnxCLIPEmbedder, VisualEmbedding
+
+    embedder = OnnxCLIPEmbedder(tmp_path / "unused")
+    current = peak = 0
+
+    def embed(data):
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        time.sleep(0.01)
+        current -= 1
+        return VisualEmbedding(embedder.model, embedder.dimensions, (1.0,) * embedder.dimensions)
+
+    monkeypatch.setattr(embedder, "_embed", embed)
+    await asyncio.gather(*(embedder.embed_image(b"fixture") for _ in range(6)))
+    assert peak == 1

@@ -715,3 +715,56 @@ async def test_provider_db_strata_metadata_only(sessions, tmp_path):
         assert [bands.count(i) for i in range(4)] == [7, 7, 7, 7]
         assert all(r.embedding is None and r.storage_key is None for r in first)
         assert len(await provider.candidates(cid, limit=1000, now=NOW)) == 28
+
+
+async def test_archive_preparation_parallel_limit_and_same_identity_cache_lock(sessions, tmp_path):
+    import asyncio
+
+    cid, aid = await seed(sessions)
+    embedder = FakeVisualEmbedder()
+    storage = LocalMediaStorage(tmp_path)
+    async with sessions() as s, s.begin():
+        (await s.get(CommunityContentProfile, cid)).archive_reuse_enabled = True
+    async with (
+        VKClient(
+            Settings(_env_file=None),
+            transport=httpx.MockTransport(lambda r: pytest.fail("Cached archive must not call VK")),
+        ) as vk,
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: pytest.fail("Cached archive must not download"))
+        ) as http,
+    ):
+        collector = CommunityReferenceCollector(
+            sessions,
+            vk,
+            Tokens(),
+            PhotoDownloader(http, VKReferencePolicy(), resolver),
+            storage,
+            embedder,
+        )
+        provider = VKArchivePhotoProvider(collector)
+        rows = []
+        for i in range(1, 10):
+            row, _ = await cached_reference(sessions, storage, embedder, cid, photo_id=i, seed=i)
+            rows.append(row)
+        async with sessions() as s, s.begin():
+            row = await s.get(CommunityReferencePhoto, rows[0].id)
+            row.embedding = None
+        await asyncio.gather(provider.prepare(rows[0]), provider.prepare(rows[0]))
+        assert provider.embedding_count == 1
+        original = provider.prepare
+        active = peak = 0
+
+        async def measured(row):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            try:
+                await asyncio.sleep(0.02)
+                return await original(row)
+            finally:
+                active -= 1
+
+        provider.prepare = measured
+        pool = await archive_pool(provider, cid, [])
+        assert len(pool) == 9 and 1 < peak <= 3

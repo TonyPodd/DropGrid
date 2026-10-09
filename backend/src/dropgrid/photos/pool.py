@@ -28,6 +28,7 @@ from dropgrid.photos.domain import (
 )
 from dropgrid.photos.images import NormalizedPhoto
 from dropgrid.photos.rotation import archive_age_penalty, community_usage, recently_used
+from dropgrid.photos.timings import stage, timed
 from dropgrid.photos.visual import (
     BASE_SCORE_SCALE,
     CommunityVisualRanker,
@@ -91,6 +92,7 @@ def deduplicate_pool(pool: list[PoolCandidate]) -> list[PoolCandidate]:
     return result
 
 
+@timed("ranking")
 async def rank_pool(
     visual: VisualLibrary,
     community_id: UUID,
@@ -100,23 +102,26 @@ async def rank_pool(
     now: datetime | None = None,
 ) -> list[PoolCandidate]:
     now = now or utcnow()
-    async with visual.sessions() as s:
-        profile = await s.get(CommunityContentProfile, community_id)
-        refs = list(
-            (
-                await s.scalars(
-                    select(CommunityReferencePhoto)
-                    .where(
-                        CommunityReferencePhoto.community_id == community_id,
-                        CommunityReferencePhoto.is_style_reference.is_(True),
-                        CommunityReferencePhoto.enabled.is_(True),
+    with stage("reference_loading"):
+        async with visual.sessions() as s:
+            profile = await s.get(CommunityContentProfile, community_id)
+            refs = list(
+                (
+                    await s.scalars(
+                        select(CommunityReferencePhoto)
+                        .where(
+                            CommunityReferencePhoto.community_id == community_id,
+                            CommunityReferencePhoto.is_style_reference.is_(True),
+                            CommunityReferencePhoto.enabled.is_(True),
+                        )
+                        .order_by(
+                            CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id
+                        )
+                        .limit(profile.reference_target_count if profile else 100)
                     )
-                    .order_by(CommunityReferencePhoto.posted_at.desc(), CommunityReferencePhoto.id)
-                    .limit(profile.reference_target_count if profile else 100)
-                )
-            ).all()
-        )
-        usage = await community_usage(s, community_id, now)
+                ).all()
+            )
+            usage = await community_usage(s, community_id, now)
     kept = []
     search = PhotoQueryBuilder().build(category).variants[0]
     for item in deduplicate_pool(pool):
@@ -192,6 +197,7 @@ async def rank_pool(
     return sorted(kept, key=lambda c: (-(c.score.final_score if c.score else 0), c.identity))
 
 
+@timed("archive_preparation")
 async def archive_pool(
     provider: VKArchivePhotoProvider | None,
     community_id: UUID,
@@ -205,13 +211,15 @@ async def archive_pool(
     async with provider.collector.sessions() as s:
         usage = await community_usage(s, community_id, now)
         profile = await s.get(CommunityContentProfile, community_id)
-    for row in await provider.candidates(community_id):
+
+    async def prepare_one(row: CommunityReferencePhoto) -> tuple[PoolCandidate | None, str | None]:
         if recently_used(
             usage, "vk_archive", archive_identity(row), row.sha256, row.perceptual_hash, now
         ):
-            continue
+            return None, None
         try:
-            row = await provider.prepare(row)
+            async with asyncio.timeout(15):
+                row = await provider.prepare(row)
             from dropgrid.photos.references import eligible_for_archive_reuse
 
             if not profile or not eligible_for_archive_reuse(
@@ -222,27 +230,48 @@ async def archive_pool(
                 row.enabled,
                 profile.archive_reuse_max_age_days,
             ):
-                continue
+                return None, None
             photo = provider.photo(row, category)
             if not PhotoPolicy().candidate_allowed(photo):
-                continue
+                return None, None
             assert row.embedding and row.embedding_model and row.embedding_dimensions
-            result.append(
-                PoolCandidate(
-                    photo,
-                    "vk_archive",
-                    reference=row,
-                    embedding=deserialize_embedding(
-                        row.embedding, row.embedding_model, row.embedding_dimensions
-                    ),
-                    sha256=row.sha256,
-                    perceptual_hash=row.perceptual_hash,
-                )
-            )
-        except (PhotoError, OSError) as e:
-            warnings.append(e.code if isinstance(e, PhotoError) else "archive_storage_unavailable")
+            return PoolCandidate(
+                photo,
+                "vk_archive",
+                reference=row,
+                embedding=deserialize_embedding(
+                    row.embedding, row.embedding_model, row.embedding_dimensions
+                ),
+                sha256=row.sha256,
+                perceptual_hash=row.perceptual_hash,
+            ), None
+        except (PhotoError, OSError) as error:
+            return None, error.code if isinstance(
+                error, PhotoError
+            ) else "archive_storage_unavailable"
+        except TimeoutError:
+            return None, "archive_candidate_timeout"
         except VKError:
-            warnings.append("archive_vk_read_failed")
+            return None, "archive_vk_read_failed"
+
+    rows = await provider.candidates(community_id)
+    width = min(3, provider.collector.client.settings.photo_download_concurrency)
+    consecutive_failures = 0
+    for start in range(0, len(rows), width):
+        # At most three preparations in flight, independently of CLIP's single
+        # CPU lock. Per-reference cache locks prevent duplicate work, without
+        # serializing unrelated CDN requests behind one stalled download.
+        prepared = await asyncio.gather(*(prepare_one(row) for row in rows[start : start + width]))
+        for candidate, warning in prepared:
+            if warning:
+                warnings.append(warning)
+                consecutive_failures += 1
+            elif candidate:
+                result.append(candidate)
+                consecutive_failures = 0
+        if consecutive_failures >= 3:
+            warnings.append("archive_failure_bound_reached")
+            break
     return result
 
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dropgrid.db.models import CommunityContentProfile, CommunityReferencePhoto, MediaAsset
 from dropgrid.photos.domain import PhotoError, PhotoQueryBuilder
 from dropgrid.photos.images import LocalMediaStorage
+from dropgrid.photos.timings import timed
 from dropgrid.photos.visual import (
     CommunityVisualRanker,
     RankedPhoto,
@@ -69,6 +70,7 @@ class VisualLibrary:
                 )
             return vector
 
+    @timed("reference_loading")
     async def references(
         self, community_id: UUID
     ) -> tuple[list[VisualEmbedding], list[UUID], CommunityContentProfile | None]:

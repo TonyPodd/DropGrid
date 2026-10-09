@@ -26,6 +26,8 @@ from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenPr
 from dropgrid.logging import configure_logging
 from dropgrid.photos.archive import VKArchivePhotoProvider
 from dropgrid.photos.engine import PhotoEngine
+from dropgrid.photos.preparation import MediaPreparation
+from dropgrid.photos.preparation_routes import router as preparation_router
 from dropgrid.photos.reference_routes import router as reference_router
 from dropgrid.photos.references import CommunityReferenceCollector
 from dropgrid.photos.routes import router as photo_router
@@ -56,6 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             photo_engine.reference_storage,
             photo_engine.embedder,
         )
+        app.state.media_preparation = MediaPreparation(app.state.reference_collector)
         photo_engine.planner.archive = VKArchivePhotoProvider(app.state.reference_collector)
         try:
             yield
@@ -74,6 +77,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(photo_router)
     app.include_router(reference_router)
+    app.include_router(preparation_router)
 
     @app.get("/health")
     async def health(db: Annotated[Database, Depends(database)]) -> JSONResponse:

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, Self
@@ -12,9 +13,12 @@ from dropgrid.config import Settings
 from dropgrid.domain.grid_parser import normalize_vk_community_reference
 from dropgrid.integrations.vk.errors import (
     VKAPIError,
+    VKAuthenticationError,
+    VKCaptchaRequiredError,
     VKCommunityUnavailableError,
     VKError,
     VKInputError,
+    VKPermissionError,
     VKProtocolError,
     VKRateLimitError,
     VKTransportError,
@@ -23,6 +27,8 @@ from dropgrid.integrations.vk.errors import (
 )
 from dropgrid.integrations.vk.limiter import LocalRateLimiter, Sleeper, VKRateLimiter
 from dropgrid.integrations.vk.models import (
+    CommunityResolution,
+    ResolutionStatus,
     VKCommunity,
     VKNotifications,
     VKUser,
@@ -30,6 +36,7 @@ from dropgrid.integrations.vk.models import (
     WallPosts,
     WallPostsById,
 )
+from dropgrid.photos.timings import timed
 
 _READ_METHODS = frozenset(
     {"users.get", "groups.getById", "wall.get", "wall.getById", "notifications.get"}
@@ -67,6 +74,7 @@ class VKClient:
         if http_client is not None and transport is not None:
             raise ValueError("Provide client or transport, not both")
         self.settings = settings
+        self.read_slots = asyncio.Semaphore(settings.vk_read_concurrency)
         self.limiter = limiter or LocalRateLimiter(settings.vk_min_interval_seconds)
         self.sleeper = sleeper
         self.backoff = backoff
@@ -143,12 +151,13 @@ class VKClient:
             payload: dict[str, Any] | None = None
             transient = False
             try:
-                response = await self.http.post(
-                    f"https://api.vk.com/method/{method}",
-                    data=form,
-                    timeout=self.settings.vk_timeout_seconds,
-                    follow_redirects=False,
-                )
+                async with self.read_slots:
+                    response = await self.http.post(
+                        f"https://api.vk.com/method/{method}",
+                        data=form,
+                        timeout=self.settings.vk_timeout_seconds,
+                        follow_redirects=False,
+                    )
             except (httpx.TimeoutException, httpx.NetworkError):
                 error = VKTransportError(method, "VK connection or timeout failure")
                 transient = True
@@ -290,6 +299,102 @@ class VKClient:
         )
         return parse_response(TypeAdapter(VKNotifications), data["response"], "notifications.get")
 
+    async def _groups(
+        self, params: Mapping[str, Any], *, access_token: str | SecretStr, account_id: UUID
+    ) -> list[VKCommunity]:
+        data = await self.call(
+            "groups.getById", access_token=access_token, account_id=account_id, params=params
+        )
+        response = data["response"]
+        if not isinstance(response, dict):
+            raise VKProtocolError("groups.getById", "Expected groups response object")
+        return parse_response(
+            TypeAdapter(list[VKCommunity]), response.get("groups"), "groups.getById"
+        )
+
+    @staticmethod
+    def _resolution(reference: str, group: VKCommunity | None) -> CommunityResolution:
+        status: ResolutionStatus = (
+            "not_found"
+            if group is None
+            else (
+                "deactivated"
+                if group.deactivated
+                else "private_or_unavailable"
+                if group.is_closed and not group.is_member and not group.is_admin
+                else "resolved"
+            )
+        )
+        return CommunityResolution(reference=reference, status=status, group=group)
+
+    @staticmethod
+    def _resolution_failure(reference: str, error: VKError) -> CommunityResolution:
+        if isinstance(error, (VKAuthenticationError, VKCaptchaRequiredError)):
+            raise error
+        status: ResolutionStatus = (
+            "private_or_unavailable"
+            if isinstance(error, VKPermissionError)
+            else ("not_found" if error.code == 100 else "transient_error")
+        )
+        return CommunityResolution(reference=reference, status=status, error_code=error.code)
+
+    async def resolve_communities(
+        self, references: list[str], *, access_token: str | SecretStr, account_id: UUID
+    ) -> list[CommunityResolution]:
+        """Conservative chunks of 25, identity correlation, bounded singleton fallback.
+
+        Never trust batch array order. Renamed/omitted aliases require a singleton.
+        Transient batch failures do not fan out into a singleton request storm.
+        """
+        if (
+            not isinstance(references, list)
+            or not 1 <= len(references) <= 1000
+            or any(not isinstance(ref, str) for ref in references)
+        ):
+            raise VKInputError("groups.getById", "Expected 1–1000 community references")
+        try:
+            normalized = [normalize_vk_community_reference(ref) for ref in references]
+        except (ValueError, TypeError):
+            raise VKInputError("groups.getById", "Invalid community reference") from None
+        unique = list(dict.fromkeys(normalized))
+        results: dict[str, CommunityResolution] = {}
+        for start in range(0, len(unique), 25):
+            chunk = unique[start : start + 25]
+            try:
+                groups = await self._groups(
+                    {"group_ids": chunk}, access_token=access_token, account_id=account_id
+                )
+            except VKError as error:
+                # Invalid/dead entries can reject a whole chunk. Only definitive
+                # input/permission errors permit individual isolation.
+                if error.code not in {100, 113, 15, 203}:
+                    for ref in chunk:
+                        results[ref] = self._resolution_failure(ref, error)
+                    continue
+                groups = []
+            for ref in chunk:
+                match = re.fullmatch(r"(?:club|public)?([0-9]+)", ref)
+                numeric = match.group(1) if match else ""
+                matches = [
+                    g
+                    for g in groups
+                    if (numeric.isdigit() and g.id == int(numeric))
+                    or (g.screen_name and g.screen_name.lower() == ref)
+                ]
+                if len(matches) == 1:
+                    results[ref] = self._resolution(ref, matches[0])
+                    continue
+                try:
+                    single = await self._groups(
+                        {"group_id": ref}, access_token=access_token, account_id=account_id
+                    )
+                    if len(single) > 1 or single and numeric and single[0].id != int(numeric):
+                        raise VKProtocolError("groups.getById", "Ambiguous singleton response")
+                    results[ref] = self._resolution(ref, single[0] if single else None)
+                except VKError as error:
+                    results[ref] = self._resolution_failure(ref, error)
+        return [results[ref] for ref in normalized]
+
     async def resolve_community(
         self, domain: str, *, access_token: str | SecretStr, account_id: UUID
     ) -> VKCommunity:
@@ -388,6 +493,7 @@ class VKClient:
         )
         return parse_response(TypeAdapter(WallPosts), data["response"], "wall.get")
 
+    @timed("archive_identity_refresh")
     async def get_wall_post_by_id(
         self, owner_id: int, post_id: int, *, access_token: str | SecretStr, account_id: UUID
     ) -> WallPostsById:

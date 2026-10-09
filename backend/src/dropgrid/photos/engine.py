@@ -1,5 +1,7 @@
 """Lifespan-owned pools and provider-neutral composition."""
 
+import asyncio
+
 import httpx
 
 from dropgrid.config import Settings
@@ -17,7 +19,8 @@ from dropgrid.photos.visual_library import VisualLibrary
 
 class PhotoEngine:
     def __init__(self, settings: Settings, db: Database) -> None:
-        policy = PhotoPolicy()
+        policy = PhotoPolicy(timeout_seconds=settings.photo_download_timeout_seconds)
+        download_slots = asyncio.Semaphore(settings.photo_download_concurrency)
         self.search_client = httpx.AsyncClient(
             timeout=httpx.Timeout(10, connect=5), trust_env=False, follow_redirects=False
         )
@@ -35,7 +38,9 @@ class PhotoEngine:
             else None
         )
         self.visual = VisualLibrary(db.sessions, self.storage, self.embedder)
-        reference_policy = VKReferencePolicy()
+        reference_policy = VKReferencePolicy(
+            timeout_seconds=settings.photo_download_timeout_seconds
+        )
         self.reference_client = httpx.AsyncClient(
             transport=PinnedPhotoTransport(reference_policy),
             timeout=httpx.Timeout(15, connect=5),
@@ -43,7 +48,9 @@ class PhotoEngine:
             follow_redirects=False,
             headers={"Accept-Encoding": "identity"},
         )
-        self.reference_downloader = PhotoDownloader(self.reference_client, reference_policy)
+        self.reference_downloader = PhotoDownloader(
+            self.reference_client, reference_policy, slots=download_slots
+        )
         self.reference_storage = LocalMediaStorage(settings.media_storage_dir / "references")
         self.planner = CampaignMediaPlanner(
             db.sessions,
@@ -52,7 +59,7 @@ class PhotoEngine:
                 PixabayPhotoProvider(settings.pixabay_api_key, self.search_client),
                 settings.photo_search_cache_hours,
             ),
-            PhotoDownloader(self.download_client, policy),
+            PhotoDownloader(self.download_client, policy, slots=download_slots),
             self.storage,
             settings,
             policy,

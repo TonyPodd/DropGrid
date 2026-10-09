@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dropgrid.db.models import Account, Community
+from dropgrid.db.models import Account, Community, utcnow
 from dropgrid.domain.enums import AccountStatus
 from dropgrid.domain.grid_parser import normalize_vk_community_reference
 from dropgrid.integrations.vk.client import VKClient
@@ -69,6 +69,13 @@ async def resolve_community(
     )
     if existing is not None:
         raise ConflictError("Canonical community domain already belongs to another record")
+    community.resolution_status = (
+        "private_or_unavailable"
+        if group.is_closed and not group.is_member and not group.is_admin
+        else "resolved"
+    )
+    community.resolution_checked_at = utcnow()
+    community.resolution_error_code = None
     community.vk_group_id = group.id
     community.domain = canonical
     if group.name:

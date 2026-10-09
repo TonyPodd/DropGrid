@@ -40,6 +40,7 @@ from dropgrid.photos.domain import (
 from dropgrid.photos.download import PhotoDownloader
 from dropgrid.photos.images import MediaStorage, normalize_image
 from dropgrid.photos.schemas import CategoryPlanRead, MediaPlanInput, MediaPlanRead
+from dropgrid.photos.timings import stage
 from dropgrid.photos.visual import serialize_embedding
 from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.campaigns import locked_campaign
@@ -159,7 +160,8 @@ class CampaignMediaPlanner:
                     extra={"category": category, "provider": candidate.provider},
                 )
                 data = await self.downloader.download(candidate.candidate_download_url)
-                image = await asyncio.to_thread(normalize_image, data, self.policy)
+                with stage("normalization"):
+                    image = await asyncio.to_thread(normalize_image, data, self.policy)
                 embedding = None
                 embedding_warning = None
                 if self.visual and self.visual.embedder:

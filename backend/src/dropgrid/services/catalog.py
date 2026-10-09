@@ -86,7 +86,13 @@ async def import_grid(session: AsyncSession, data: GridImport) -> tuple[Grid, Pa
     parsed = parse_grid(data.text)
     if not parsed.items:
         raise InvalidGridError("Grid has no valid communities; use /grids/parse for line errors")
-    grid = await create_grid(session, data.name)
+    if data.grid_id:
+        grid = await session.get(Grid, data.grid_id, with_for_update=True)
+        if grid is None:
+            raise NotFoundError("Grid not found")
+        grid.name = data.name
+    else:
+        grid = await create_grid(session, data.name)
     # Sort to give concurrent imports consistent lock ordering.
     for item in sorted(parsed.items, key=lambda item: item.community):
         if item.category is not None and len(item.category) > 200:
@@ -98,24 +104,28 @@ async def import_grid(session: AsyncSession, data: GridImport) -> tuple[Grid, Pa
         )
         if numeric_id is not None and numeric_id > 2**63 - 1:
             raise InvalidGridError("Numeric group ID exceeds PostgreSQL bigint range")
-        await session.execute(
-            insert(Community)
-            .values(
-                domain=item.community,
-                category=item.category,
-                vk_group_id=numeric_id,
-            )
-            .on_conflict_do_nothing(index_elements=[Community.domain])
-        )
+        # Imported reference survives canonical alias updates. Reimport is additive
+        # and preserves deliberate hints on existing per-grid rows.
         community_id = await session.scalar(
-            select(Community.id).where(Community.domain == item.community)
+            select(GridCommunity.community_id).where(
+                GridCommunity.grid_id == grid.id, GridCommunity.source_reference == item.community
+            )
         )
-        session.add(
-            GridCommunity(
-                grid_id=grid.id,
-                community_id=community_id,
-                category=item.category,
-                comment=item.comment,
+        if community_id is None:
+            await session.execute(
+                insert(Community)
+                .values(domain=item.community, category=item.category, vk_group_id=numeric_id)
+                .on_conflict_do_nothing(index_elements=[Community.domain])
+            )
+            community_id = await session.scalar(
+                select(Community.id).where(Community.domain == item.community)
+            )
+        values = dict(category=item.category, comment=item.comment, source_reference=item.community)
+        await session.execute(
+            insert(GridCommunity)
+            .values(grid_id=grid.id, community_id=community_id, **values)
+            .on_conflict_do_update(
+                index_elements=[GridCommunity.grid_id, GridCommunity.community_id], set_=values
             )
         )
     await session.flush()

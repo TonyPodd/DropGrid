@@ -24,6 +24,7 @@ from dropgrid.photos.domain import PhotoError, PhotoPolicy
 from dropgrid.photos.download import PhotoDownloader, validate_url
 from dropgrid.photos.images import LocalMediaStorage, normalize_image
 from dropgrid.photos.reference_schemas import ProfileInput, ProfileRead, ReferenceSyncRead
+from dropgrid.photos.timings import stage
 from dropgrid.photos.visual import VisualEmbedder, deserialize_embedding, serialize_embedding
 from dropgrid.services.catalog import ConflictError, get_entity
 
@@ -275,8 +276,20 @@ class CommunityReferenceCollector:
         return True
 
     async def sync(
-        self, community_id: UUID, account_id: UUID | None = None, target_count: int | None = None
+        self,
+        community_id: UUID,
+        account_id: UUID | None = None,
+        target_count: int | None = None,
+        *,
+        max_scanned_posts: int = MAX_SCANNED_POSTS,
+        timeout_seconds: float = SYNC_TIMEOUT_SECONDS,
+        recent_since: datetime | None = None,
     ) -> ReferenceSyncRead:
+        if (
+            not 1 <= max_scanned_posts <= MAX_SCANNED_POSTS
+            or not 0 < timeout_seconds <= SYNC_TIMEOUT_SECONDS
+        ):
+            raise ConflictError("Invalid reference sync bounds")
         lease = uuid4()
         report = ReferenceSyncRead()
         finished = False
@@ -326,23 +339,23 @@ class CommunityReferenceCollector:
                 report.warnings.append("vk_credentials_unavailable")
                 return report
             token = await self.tokens.get_token(aid)
-            async with asyncio.timeout(SYNC_TIMEOUT_SECONDS):
-                while report.posts_scanned < MAX_SCANNED_POSTS and len(seen) < target:
+            async with asyncio.timeout(timeout_seconds):
+                while report.posts_scanned < max_scanned_posts and len(seen) < target:
                     page = await self.client.get_community_wall_history(
                         group,
                         access_token=token,
                         account_id=aid,
-                        count=min(100, MAX_SCANNED_POSTS - report.posts_scanned),
+                        count=min(100, max_scanned_posts - report.posts_scanned),
                         offset=offset,
                     )
                     if not page.items:
                         finished = True
                         break
-                    for post in page.items[: MAX_SCANNED_POSTS - report.posts_scanned]:
+                    for post in page.items[: max_scanned_posts - report.posts_scanned]:
                         report.posts_scanned += 1
                         offset += 1
                         photo = representative_photo(post, group, self.policy)
-                        if not photo:
+                        if not photo or recent_since and photo.posted_at < recent_since:
                             continue
                         identity = (photo.owner_id, photo.photo_id)
                         if identity in seen:
@@ -378,7 +391,10 @@ class CommunityReferenceCollector:
                         else:
                             try:
                                 raw = await self.downloader.download(photo.url)
-                                image = await asyncio.to_thread(normalize_image, raw, self.policy)
+                                with stage("normalization"):
+                                    image = await asyncio.to_thread(
+                                        normalize_image, raw, self.policy
+                                    )
                                 key = await asyncio.to_thread(self.storage.write, image)
                                 report.downloads_succeeded += 1
                                 embedding = None
@@ -459,7 +475,7 @@ class CommunityReferenceCollector:
                     if len(seen) >= target or offset >= page.count:
                         finished = True
                         break
-                if report.posts_scanned >= MAX_SCANNED_POSTS:
+                if report.posts_scanned >= max_scanned_posts:
                     report.warnings.append("scan_bound_reached")
         except VKError as e:
             report.warnings.append("vk_read_" + type(e).__name__)

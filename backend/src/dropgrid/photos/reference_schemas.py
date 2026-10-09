@@ -72,9 +72,11 @@ class PhotoPreviewInput(Input):
     grid_id: UUID | None = None
     candidate_limit: int = Field(default=8, ge=1, le=12)
     include_archive: bool = True
+    diagnostics: bool = False
 
 
 class PhotoPreviewItem(Output):
+    provider: str = ""
     media_asset_id: UUID | None = None
     reference_id: UUID | None = None
     source: str = "library"
@@ -102,6 +104,7 @@ class ArchiveShortlistItem(Output):
 
 
 class PhotoPreviewRead(Output):
+    timings_ms: dict[str, float] | None = None
     community_id: UUID
     category: str | None
     comment: str | None = None

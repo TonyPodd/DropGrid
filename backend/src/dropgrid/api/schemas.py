@@ -88,6 +88,9 @@ class CapabilityRead(BaseModel):
 
 
 class CommunityRead(Output):
+    resolution_status: str = "unresolved"
+    resolution_checked_at: datetime | None = None
+    resolution_error_code: int | None = None
     id: UUID
     domain: str
     vk_group_id: int | None
@@ -124,6 +127,7 @@ class GridText(Input):
 
 class GridImport(GridText):
     name: Name
+    grid_id: UUID | None = None
 
     @field_validator("name", mode="before")
     @classmethod

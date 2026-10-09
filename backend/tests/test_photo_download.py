@@ -126,3 +126,34 @@ async def test_pinning_keeps_sni_host_and_rejects_dns_rebinding():
             await PhotoDownloader(client, PhotoPolicy(), rebind).download(
                 "https://cdn.pixabay.com/a.jpg"
             )
+
+
+async def test_download_concurrency_and_individual_timeout_are_bounded():
+    import asyncio
+    from dataclasses import replace
+
+    current = peak = 0
+
+    async def handler(r):
+        nonlocal current, peak
+        current += 1
+        peak = max(peak, current)
+        try:
+            await asyncio.sleep(0.02 if r.url.path != "/slow.jpg" else 0.2)
+            return httpx.Response(
+                200, content=image_bytes(), headers={"content-type": "image/jpeg"}
+            )
+        finally:
+            current -= 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        downloader = PhotoDownloader(
+            http, replace(PhotoPolicy(), timeout_seconds=0.1), public, slots=asyncio.Semaphore(2)
+        )
+        results = await asyncio.gather(
+            *(downloader.download(f"https://cdn.pixabay.com/{i}.jpg") for i in range(4))
+        )
+        assert all(results) and peak == 2
+        with pytest.raises(PhotoError, match="download_failed"):
+            await downloader.download("https://cdn.pixabay.com/slow.jpg")
+        assert await downloader.download("https://cdn.pixabay.com/again.jpg")

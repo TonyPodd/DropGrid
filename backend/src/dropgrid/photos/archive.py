@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
+from weakref import WeakValueDictionary
 
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -27,6 +28,7 @@ from dropgrid.photos.references import (
     eligible_for_archive_reuse,
     representative_photo,
 )
+from dropgrid.photos.timings import stage
 from dropgrid.photos.visual import deserialize_embedding, serialize_embedding
 from dropgrid.services.catalog import ConflictError, get_entity
 
@@ -241,7 +243,7 @@ class VKArchivePhotoProvider:
 
     def __init__(self, collector: CommunityReferenceCollector) -> None:
         self.collector = collector
-        self.lock = asyncio.Lock()
+        self.locks: WeakValueDictionary[UUID, asyncio.Lock] = WeakValueDictionary()
         self.download_count = self.embedding_count = 0
 
     async def candidates(
@@ -335,7 +337,8 @@ class VKArchivePhotoProvider:
         )
 
     async def prepare(self, row: CommunityReferencePhoto) -> CommunityReferencePhoto:
-        async with self.lock:
+        lock = self.locks.setdefault(row.id, asyncio.Lock())
+        async with lock:
             service = self.collector
             # A second request may have queued with a stale detached row while
             # the first prepared it. Read the current cache under the local lock.
@@ -394,7 +397,8 @@ class VKArchivePhotoProvider:
                 if photo is None:
                     raise PhotoError("archive_photo_unavailable")
                 raw = await service.downloader.download(photo.url)
-                image = await asyncio.to_thread(normalize_image, raw, service.policy)
+                with stage("normalization"):
+                    image = await asyncio.to_thread(normalize_image, raw, service.policy)
                 key = await asyncio.to_thread(service.storage.write, image)
                 self.download_count += 1
                 row.storage_key, row.sha256, row.perceptual_hash = (

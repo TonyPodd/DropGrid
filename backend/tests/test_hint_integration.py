@@ -148,3 +148,97 @@ async def test_planner_separates_same_category_retrieval_contexts(sessions, tmp_
     assert "woman car" in queries and "cat" in queries
     assert len(provider.calls) <= 8 and result.newly_assigned == 2
     assert len(result.categories) == 1 and result.categories[0].assigned_count == 2
+
+
+async def test_preview_lane_uniqueness_failure_isolation_and_timings(
+    sessions, tmp_path, monkeypatch
+):
+    from dropgrid.photos import preview as module
+
+    cid, _ = await seed(sessions)
+    provider = FakePhotoProvider((candidate(1), candidate(2), candidate(3)))
+    embedder = FakeVisualEmbedder()
+    storage = LocalMediaStorage(tmp_path)
+    original = module.rank_pool
+
+    async def repeated(*args, **kwargs):
+        rows = await original(*args, **kwargs)
+        return rows + rows[:1]
+
+    monkeypatch.setattr(module, "rank_pool", repeated)
+
+    def handler(r):
+        if r.url.path.endswith("1.jpg"):
+            return httpx.Response(500)
+        return httpx.Response(
+            200,
+            content=image_bytes(seed=int(r.url.path.rsplit("/", 1)[1].split(".")[0])),
+            headers={"content-type": "image/jpeg"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        visual = VisualLibrary(sessions, storage, embedder)
+        planner = CampaignMediaPlanner(
+            sessions,
+            SearchCache(sessions, provider),
+            PhotoDownloader(http, PhotoPolicy()),
+            storage,
+            Settings(_env_file=None),
+            visual=visual,
+        )
+
+        async def resolver(host):
+            return ["93.184.216.34"]
+
+        planner.downloader.resolver = resolver
+        preview = await photo_preview(
+            planner, visual, cid, PhotoPreviewInput(candidate_limit=3, diagnostics=True)
+        )
+        assert "download_failed" in preview.warnings
+        assert preview.timings_ms and all(value >= 0 for value in preview.timings_ms.values())
+        assert preview.timings_ms["downloads"] > 0 and preview.timings_ms["normalization"] > 0
+        assert preview.timings_ms["candidate_embedding"] > 0
+        for lane in (preview.category_only, preview.community_aware, preview.mixed_source):
+            identities = [(item.provider, item.source_identity) for item in lane]
+            assert identities and len(identities) == len(set(identities))
+            assert all(identity[1] != "1" for identity in identities)
+        planner.settings.app_env = "production"
+        hidden = await photo_preview(
+            planner, visual, cid, PhotoPreviewInput(candidate_limit=3, diagnostics=True)
+        )
+        assert hidden.timings_ms is None
+
+
+async def test_reimport_preserves_hint_and_original_reference_after_resolve(client, sessions):
+    imported = (
+        await client.post(
+            "/api/v1/grids/import",
+            json={"name": "old", "text": "# БМВ\nvk.com/old.alias — БМВ Е60"},
+        )
+    ).json()
+    gid = imported["grid"]["id"]
+    member = (await client.get(f"/api/v1/grids/{gid}/communities")).json()["items"][0]
+    cid = member["id"]
+    await client.patch(
+        f"/api/v1/grids/{gid}/communities/{cid}", json={"content_hint": "девушка с машиной"}
+    )
+    from uuid import UUID
+
+    from dropgrid.db.models import Community
+
+    async with sessions() as s, s.begin():
+        row = await s.get(Community, UUID(cid))
+        row.domain = "canonical.alias"
+    reimported = await client.post(
+        "/api/v1/grids/import",
+        json={
+            "grid_id": gid,
+            "name": "Real user grid",
+            "text": "# БМВ\nvk.com/old.alias — БМВ Е60\nvk.com/new.alias",
+        },
+    )
+    assert reimported.status_code in (200, 201)
+    rows = (await client.get(f"/api/v1/grids/{gid}/communities")).json()["items"]
+    assert len(rows) == 2
+    same = next(x for x in rows if x["id"] == cid)
+    assert same["content_hint"] == "девушка с машиной" and same["comment"] == "БМВ Е60"
