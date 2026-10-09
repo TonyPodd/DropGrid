@@ -111,7 +111,7 @@ class GridRead(Output):
 
 
 class GridDetail(GridRead):
-    communities: list[CommunityRead]
+    communities: list["GridCommunityRead"]
     community_count: int
     categories: list["CategoryCount"]
 
@@ -233,8 +233,18 @@ class GridSummary(GridRead):
     category_count: int
 
 
+class GridCommunityRead(CommunityRead):
+    comment: str | None = None
+    content_hint: str | None = None
+
+
+class GridCommunityPatch(Input):
+    comment: str | None = Field(default=None, max_length=3000)
+    content_hint: str | None = Field(default=None, max_length=500)
+
+
 class GridCommunityPage(BaseModel):
-    items: list[CommunityRead]
+    items: list[GridCommunityRead]
     total: int
     page: int
     page_size: int

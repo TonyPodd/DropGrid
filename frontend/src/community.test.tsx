@@ -67,9 +67,9 @@ beforeEach(() => {
     ],
   });
 });
-function open() {
+function open(entry = "/communities/c1") {
   render(
-    <MemoryRouter initialEntries={["/communities/c1"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/communities/:id" element={<CommunityDetailPage />} />
       </Routes>
@@ -146,5 +146,26 @@ it("indexes archive only on click, keeps opt-in off and submits an explicit age 
       archive_reuse_min_age_days: 180,
       archive_reuse_max_age_days: 540,
     }),
+  );
+});
+
+it("uses explicit grid context and shows query diagnostics", async () => {
+  vi.mocked(communityVisualApi.preview).mockResolvedValue({
+    category: "МУЗЫКА",
+    comment: "Д-П",
+    content_hint: "девушка с машиной",
+    generated_queries: ["woman car", "girl car"],
+    warnings: [],
+    category_only: [],
+    community_aware: [],
+  });
+  open("/communities/c1?grid=g1");
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Сравнить/ }),
+  );
+  await screen.findByText(/Search queries: woman car · girl car/);
+  expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith(
+    "c1",
+    "g1",
   );
 });

@@ -34,6 +34,10 @@ export type Community = {
   vk_group_id: number | null;
   is_active: boolean;
 };
+export type GridCommunity = Community & {
+  comment?: string | null;
+  content_hint?: string | null;
+};
 export type CategoryCount = { category: string | null; count: number };
 export type Grid = {
   id: string;
@@ -47,7 +51,11 @@ export type GridDetail = Omit<Grid, "category_count"> & {
   communities: Community[];
 };
 export type GridPreview = {
-  items: { community: string; category: string | null }[];
+  items: {
+    community: string;
+    category: string | null;
+    comment?: string | null;
+  }[];
   errors: { line: number; value: string; message: string }[];
 };
 export type Campaign = {

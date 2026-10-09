@@ -243,3 +243,5 @@ docker-compose.yml       local stack + optional bot profile
 docs/                    architecture, security
 .github/workflows/ci.yml  backend + frontend checks
 ```
+
+Photo retrieval context: [Grid comments and content hints](docs/photo-content-hints.md).

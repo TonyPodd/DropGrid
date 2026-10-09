@@ -5,7 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dropgrid.api.schemas import AccountCreate, AccountPatch, GridImport
+from dropgrid.api.schemas import (
+    AccountCreate,
+    AccountPatch,
+    GridCommunityPatch,
+    GridCommunityRead,
+    GridImport,
+)
 from dropgrid.db.models import Account, Campaign, Community, Grid, GridCommunity, MediaAsset
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 
@@ -109,7 +115,27 @@ async def import_grid(session: AsyncSession, data: GridImport) -> tuple[Grid, Pa
                 grid_id=grid.id,
                 community_id=community_id,
                 category=item.category,
+                comment=item.comment,
             )
         )
     await session.flush()
     return grid, parsed
+
+
+async def patch_grid_community(
+    session: AsyncSession, grid_id: UUID, community_id: UUID, data: GridCommunityPatch
+) -> GridCommunityRead:
+    relation = await session.get(GridCommunity, (grid_id, community_id), with_for_update=True)
+    if relation is None:
+        raise NotFoundError("Community is not in grid")
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(relation, key, value or None)
+    await session.flush()
+    community = await get_entity(session, Community, community_id)
+    return GridCommunityRead.model_validate(community).model_copy(
+        update={
+            "category": relation.category,
+            "comment": relation.comment,
+            "content_hint": relation.content_hint,
+        }
+    )

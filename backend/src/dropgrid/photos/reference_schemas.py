@@ -79,6 +79,7 @@ class PhotoPreviewItem(Output):
     reference_id: UUID | None = None
     source: str = "library"
     source_identity: str = ""
+    retrieval_queries: list[str] = Field(default_factory=list)
     original_posted_at: datetime | None = None
     age_days: float | None = None
     age_reuse_score: float = 0
@@ -103,6 +104,11 @@ class ArchiveShortlistItem(Output):
 class PhotoPreviewRead(Output):
     community_id: UUID
     category: str | None
+    comment: str | None = None
+    content_hint: str | None = None
+    desired_content: str | None = None
+    avoid_content: str | None = None
+    generated_queries: list[str] = Field(default_factory=list)
     references: list[UUID]
     category_only: list[PhotoPreviewItem]
     community_aware: list[PhotoPreviewItem]

@@ -18,6 +18,7 @@ from dropgrid.config import Settings
 from dropgrid.db.models import (
     Campaign,
     Community,
+    CommunityContentProfile,
     GridCommunity,
     MediaAsset,
     MediaProviderImport,
@@ -352,12 +353,33 @@ class CampaignMediaPlanner:
                     if asset_id is not None
                 }
             )
+        async with self.sessions() as session:
+            hints = {
+                r.community_id: r.content_hint
+                for r in (
+                    await session.scalars(
+                        select(GridCommunity).where(GridCommunity.grid_id == campaign.grid_id)
+                    )
+                ).all()
+            }
+            desired = {
+                p.community_id: p.desired_content
+                for p in (
+                    await session.scalars(
+                        select(CommunityContentProfile).where(
+                            CommunityContentProfile.community_id.in_(
+                                [s.community_id for s, _ in rows]
+                            )
+                        )
+                    )
+                ).all()
+            }
         total = len(rows)
         previously = sum(s.media_asset_id is not None for s, _ in rows)
         report = MediaPlanRead(
             campaign_id=campaign_id, total_submissions=total, previously_assigned=previously
         )
-        groups: dict[str, list[UUID]] = defaultdict(list)
+        groups: dict[tuple[str, str | None, str | None], list[UUID]] = defaultdict(list)
         all_groups: dict[str, list[UUID]] = defaultdict(list)
         for submission, category in rows:
             key = normalize_category(category)
@@ -365,8 +387,10 @@ class CampaignMediaPlanner:
             if submission.status == SubmissionStatus.pending and (
                 data.force or not submission.media_asset_id
             ):
-                groups[key].append(submission.id)
-        available: dict[str, list[MediaAsset]] = {}
+                groups[
+                    (key, hints.get(submission.community_id), desired.get(submission.community_id))
+                ].append(submission.id)
+        available: dict[tuple[str, str | None, str | None], list[MediaAsset]] = {}
         categories: dict[str, CategoryPlanRead] = {
             key: CategoryPlanRead(name=key or "Без категории", submission_count=len(ids))
             for key, ids in sorted(all_groups.items())
@@ -381,8 +405,14 @@ class CampaignMediaPlanner:
         stop_provider: str | None = None
         try:
             async with asyncio.timeout(self.policy.plan_timeout_seconds):
-                for category, submission_ids in sorted(groups.items()):
-                    plan = self.builder.build(category)
+                for context, submission_ids in sorted(
+                    groups.items(), key=lambda item: str(item[0])
+                ):
+                    category, hint, wanted = context
+                    plan = self.builder.build(category, hint, wanted)
+                    from dropgrid.photos.concepts import concept_queries
+
+                    hinted = bool(concept_queries(hint) or concept_queries(wanted))
                     assets = [
                         a
                         for a in library
@@ -390,8 +420,11 @@ class CampaignMediaPlanner:
                         and self.eligible(a, plan.sensitive)
                         and preserved_counts[a.id] < reuse
                     ]
-                    available[category] = assets
-                    need = max(0, len(submission_ids) - len(assets))
+                    available[context] = assets
+                    target = (
+                        len(assets) + min(4, len(submission_ids)) if hinted else len(submission_ids)
+                    )
+                    need = max(0, target - len(assets))
                     if not need:
                         continue
                     warnings = categories[category].warnings
@@ -412,7 +445,7 @@ class CampaignMediaPlanner:
                             warnings.append(exc.code)
                             stop_provider = exc.code
                             break
-                        for candidate in found:
+                        for candidate in found[:24] if hinted else found:
                             identity = (candidate.provider, candidate.provider_asset_id)
                             if not self.policy.candidate_allowed(candidate, plan.sensitive):
                                 continue
@@ -435,25 +468,22 @@ class CampaignMediaPlanner:
                                 continue
                             if identity in aliases:
                                 continue
-                            score = self.ranker.score(candidate, search, priority)
+                            score = self.ranker.score(candidate, search, 0 if hinted else priority)
                             if identity not in candidates or score > candidates[identity][1]:
                                 candidates[identity] = candidate, score
-                        if len(candidates) + len(assets) >= len(submission_ids):
+                        if not hinted and len(candidates) + len(assets) >= len(submission_ids):
                             break
                     ranked = sorted(
                         candidates.values(),
                         key=lambda item: (-item[1], item[0].provider, item[0].provider_asset_id),
                     )
-                    budget = (
-                        max(0, len(submission_ids) - len(assets))
-                        + self.settings.photo_download_spare
-                    )
+                    budget = max(0, target - len(assets)) + self.settings.photo_download_spare
                     attempts = 0
-                    while ranked and len(assets) < len(submission_ids) and attempts < budget:
+                    while ranked and len(assets) < target and attempts < budget:
                         creator_counts = Counter(a.creator_name for a in assets)
                         batch_size = min(
                             self.settings.photo_download_concurrency,
-                            len(submission_ids) - len(assets),
+                            target - len(assets),
                             budget - attempts,
                         )
                         batch = []
@@ -496,7 +526,8 @@ class CampaignMediaPlanner:
 
         if self.visual:
             communities = {s.id: s.community_id for s, _ in rows}
-            for category, submission_ids in groups.items():
+            for context, submission_ids in groups.items():
+                category, hint, wanted = context
                 for sid in submission_ids:
                     community_id = communities[sid]
                     warnings = categories[category].warnings
@@ -508,7 +539,7 @@ class CampaignMediaPlanner:
                             sha256=a.sha256,
                             perceptual_hash=a.perceptual_hash,
                         )
-                        for a in available.get(category, [])
+                        for a in available.get(context, [])
                         if a.provider != "vk_archive"
                     ]
                     try:
@@ -557,8 +588,8 @@ class CampaignMediaPlanner:
                                         continue
                                     if preserved_counts[asset.id] >= reuse:
                                         continue
-                                    if all(a.id != asset.id for a in available[category]):
-                                        available[category].append(asset)
+                                    if all(a.id != asset.id for a in available[context]):
+                                        available[context].append(asset)
                                     if created:
                                         imported_ids.add(asset.id)
                                         report.downloaded_assets += 1
@@ -631,6 +662,32 @@ class CampaignMediaPlanner:
                 for s, category in rows
             ):
                 raise ConflictError("Grid categories changed during planning")
+            current_hints = {
+                r.community_id: r.content_hint
+                for r in (
+                    await session.scalars(
+                        select(GridCommunity).where(GridCommunity.grid_id == campaign.grid_id)
+                    )
+                ).all()
+            }
+            current_desired = {
+                p.community_id: p.desired_content
+                for p in (
+                    await session.scalars(
+                        select(CommunityContentProfile).where(
+                            CommunityContentProfile.community_id.in_(
+                                [s.community_id for s, _ in rows]
+                            )
+                        )
+                    )
+                ).all()
+            }
+            if any(
+                current_hints.get(s.community_id) != hints.get(s.community_id)
+                or current_desired.get(s.community_id) != desired.get(s.community_id)
+                for s, _ in rows
+            ):
+                raise ConflictError("Grid content hints changed during planning")
             counts: Counter[UUID] = Counter(
                 s.media_asset_id
                 for s in current
@@ -638,15 +695,16 @@ class CampaignMediaPlanner:
             )
             reuse = data.max_reuse_per_asset or self.settings.photo_max_reuse_per_asset
             assignments: dict[UUID, UUID] = {}
-            for category, submission_ids in sorted(groups.items()):
+            for context, submission_ids in sorted(groups.items(), key=lambda item: str(item[0])):
+                category, hint, wanted = context
                 valid = []
-                for asset in available.get(category, []):
+                for asset in available.get(context, []):
                     fresh = await session.get(MediaAsset, asset.id)
                     if fresh and self.eligible(fresh, self.builder.build(category).sensitive):
                         valid.append(fresh)
                 eligible_ids = {s.id for s in current if s.status == SubmissionStatus.pending}
                 if self.visual:
-                    from dropgrid.db.models import CommunityContentProfile, CommunityReferencePhoto
+                    from dropgrid.db.models import CommunityReferencePhoto
                     from dropgrid.photos.references import eligible_for_archive_reuse
                     from dropgrid.photos.rotation import community_usage, recently_used
 

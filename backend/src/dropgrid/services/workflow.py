@@ -14,6 +14,7 @@ from dropgrid.api.schemas import (
     CommunityRead,
     DashboardRead,
     GridCommunityPage,
+    GridCommunityRead,
     GridDetail,
     GridRead,
     GridSummary,
@@ -79,7 +80,7 @@ async def grid_members(
         select(func.count()).select_from(GridCommunity).where(GridCommunity.grid_id == grid_id)
     )
     rows = await session.execute(
-        select(Community, GridCommunity.category)
+        select(Community, GridCommunity)
         .join(GridCommunity)
         .where(GridCommunity.grid_id == grid_id)
         .order_by(Community.domain, Community.id)
@@ -87,8 +88,14 @@ async def grid_members(
         .offset((page - 1) * page_size)
     )
     items = [
-        CommunityRead.model_validate(community).model_copy(update={"category": category})
-        for community, category in rows
+        GridCommunityRead.model_validate(community).model_copy(
+            update={
+                "category": relation.category,
+                "comment": relation.comment,
+                "content_hint": relation.content_hint,
+            }
+        )
+        for community, relation in rows
     ]
     return GridCommunityPage(items=items, total=total or 0, page=page, page_size=page_size)
 
@@ -97,7 +104,7 @@ async def grid_detail(session: AsyncSession, grid_id: UUID, limit: int, offset: 
     grid = await get_entity(session, Grid, grid_id)
     # The detail embeds a bounded first/selected slice for compatibility; UI uses the page endpoint.
     rows = await session.execute(
-        select(Community, GridCommunity.category)
+        select(Community, GridCommunity)
         .join(GridCommunity)
         .where(GridCommunity.grid_id == grid_id)
         .order_by(Community.domain, Community.id)
@@ -108,8 +115,14 @@ async def grid_detail(session: AsyncSession, grid_id: UUID, limit: int, offset: 
     return GridDetail(
         **GridRead.model_validate(grid).model_dump(),
         communities=[
-            CommunityRead.model_validate(c).model_copy(update={"category": category})
-            for c, category in rows
+            GridCommunityRead.model_validate(c).model_copy(
+                update={
+                    "category": relation.category,
+                    "comment": relation.comment,
+                    "content_hint": relation.content_hint,
+                }
+            )
+            for c, relation in rows
         ],
         community_count=sum(c.count for c in categories),
         categories=categories,

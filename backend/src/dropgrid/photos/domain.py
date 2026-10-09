@@ -11,6 +11,11 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from dropgrid.photos.concepts import concept_queries
+
+MAX_RETRIEVAL_QUERIES = 4
+MAX_CANDIDATES_PER_QUERY = 24
+
 
 def normalize_category(value: str | None) -> str:
     return " ".join(unicodedata.normalize("NFKC", value or "").casefold().replace("ё", "е").split())
@@ -107,6 +112,8 @@ class PhotoQueryPlan:
     category: str
     variants: tuple[PhotoSearch, ...]
     sensitive: bool = False
+    content_hint: str | None = None
+    desired_content: str | None = None
 
 
 class PhotoQueryBuilder:
@@ -122,10 +129,30 @@ class PhotoQueryBuilder:
         "любовь": ("сердце цветы", "heart flowers", "romantic sunset"),
         "знакомства": ("цветы закат", "flowers sunset", "romantic landscape"),
         "цитаты": ("природа небо", "nature sky", "calm landscape"),
+        "музыка": ("музыка", "music concert", "musical instruments"),
+        "военные": ("военные", "soldier military", "army"),
+        "бмв": ("бмв автомобиль", "bmw car", "bmw sedan"),
+        "мерседес": ("мерседес автомобиль", "mercedes car", "mercedes sedan"),
+        "еда": ("еда", "food cooking", "meal"),
     }
-    aliases = {"автомобили": "авто", "мотоциклы": "мото", "dating": "знакомства"}
+    aliases = {
+        "автомобили": "авто",
+        "мотоциклы": "мото",
+        "dating": "знакомства",
+        "цитата": "цитаты",
+        "цитаты про любовь": "цитаты",
+        "котики": "кошки",
+        "уличные коты": "кошки",
+        "фура": "грузовики",
+        "трактор": "тракторы",
+    }
 
-    def build(self, category: str | None) -> PhotoQueryPlan:
+    def build(
+        self,
+        category: str | None,
+        content_hint: str | None = None,
+        desired_content: str | None = None,
+    ) -> PhotoQueryPlan:
         key = normalize_category(category)
         canonical = self.aliases.get(key, key)
         if {"dating", "знакомства", "знакомство"} & set(key.split()):
@@ -142,7 +169,24 @@ class PhotoQueryBuilder:
                     lang="ru" if re.search("[а-я]", key) or not key else "en",
                 ),
             )
-        return PhotoQueryPlan(key, searches, canonical == "знакомства")
+        hints, desired = concept_queries(content_hint), concept_queries(desired_content)
+        if hints or desired:
+            category_en = next((v.query for v in searches if v.lang == "en"), searches[0].query)
+            queries = list(hints or desired)
+            if hints and desired:
+                queries.append(desired[0])
+            queries.append(" ".join(dict.fromkeys((category_en + " " + queries[0]).split())))
+            searches = (
+                searches[0].model_copy(update={"per_page": MAX_CANDIDATES_PER_QUERY}),
+            ) + tuple(
+                PhotoSearch(query=q[:100], lang="en", per_page=MAX_CANDIDATES_PER_QUERY)
+                for q in dict.fromkeys(queries)
+                if q != searches[0].query
+            )
+            searches = searches[:MAX_RETRIEVAL_QUERIES]
+        return PhotoQueryPlan(
+            key, searches, canonical == "знакомства", content_hint, desired_content
+        )
 
 
 @dataclass(frozen=True)

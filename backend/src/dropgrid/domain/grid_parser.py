@@ -2,8 +2,8 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-_REFERENCE = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{0,63}")
-_INDEX = re.compile(r"^\d+[.)]?\s+")
+_REFERENCE = re.compile(r"[a-zA-Z0-9_][a-zA-Z0-9_.]{0,63}")
+_INDEX = re.compile(r"^\d+(?:[.)]?\s+|(?=(?:https?://)?vk\.(?:com|ru)/))", re.I)
 
 
 def normalize_vk_community_reference(value: str) -> str:
@@ -41,6 +41,7 @@ def normalize_vk_community_reference(value: str) -> str:
 class GridItem:
     category: str | None
     community: str
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,17 +72,31 @@ def parse_grid(text: str) -> ParseGridResult:
             continue
         indexed = bool(_INDEX.match(line))
         candidate = _INDEX.sub("", line)
+        first = candidate.split(maxsplit=1)[0]
+        is_vk = bool(re.match(r"(?:https?://)?(?:www\.)?vk\.(?:com|ru)/|@", first, re.I))
         is_heading = (
-            not indexed
-            and not any(c in line for c in "/.@:")
-            and not any(c.isdigit() for c in line)
-            and (line.isupper() or bool(re.search(r"[А-Яа-яЁё]", line)))
+            not indexed and not is_vk and (line.isupper() or bool(re.search(r"[А-Яа-яЁё]", first)))
         )
         if line.startswith("#") or is_heading:
             category = line.removeprefix("#").strip() or None
             continue
+        parts = candidate.split(maxsplit=1)
+        reference = parts[0]
+        comment = parts[1].strip() if len(parts) > 1 else None
+        if comment and not (
+            "/" in reference
+            or reference.startswith("@")
+            or comment.startswith(("—", "–", "-"))
+            or bool(re.search(r"\s{2,}", candidate))
+        ):
+            result.errors.append(GridParseError(line_number, raw, "Expected a separated comment"))
+            continue
+        if comment and comment.startswith(("—", "–", "-")):
+            comment = comment[1:].strip() or None
         try:
-            community = normalize_vk_community_reference(candidate)
+            community = normalize_vk_community_reference(reference)
+            if comment and len(comment) > 3000:
+                raise ValueError("Comment must contain at most 3000 characters")
         except ValueError as exc:
             result.errors.append(GridParseError(line_number, raw, str(exc)))
             continue
@@ -89,5 +104,5 @@ def parse_grid(text: str) -> ParseGridResult:
             result.errors.append(GridParseError(line_number, raw, "Duplicate community"))
             continue
         seen.add(community)
-        result.items.append(GridItem(category, community))
+        result.items.append(GridItem(category, community, comment))
     return result

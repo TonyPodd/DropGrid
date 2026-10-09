@@ -23,6 +23,8 @@ from dropgrid.api.schemas import (
     CommunityResolveInput,
     DashboardRead,
     GridCommunityPage,
+    GridCommunityPatch,
+    GridCommunityRead,
     GridCreate,
     GridDetail,
     GridImport,
@@ -246,3 +248,10 @@ async def track_parse(data: TrackInput) -> TrackRead:
             "Expected a VK audio link, for example https://vk.ru/audio1_2"
         ) from None
     return TrackRead(owner_id=audio.owner_id, audio_id=audio.media_id)
+
+
+@router.patch("/grids/{grid_id}/communities/{community_id}", response_model=GridCommunityRead)
+async def patch_grid_community(
+    grid_id: UUID, community_id: UUID, data: GridCommunityPatch, session: Session
+) -> GridCommunityRead:
+    return await catalog.patch_grid_community(session, grid_id, community_id, data)

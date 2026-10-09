@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from dropgrid.db.models import Community, CommunityContentProfile, GridCommunity, MediaAsset, utcnow
 from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
-from dropgrid.photos.domain import PhotoError, normalize_category
+from dropgrid.photos.domain import normalize_category
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, archive_pool, rank_pool
 from dropgrid.photos.reference_schemas import (
@@ -18,6 +18,7 @@ from dropgrid.photos.reference_schemas import (
     PhotoPreviewItem,
     PhotoPreviewRead,
 )
+from dropgrid.photos.retrieval import retrieve_photos
 from dropgrid.photos.visual_library import VisualLibrary
 from dropgrid.services.catalog import ConflictError, get_entity
 
@@ -50,53 +51,51 @@ async def _photo_preview(
     async with planner.sessions() as session:
         community = await get_entity(session, Community, community_id)
         category = community.category
+        comment = content_hint = None
+        profile = await session.get(CommunityContentProfile, community_id)
         if data.grid_id:
             relation = await session.get(GridCommunity, (data.grid_id, community_id))
             if relation is None:
                 raise ConflictError("Community is not in supplied grid")
             category = relation.category
-    plan = planner.builder.build(category)
+            comment, content_hint = relation.comment, relation.content_hint
+    plan = planner.builder.build(
+        category, content_hint, profile.desired_content if profile else None
+    )
     pixabay: list[PoolCandidate] = []
     warnings: list[str] = []
-    search = plan.variants[0]
-    if plan.sensitive and not planner.cache.provider.supports_sensitive_context:
-        warnings.append("provider_context_restricted")
-    else:
-        try:
-            candidates, _ = await planner.cache.search(search)
-            valid = [c for c in candidates if planner.policy.candidate_allowed(c, plan.sensitive)]
-            valid.sort(
-                key=lambda c: (-planner.ranker.score(c, search), c.provider, c.provider_asset_id)
+    retrieval = await retrieve_photos(planner.cache, plan, planner.policy)
+    warnings.extend(retrieval.warnings)
+    provenance: dict[UUID, list[str]] = {}
+    for retrieved in retrieval.items[: data.candidate_limit]:
+        candidate = retrieved.photo
+        async with planner.sessions() as session:
+            known = await session.scalar(
+                select(MediaAsset).where(
+                    MediaAsset.provider == candidate.provider,
+                    MediaAsset.provider_asset_id == candidate.provider_asset_id,
+                )
             )
-            for candidate in valid[: data.candidate_limit]:
-                asset: MediaAsset | None
-                async with planner.sessions() as session:
-                    known = await session.scalar(
-                        select(MediaAsset).where(
-                            MediaAsset.provider == candidate.provider,
-                            MediaAsset.provider_asset_id == candidate.provider_asset_id,
-                        )
+        asset: MediaAsset | None
+        if known and planner.eligible(known, plan.sensitive):
+            asset = known
+        else:
+            asset, _, warning = await planner._import(candidate, plan.category, plan.sensitive)
+            if warning:
+                warnings.append(warning)
+        if asset:
+            produced = provenance.setdefault(asset.id, [])
+            produced.extend(q for q in retrieved.queries if q not in produced)
+            if all(item.asset and item.asset.id != asset.id for item in pixabay):
+                pixabay.append(
+                    PoolCandidate(
+                        planner._asset_candidate(asset),
+                        "pixabay",
+                        asset=asset,
+                        sha256=asset.sha256,
+                        perceptual_hash=asset.perceptual_hash,
                     )
-                if known and planner.eligible(known, plan.sensitive):
-                    asset = known
-                else:
-                    asset, _, warning = await planner._import(
-                        candidate, plan.category, plan.sensitive
-                    )
-                    if warning:
-                        warnings.append(warning)
-                if asset and all(item.asset and item.asset.id != asset.id for item in pixabay):
-                    pixabay.append(
-                        PoolCandidate(
-                            planner._asset_candidate(asset),
-                            "pixabay",
-                            asset=asset,
-                            sha256=asset.sha256,
-                            perceptual_hash=asset.perceptual_hash,
-                        )
-                    )
-        except PhotoError as e:
-            warnings.append(e.code)
+                )
     ranked_pixabay = await rank_pool(visual, community_id, pixabay, category)
     # Scoring the mixed pool may choose legacy fallback. Keep the Pixabay-only
     # comparison independent so its scores/order cannot be overwritten.
@@ -161,20 +160,31 @@ async def _photo_preview(
     _, reference_ids, _ = await visual.references(community_id)
     if not reference_ids:
         warnings.append("visual_references_unavailable")
+
+    def output(item: PoolCandidate) -> PhotoPreviewItem:
+        return preview_item(item).model_copy(
+            update={"retrieval_queries": provenance.get(item.asset.id, []) if item.asset else []}
+        )
+
     return PhotoPreviewRead(
         community_id=community_id,
         category=category,
+        comment=comment,
+        content_hint=content_hint,
+        desired_content=profile.desired_content if profile else None,
+        avoid_content=profile.avoid_content if profile else None,
+        generated_queries=[v.query for v in plan.variants],
         references=reference_ids[:20],
         category_only=[
-            preview_item(i)
+            output(i)
             for i in sorted(
                 ranked_pixabay, key=lambda c: (-(c.score.base_score if c.score else 0), c.identity)
             )
         ],
-        community_aware=[preview_item(i) for i in ranked_pixabay],
+        community_aware=[output(i) for i in ranked_pixabay],
         archive_age_strata=strata,
         archive_shortlist=shortlist,
-        mixed_source=[preview_item(i) for i in mixed[:12]],
+        mixed_source=[output(i) for i in mixed[:12]],
         warnings=sorted(set(warnings)),
     )
 

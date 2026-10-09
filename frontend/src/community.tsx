@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   request,
   errorMessage,
@@ -40,11 +40,16 @@ type Score = {
   original_posted_at?: string | null;
   age_days?: number | null;
   age_reuse_score?: number;
+  retrieval_queries?: string[];
   base_score: number;
   visual_score: number | null;
   final_score: number;
 };
 type Preview = {
+  category?: string | null;
+  comment?: string | null;
+  content_hint?: string | null;
+  generated_queries?: string[];
   category_only: Score[];
   community_aware: Score[];
   mixed_source?: Score[];
@@ -96,10 +101,10 @@ export const communityVisualApi = {
       method: "POST",
       body: { max_pages: 20 },
     }),
-  preview: (id: string) =>
+  preview: (id: string, gridId?: string) =>
     request<Preview>(`/communities/${id}/photo-preview`, {
       method: "POST",
-      body: { candidate_limit: 8 },
+      body: { candidate_limit: 8, ...(gridId ? { grid_id: gridId } : {}) },
     }),
 };
 
@@ -145,6 +150,10 @@ function CandidateScores({
               {item.base_score.toFixed(3)} · visual:{" "}
               {item.visual_score?.toFixed(3) ?? "—"} · final:{" "}
               {item.final_score.toFixed(3)}
+              <br />
+              Queries:{" "}
+              {(item.retrieval_queries ?? []).join(" · ") ||
+                "library / archive"}
             </figcaption>
           </figure>
         ))}
@@ -155,6 +164,8 @@ function CandidateScores({
 
 export function CommunityDetailPage() {
   const { id = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const gridId = searchParams.get("grid");
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState(1);
   const state = useLoad(
@@ -198,7 +209,11 @@ export function CommunityDetailPage() {
     setMessage("");
     try {
       if (operation === "preview")
-        setPreview(await communityVisualApi.preview(id));
+        setPreview(
+          await (gridId
+            ? communityVisualApi.preview(id, gridId)
+            : communityVisualApi.preview(id)),
+        );
       else {
         await communityVisualApi.save(id, body);
         if (operation === "sync") {
@@ -402,6 +417,15 @@ export function CommunityDetailPage() {
           <p>
             Порядок и scores доступны для сравнения; улучшение качества требует
             визуальной оценки.
+          </p>
+          <p className="note">
+            Category: {preview.category ?? "—"} · Comment:{" "}
+            {preview.comment ?? "—"} · Content hint:{" "}
+            {preview.content_hint ?? "—"}
+          </p>
+          <p className="note">
+            Search queries:{" "}
+            {(preview.generated_queries ?? []).join(" · ") || "—"}
           </p>
           {(preview.archive_age_strata?.length ?? 0) > 0 && (
             <p className="note">

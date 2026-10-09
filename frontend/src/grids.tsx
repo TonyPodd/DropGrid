@@ -103,6 +103,7 @@ export function ParsePreview({ preview }: { preview: GridPreview }) {
               <th>#</th>
               <th>Community</th>
               <th>Category</th>
+              <th>Comment</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -112,6 +113,7 @@ export function ParsePreview({ preview }: { preview: GridPreview }) {
                 <td>{index + 1}</td>
                 <td>{item.community}</td>
                 <td>{categoryName(item.category)}</td>
+                <td>{item.comment ?? "—"}</td>
                 <td>
                   <span className="badge ready">OK</span>
                 </td>
@@ -239,6 +241,87 @@ export function GridImportPage() {
     </>
   );
 }
+function MemberHints({
+  gridId,
+  community,
+  reload,
+}: {
+  gridId: string;
+  community: {
+    id: string;
+    domain: string;
+    comment?: string | null;
+    content_hint?: string | null;
+  };
+  reload: () => void;
+}) {
+  const [comment, setComment] = useState(community.comment ?? "");
+  const [hint, setHint] = useState(community.content_hint ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <details>
+      <summary>
+        {community.content_hint ||
+          community.comment ||
+          "Добавить комментарий / hint"}
+      </summary>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setBusy(true);
+          setError("");
+          try {
+            await gridsApi.updateMember(gridId, community.id, {
+              comment: comment.trim() || null,
+              content_hint: hint.trim() || null,
+            });
+            reload();
+          } catch (e) {
+            setError(errorMessage(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label>
+          Комментарий {community.domain}
+          <input
+            maxLength={3000}
+            value={comment}
+            disabled={busy}
+            onChange={(e) => setComment(e.target.value)}
+          />
+        </label>
+        <label>
+          Content hint {community.domain}
+          <input
+            maxLength={500}
+            value={hint}
+            disabled={busy}
+            onChange={(e) => setHint(e.target.value)}
+          />
+        </label>
+        <p className="note">
+          Комментарий — заметка. Только content hint участвует в поиске фото.
+        </p>
+        <button
+          type="button"
+          disabled={busy || !comment.trim() || comment.length > 500}
+          onClick={() => setHint(comment)}
+        >
+          Использовать комментарий как hint
+        </button>
+        <button disabled={busy}>Сохранить hint</button>
+        {error && <p role="alert">{error}</p>}
+      </form>
+      <Link to={`/communities/${community.id}?grid=${gridId}`}>
+        Предпросмотр фото для этой сетки
+      </Link>
+    </details>
+  );
+}
+
 export function GridDetailPage() {
   const { id = "" } = useParams();
   const [page, setPage] = useState(1);
@@ -284,6 +367,7 @@ export function GridDetailPage() {
                   <th>Community</th>
                   <th>Name</th>
                   <th>Category</th>
+                  <th>Comment / content hint</th>
                   <th>VK resolved</th>
                   <th>Active</th>
                 </tr>
@@ -294,6 +378,13 @@ export function GridDetailPage() {
                     <td>{c.domain}</td>
                     <td>{c.name ?? "—"}</td>
                     <td>{categoryName(c.category)}</td>
+                    <td>
+                      <MemberHints
+                        gridId={id}
+                        community={c}
+                        reload={members.reload}
+                      />
+                    </td>
                     <td>{c.vk_group_id ? "Resolved" : "Not resolved"}</td>
                     <td>{c.is_active ? "Да" : "Нет"}</td>
                   </tr>

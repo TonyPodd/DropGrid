@@ -88,6 +88,8 @@ class GridCommunity(Base):
     community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"), primary_key=True)
     # Keep the import category per grid without overwriting another grid's category.
     category: Mapped[str | None] = mapped_column(String(200))
+    comment: Mapped[str | None] = mapped_column(Text)
+    content_hint: Mapped[str | None] = mapped_column(Text)
 
 
 class MediaAsset(Identity, Base):
