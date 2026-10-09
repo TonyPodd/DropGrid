@@ -196,7 +196,26 @@ class CampaignPatch(Input):
         return self
 
 
+class CampaignStart(Input):
+    account_id: UUID
+    max_submissions: int | None = Field(default=None, ge=1, le=10000)
+
+
+class CampaignPreflight(BaseModel):
+    total: int
+    resolved_sendable: int
+    unavailable: int
+    gender_incompatible: int
+    intended: int
+    media_assigned: int
+    media_missing: int
+    media_invalid: int
+    account_usable: bool
+    ready: bool
+
+
 class CampaignRead(Output):
+    account_id: UUID | None = None
     id: UUID
     name: str
     grid_id: UUID

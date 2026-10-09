@@ -5,6 +5,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
+import { CampaignSendControls } from "./campaign-sending";
 import { campaignsApi } from "./api/campaigns";
 import { gridsApi } from "./api/grids";
 import { errorMessage, mediaContentUrl } from "./api/client";
@@ -433,7 +434,7 @@ export function SubmissionTable({ items, onChecked }: {
                   >
                     Публикация ↗
                   </a>
-                ) : s.error_message ? (
+                ) : s.error_code || s.error_message ? (
                   <span className="short-error">
                     {s.error_code && <strong>{s.error_code}: </strong>}
                     {s.error_message}
@@ -588,6 +589,11 @@ export function CampaignDetailPage() {
     (signal) => campaignsApi.stats(id, signal),
     [id, revision],
   );
+  useEffect(() => {
+    if (!state.data || !["running", "monitoring"].includes(state.data.status)) return;
+    const timer = setInterval(() => setRevision((n) => n + 1), 10000);
+    return () => clearInterval(timer);
+  }, [state.data?.status]);
   return (
     <>
       <Link to="/campaigns">← Campaigns</Link>
@@ -645,12 +651,7 @@ export function CampaignDetailPage() {
                         }}
                       />
                     </>
-                  ) : (
-                    <p className="note">
-                      Кампания подготовлена. Отправка будет доступна после VK
-                      live verification.
-                    </p>
-                  )}
+                  ) : null}
                 </div>
                 {state.data.status === "ready" && (
                   <PhotoPlanButton
@@ -664,6 +665,7 @@ export function CampaignDetailPage() {
                 )}
               </>
             )}
+            <CampaignSendControls campaign={state.data} onChanged={() => setRevision((n) => n + 1)} />
             <h2>Статистика</h2>
             {stats.data && (
               <p>

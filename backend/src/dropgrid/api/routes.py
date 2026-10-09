@@ -14,7 +14,9 @@ from dropgrid.api.schemas import (
     AccountValidationRead,
     CampaignCreate,
     CampaignPatch,
+    CampaignPreflight,
     CampaignRead,
+    CampaignStart,
     CampaignStats,
     CampaignSummary,
     CapabilityInput,
@@ -45,7 +47,8 @@ from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 from dropgrid.integrations.vk.errors import VKInputError
 from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
-from dropgrid.services import account_tokens, campaigns, catalog, vk_accounts, workflow
+from dropgrid.photos.images import LocalMediaStorage
+from dropgrid.services import account_tokens, campaigns, catalog, sending, vk_accounts, workflow
 from dropgrid.services.catalog import InvalidGridError
 from dropgrid.services.publication import PublicationMonitor
 
@@ -255,3 +258,39 @@ async def patch_grid_community(
     grid_id: UUID, community_id: UUID, data: GridCommunityPatch, session: Session
 ) -> GridCommunityRead:
     return await catalog.patch_grid_community(session, grid_id, community_id, data)
+
+
+@router.post("/campaigns/{entity_id}/preflight", response_model=CampaignPreflight)
+async def campaign_preflight(
+    entity_id: UUID, data: CampaignStart, request: Request, session: Session
+) -> dict[str, object]:
+    settings = request.app.state.vk_client.settings
+    report, _ = await sending.preflight(
+        session,
+        entity_id,
+        data.account_id,
+        data.max_submissions,
+        LocalMediaStorage(settings.media_storage_dir),
+        settings,
+    )
+    return report
+
+
+@router.post("/campaigns/{entity_id}/start", response_model=CampaignRead)
+async def campaign_start(
+    entity_id: UUID, data: CampaignStart, request: Request, session: Session
+) -> Campaign:
+    settings = request.app.state.vk_client.settings
+    return await sending.start_campaign(
+        session,
+        entity_id,
+        data.account_id,
+        data.max_submissions,
+        LocalMediaStorage(settings.media_storage_dir),
+        settings,
+    )
+
+
+@router.post("/campaigns/{entity_id}/cancel", response_model=CampaignRead)
+async def campaign_cancel(entity_id: UUID, session: Session) -> Campaign:
+    return await sending.cancel_campaign(session, entity_id)

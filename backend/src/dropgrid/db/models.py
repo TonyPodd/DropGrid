@@ -59,6 +59,7 @@ class Account(Identity, Updated, Base):
         Enum(AccountStatus, name="account_status"), default=AccountStatus.active
     )
     encrypted_access_token: Mapped[str | None] = mapped_column(Text)
+    vk_next_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def token_configured(self) -> bool:
@@ -276,6 +277,7 @@ class Campaign(Identity, Base):
     status: Mapped[CampaignStatus] = mapped_column(
         Enum(CampaignStatus, name="campaign_status"), default=CampaignStatus.draft
     )
+    account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
     publication_check_hours: Mapped[int] = mapped_column(Integer, default=72)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -287,6 +289,7 @@ class Submission(Identity, Updated, Base):
         UniqueConstraint("campaign_id", "community_id", name="uq_submission_campaign_community"),
         CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
         Index("ix_submissions_monitor_due", "status", "vk_next_check_at"),
+        Index("ix_submissions_send_due", "status", "vk_send_next_at"),
         Index("ix_submissions_vk_receipt", "account_id", "vk_suggested_post_id", "community_id"),
     )
     campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id"), index=True)
@@ -315,6 +318,16 @@ class Submission(Identity, Updated, Base):
     vk_monitor_lease_token: Mapped[UUID | None] = mapped_column()
     vk_monitor_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     vk_monitor_evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    vk_send_phase: Mapped[str | None] = mapped_column(String(32))
+    vk_send_guid: Mapped[UUID | None]
+    vk_send_lease_token: Mapped[UUID | None]
+    vk_send_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_send_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_send_next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vk_send_receipt_post_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_photo_upload_owner_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_photo_upload_id: Mapped[int | None] = mapped_column(BigInteger)
+    vk_send_readback_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class VKNotificationCursor(Base):

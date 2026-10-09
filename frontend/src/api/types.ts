@@ -60,6 +60,7 @@ export type GridPreview = {
   errors: { line: number; value: string; message: string }[];
 };
 export type Campaign = {
+  account_id?: string | null;
   id: string;
   name: string;
   grid_id: string;
@@ -145,4 +146,10 @@ export type MediaAsset = {
   usage_count: number;
   last_used_at: string | null;
   enabled: boolean;
+};
+
+export type CampaignPreflight = {
+  total: number; resolved_sendable: number; unavailable: number;
+  gender_incompatible: number; intended: number; media_assigned: number;
+  media_missing: number; media_invalid: number; account_usable: boolean; ready: boolean;
 };

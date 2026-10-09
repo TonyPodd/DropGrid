@@ -1,11 +1,8 @@
 """One explicit local MediaAsset experiment; never a campaign sender."""
 
 import asyncio
-import hashlib
-from io import BytesIO
 from uuid import UUID, uuid4
 
-from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from dropgrid.config import Settings
@@ -20,9 +17,9 @@ from dropgrid.integrations.vk.errors import (
     VKWriteDisabledError,
 )
 from dropgrid.integrations.vk.helpers import build_suggested_post_request, parse_vk_audio_reference
+from dropgrid.integrations.vk.media import checked_media
 from dropgrid.integrations.vk.models import VKAttachment
-from dropgrid.integrations.vk.photos import WallPhotoUploader, load_image
-from dropgrid.photos.domain import PhotoError, PhotoPolicy
+from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.photos.images import MediaStorage
 from dropgrid.services.catalog import get_entity
 
@@ -35,26 +32,6 @@ def require_media_target(client: VKClient, community_id: int) -> None:
         raise VKWriteDisabledError(
             "wall.post", "Media diagnostic requires exactly target 242100737"
         )
-
-
-def checked_media(asset: MediaAsset, storage: MediaStorage, max_bytes: int) -> bytes:
-    try:
-        data, mime = load_image(storage.path(asset.storage_key), asset.mime_type, max_bytes)
-        if mime != "image/jpeg" or not asset.sha256:
-            raise ValueError
-        if hashlib.sha256(data).hexdigest() != asset.sha256:
-            raise ValueError
-        with Image.open(BytesIO(data)) as image:
-            if image.format != "JPEG" or image.width * image.height > PhotoPolicy().max_pixels:
-                raise ValueError
-            if (image.width, image.height) != (asset.width, asset.height):
-                raise ValueError
-            image.verify()
-        return data
-    except (OSError, ValueError, PhotoError, Image.DecompressionBombError):
-        raise VKInputError(
-            "media.asset", "MediaAsset file is missing, invalid or inconsistent"
-        ) from None
 
 
 def post_matches(

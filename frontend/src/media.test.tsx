@@ -169,7 +169,8 @@ it("campaign keeps partial warning after refreshing its data", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     let data: unknown;
-    if (url.endsWith("/stats"))
+    if (url.includes("/accounts?")) data = [];
+    else if (url.endsWith("/stats"))
       data = { total: 10, statuses: {}, media_assigned: 4, media_unique: 2 };
     else if (url.includes("/submissions"))
       data = { items: [], total: 10, page: 1, page_size: 25 };

@@ -1,6 +1,7 @@
 import { request } from "./client";
 import type {
   Campaign,
+  CampaignPreflight,
   CampaignInput,
   Stats,
   Submission,
@@ -9,6 +10,11 @@ import type {
   MediaPlan,
 } from "./types";
 export const campaignsApi = {
+  preflight: (id: string, body: { account_id: string; max_submissions: number | null }, signal?: AbortSignal) =>
+    request<CampaignPreflight>(`/campaigns/${id}/preflight`, { method: "POST", body, signal }),
+  start: (id: string, body: { account_id: string; max_submissions: number | null }) =>
+    request<Campaign>(`/campaigns/${id}/start`, { method: "POST", body }),
+  cancel: (id: string) => request<Campaign>(`/campaigns/${id}/cancel`, { method: "POST" }),
   list: (page: number, signal?: AbortSignal) =>
     request<Campaign[]>(`/campaigns?limit=25&offset=${(page - 1) * 25}`, {
       signal,

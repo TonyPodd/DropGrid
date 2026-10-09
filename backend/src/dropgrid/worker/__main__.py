@@ -11,6 +11,7 @@ from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
 from dropgrid.services.publication import PublicationMonitor
+from dropgrid.services.sending import refresh_campaigns
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
             try:
                 await db.ping()
                 await monitor.tick()
+                await refresh_campaigns(db.sessions)
                 logger.info("Worker publication monitor: cycle complete")
             except (SQLAlchemyError, PostgresError, OSError, TimeoutError):
                 logger.warning("Worker heartbeat: database unavailable")
