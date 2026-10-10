@@ -7,6 +7,14 @@ class GenderTag(StrEnum):
     unspecified = "unspecified"
 
 
+class CategoryGender(StrEnum):
+    """Which accounts may send to a grid category. Unisex categories accept any account."""
+
+    male = "male"
+    female = "female"
+    unisex = "unisex"
+
+
 class AccountStatus(StrEnum):
     active = "active"
     disabled = "disabled"

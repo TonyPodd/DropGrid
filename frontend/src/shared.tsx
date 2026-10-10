@@ -133,3 +133,12 @@ export const date = (value: string) =>
     timeStyle: "short",
   });
 export const categoryName = (value: string | null) => value ?? "Без категории";
+/** Russian count noun: plural(5, "категория", "категории", "категорий"). */
+export function plural(n: number, one: string, few: string, many: string) {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 14) return many;
+  const last = n % 10;
+  return last === 1 ? one : last >= 2 && last <= 4 ? few : many;
+}
+export const genderLabel = (value: string | null | undefined) =>
+  value === "male" ? "муж." : value === "female" ? "жен." : "без пола";

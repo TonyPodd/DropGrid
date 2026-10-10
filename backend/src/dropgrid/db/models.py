@@ -22,7 +22,13 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
+from dropgrid.domain.enums import (
+    AccountStatus,
+    CampaignStatus,
+    CategoryGender,
+    GenderTag,
+    SubmissionStatus,
+)
 
 
 def utcnow() -> datetime:
@@ -107,6 +113,18 @@ class GridCommunity(Base):
     source_reference: Mapped[str | None] = mapped_column(String(64))
     comment: Mapped[str | None] = mapped_column(Text)
     content_hint: Mapped[str | None] = mapped_column(Text)
+
+
+class GridCategoryGender(Updated, Base):
+    """Operator-saved account gender for each grid category; sending allocates by it."""
+
+    __tablename__ = "grid_category_genders"
+    grid_id: Mapped[UUID] = mapped_column(
+        ForeignKey("grids.id", ondelete="CASCADE"), primary_key=True
+    )
+    # "" stands for communities without a category heading: primary keys cannot be NULL.
+    category: Mapped[str] = mapped_column(String(200), primary_key=True)
+    gender: Mapped[CategoryGender] = mapped_column(Enum(CategoryGender, name="category_gender"))
 
 
 class MediaAsset(Identity, Base):
@@ -386,6 +404,8 @@ class Submission(Identity, Updated, Base):
     vk_photo_upload_owner_id: Mapped[int | None] = mapped_column(BigInteger)
     vk_photo_upload_id: Mapped[int | None] = mapped_column(BigInteger)
     vk_send_readback_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Position in the campaign's account-by-account send sequence, fixed at start.
+    send_order: Mapped[int | None] = mapped_column(Integer)
 
 
 class VKNotificationCursor(Base):

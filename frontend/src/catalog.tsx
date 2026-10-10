@@ -148,7 +148,7 @@ export function AccountsPage() {
                           }
                         }}
                       >
-                        <option value="">Любой</option>
+                        <option value="">Не указан — только унисекс</option>
                         <option value="male">Мужской</option>
                         <option value="female">Женский</option>
                       </select>

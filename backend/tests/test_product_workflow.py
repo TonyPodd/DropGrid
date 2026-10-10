@@ -21,7 +21,7 @@ from dropgrid.db.models import (
     Submission,
     utcnow,
 )
-from dropgrid.domain.enums import AccountStatus, GenderTag
+from dropgrid.domain.enums import AccountStatus, CategoryGender, GenderTag
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.photos.domain import FakePhotoProvider
 from dropgrid.photos.learning import (
@@ -35,6 +35,7 @@ from dropgrid.photos.learning import (
 from dropgrid.photos.review import choose, confirm
 from dropgrid.services.account_pools import distribute
 from dropgrid.services.catalog import ConflictError
+from dropgrid.services.category_genders import Placement
 
 
 def account(i, gender=GenderTag.unspecified, status=AccountStatus.active):
@@ -48,24 +49,36 @@ def account(i, gender=GenderTag.unspecified, status=AccountStatus.active):
     )
 
 
-def rows(n, gender=None):
+def rows(n, gender=None, offset=0):
     return [
         (
-            Submission(id=UUID(int=i + 1000)),
-            Community(domain=f"community{i:04}", required_gender_tag=gender),
+            Submission(id=UUID(int=offset + i + 1000)),
+            Community(
+                id=UUID(int=offset + i + 100_000),
+                domain=f"community{offset + i:04}",
+                required_gender_tag=gender,
+            ),
         )
         for i in range(n)
     ]
 
 
-def test_balanced_capacity_and_determinism():
+def unisex(targets):
+    return {c.id: Placement("ОБЩЕЕ", CategoryGender.unisex) for _, c in targets}
+
+
+def test_sequential_capacity_and_determinism():
     accounts = [(account(i), 100, i) for i in (1, 2, 3)]
     submissions = rows(250)
-    allocation, errors = distribute(submissions, accounts)
+    allocation, errors = distribute(submissions, accounts, unisex(submissions))
     assert not errors and len(allocation) == 250
-    assert sorted(Counter(allocation.values()).values()) == [83, 83, 84]
-    assert distribute(list(reversed(submissions)), list(reversed(accounts)))[0] == allocation
-    allocation, errors = distribute(rows(314), accounts)
+    assert [Counter(allocation.values())[a.id] for a, _, _ in accounts] == [100, 100, 50]
+    assert (
+        distribute(list(reversed(submissions)), list(reversed(accounts)), unisex(submissions))[0]
+        == allocation
+    )
+    overflow = rows(314)
+    allocation, errors = distribute(overflow, accounts, unisex(overflow))
     assert len(allocation) == 300 and len(errors) == 14
     assert set(errors.values()) == {"account_capacity_exhausted"}
 
@@ -77,11 +90,11 @@ def test_genders_disabled_and_token_required():
     d = account(4, GenderTag.female)
     d.encrypted_access_token = None
     allocation, errors = distribute(
-        rows(3, GenderTag.female), [(a, 100, 0), (b, 2, 1), (c, 100, 2), (d, 100, 3)]
+        rows(3, GenderTag.female), [(a, 100, 0), (b, 2, 1), (c, 100, 2), (d, 100, 3)], {}
     )
     assert list(allocation.values()) == [b.id, b.id]
     assert list(errors.values()) == ["account_capacity_exhausted"]
-    assert not distribute(rows(1, GenderTag.female), [(a, 100, 0)])[0]
+    assert not distribute(rows(1, GenderTag.female), [(a, 100, 0)], {})[0]
 
 
 @pytest.mark.integration

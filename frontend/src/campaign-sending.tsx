@@ -3,7 +3,7 @@ import { request } from "./api/client";
 import { campaignsApi } from "./api/campaigns";
 import { errorMessage } from "./api/client";
 import type { Campaign } from "./api/types";
-import { Confirm, State, useLoad } from "./shared";
+import { categoryName, Confirm, genderLabel, State, useLoad } from "./shared";
 
 export function CampaignSendControls({
   campaign,
@@ -15,7 +15,13 @@ export function CampaignSendControls({
   const accounts = useLoad(
     (signal) =>
       request<
-        { account_id: string; name: string; assigned: number; quota: number }[]
+        {
+          account_id: string;
+          name: string;
+          gender_tag?: string | null;
+          assigned: number;
+          quota: number;
+        }[]
       >(`/campaigns/${campaign.id}/account-pool`, { signal }),
     [campaign.id, campaign.preparation_state],
   );
@@ -65,10 +71,14 @@ export function CampaignSendControls({
         <>
           <State {...accounts} retry={accounts.reload}>
             <p>
-              Выбранный пул:{" "}
+              Очередь аккаунтов (работают по одному: сначала категории своего
+              пола, потом унисекс):{" "}
               {accounts.data
-                ?.map((a) => `${a.name} ${a.assigned}/${a.quota}`)
-                .join(" · ")}
+                ?.map(
+                  (a, i) =>
+                    `${i + 1}. ${a.name} (${genderLabel(a.gender_tag)}) ${a.assigned}/${a.quota}`,
+                )
+                .join(" → ")}
             </p>
           </State>
           <label>
@@ -97,6 +107,19 @@ export function CampaignSendControls({
           </p>
           {
             <State {...report} retry={report.reload}>
+              {!!report.data?.category_unassigned && (
+                <p role="alert">
+                  Не распределены категории сетки:{" "}
+                  {report.data.unassigned_categories
+                    ?.map(categoryName)
+                    .join(", ")}
+                  .{" "}
+                  <a href={`/categories?grid=${campaign.grid_id}`}>
+                    Распределить категории
+                  </a>{" "}
+                  — без этого бот не начнёт отправку.
+                </p>
+              )}
               {report.data && (
                 <p role="status">
                   Доступно: {report.data.resolved_sendable} · Недоступно:{" "}

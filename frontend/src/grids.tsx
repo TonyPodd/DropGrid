@@ -345,9 +345,17 @@ export function GridDetailPage() {
                   {date(detail.data.created_at)}
                 </p>
               </div>
-              <Link className="button primary" to={`/campaigns/new?grid=${id}`}>
-                Создать кампанию
-              </Link>
+              <div className="actions">
+                <Link className="button" to={`/categories?grid=${id}`}>
+                  Распределить категории
+                </Link>
+                <Link
+                  className="button primary"
+                  to={`/campaigns/new?grid=${id}`}
+                >
+                  Создать кампанию
+                </Link>
+              </div>
             </div>
             <div className="category-list">
               {detail.data.categories.map((c) => (

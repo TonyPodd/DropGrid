@@ -6,6 +6,10 @@ DB token, then inspect `POST /api/v1/campaigns/{id}/preflight` and call `/start`
 (or use null) for the whole prepared Campaign. The first N eligible communities
 are selected in domain/Submission UUID order; the rest become skipped with
 `pilot_scope_excluded`. Unavailable communities and gender mismatches are skipped.
+Accounts send strictly one at a time per Campaign: a later account's upload starts only
+when no earlier account (by `send_order`) has queued/claimed/uploaded work left. Each account
+sends its own gender's categories first, then unisex ones. Receipt read-back and unknown
+outcomes never hold the next account back; failed rows count as finished.
 Every intended eligible row must have a valid, enabled, assigned local JPEG whose
 hash and dimensions agree with MediaAsset. Preflight never contacts VK. Start
 only queues work; it does not enable writes or start a process.

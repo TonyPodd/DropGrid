@@ -4,7 +4,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
+from dropgrid.domain.enums import (
+    AccountStatus,
+    CampaignStatus,
+    CategoryGender,
+    GenderTag,
+    SubmissionStatus,
+)
 from dropgrid.domain.grid_parser import ParseGridResult
 from dropgrid.integrations.vk.errors import VKInputError
 from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
@@ -220,6 +226,8 @@ class CampaignPreflight(BaseModel):
     accounts_ready: int = 0
     total_send_capacity: int = 0
     capacity_unassigned: int = 0
+    category_unassigned: int = 0
+    unassigned_categories: list[str | None] = Field(default_factory=list)
     assigned_per_account: list[dict[str, object]] = Field(default_factory=list)
     review_pending: int = 0
     ready: bool
@@ -268,6 +276,28 @@ class CategoryCount(BaseModel):
 class GridSummary(GridRead):
     community_count: int
     category_count: int
+
+
+class CategoryGenderRead(CategoryCount):
+    gender: CategoryGender | None
+    # Latest saved choice for the same category name in another grid; never applied implicitly.
+    suggested_gender: CategoryGender | None = None
+
+
+class GridCategoryGendersRead(BaseModel):
+    grid_id: UUID
+    categories: list[CategoryGenderRead]
+    complete: bool
+    updated_at: datetime | None
+
+
+class CategoryGenderInput(Input):
+    category: str | None = Field(default=None, min_length=1, max_length=200)
+    gender: CategoryGender
+
+
+class GridCategoryGendersInput(Input):
+    items: list[CategoryGenderInput] = Field(max_length=2000)
 
 
 class GridCommunityRead(CommunityRead):

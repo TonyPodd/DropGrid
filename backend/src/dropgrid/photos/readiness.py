@@ -20,8 +20,9 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.photos.visual import VisualEmbedder
-from dropgrid.services.account_pools import distribute, pool
+from dropgrid.services.account_pools import CATEGORY_UNASSIGNED, distribute, pool
 from dropgrid.services.catalog import get_entity
+from dropgrid.services.category_genders import placements
 from dropgrid.services.sending import usable_account
 
 
@@ -134,6 +135,7 @@ async def report(
             if c.is_active and c.resolution_status == "resolved" and c.vk_group_id
         ],
         accounts,
+        await placements(session, campaign.grid_id),
     )
     job = await session.scalar(
         select(CampaignPreparationJob).where(CampaignPreparationJob.campaign_id == campaign_id)
@@ -200,6 +202,7 @@ async def report(
         "gender_shortfall": sum(
             reason == "account_gender_mismatch" for reason in failures.values()
         ),
+        "category_unassigned": sum(reason == CATEGORY_UNASSIGNED for reason in failures.values()),
         "write_attempts": sum(r.attempt_count for r, _ in rows),
         "submitted": sum(r.submitted_at is not None for r, _ in rows),
     }

@@ -7,8 +7,9 @@ from datetime import timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, literal, or_, select, text
+from sqlalchemy import and_, exists, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from dropgrid.config import Settings
 from dropgrid.db.models import (
@@ -21,7 +22,7 @@ from dropgrid.db.models import (
     Submission,
     utcnow,
 )
-from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
+from dropgrid.domain.enums import AccountStatus, CampaignStatus, SubmissionStatus
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.credentials import TokenProvider
 from dropgrid.integrations.vk.errors import (
@@ -38,9 +39,17 @@ from dropgrid.integrations.vk.media import checked_media
 from dropgrid.integrations.vk.models import VKAttachment, WallPostReceipt
 from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.photos.images import MediaStorage
-from dropgrid.services.account_pools import distribute, pool, save_pool
+from dropgrid.services.account_pools import (
+    CATEGORY_UNASSIGNED,
+    compatible,
+    distribute,
+    pool,
+    required_gender,
+    save_pool,
+)
 from dropgrid.services.campaigns import locked_campaign
 from dropgrid.services.catalog import ConflictError, get_entity
+from dropgrid.services.category_genders import UNPLACED, Placement, placements
 from dropgrid.services.publication import attachments, record_suggested_submission
 
 # Session-level PostgreSQL lock bounds ALL sender processes to one pipeline globally.
@@ -61,17 +70,16 @@ def usable_account(account: Account) -> bool:
     )
 
 
-def exclusion(community: Community, account: Account) -> str | None:
+def exclusion(
+    community: Community, account: Account, placement: Placement | None = None
+) -> str | None:
     if (
         not community.is_active
         or community.resolution_status != "resolved"
         or not community.vk_group_id
     ):
         return "community_unavailable"
-    if (
-        community.required_gender_tag not in {None, GenderTag.unspecified}
-        and community.required_gender_tag != account.gender_tag
-    ):
+    if not compatible(required_gender(community, placement), account):
         return "account_gender_mismatch"
     return None
 
@@ -90,7 +98,11 @@ async def preflight(
     accounts = await pool(
         session, campaign_id, settings, account_ids or ([account_id] if account_id else None)
     )
-    usable = [(a, quota, order) for a, quota, order in accounts if usable_account(a)]
+    usable = sorted(
+        ((a, quota, order) for a, quota, order in accounts if usable_account(a)),
+        key=lambda item: (item[2], str(item[0].id)),
+    )
+    places = await placements(session, campaign.grid_id)
     rows = (
         await session.execute(
             select(Submission, Community, MediaAsset)
@@ -113,7 +125,11 @@ async def preflight(
         ):
             reason = "community_unavailable"
             unavailable += 1
-        elif account_id and accounts and exclusion(community, accounts[0][0]):
+        elif (
+            account_id
+            and accounts
+            and exclusion(community, accounts[0][0], places.get(community.id, UNPLACED))
+        ):
             reason = "account_gender_mismatch"
             incompatible += 1
         else:
@@ -138,8 +154,13 @@ async def preflight(
                             checked[asset.id] = False
                     invalid += int(not checked[asset.id])
         selected.append((row, reason))
-    allocation, failures = distribute(intended_rows, usable)
+    allocation, failures = distribute(intended_rows, usable, places)
     capacity_missing = sum(reason == "account_capacity_exhausted" for reason in failures.values())
+    unplaced = {
+        places.get(community.id, UNPLACED).category
+        for row, community in intended_rows
+        if failures.get(row.id) == CATEGORY_UNASSIGNED
+    }
     incompatible += sum(reason == "account_gender_mismatch" for reason in failures.values())
     reviews = (
         await session.scalars(
@@ -188,6 +209,8 @@ async def preflight(
         "accounts_ready": len(usable),
         "total_send_capacity": sum(quota for _, quota, _ in usable),
         "capacity_unassigned": capacity_missing,
+        "category_unassigned": sum(reason == CATEGORY_UNASSIGNED for reason in failures.values()),
+        "unassigned_categories": sorted(unplaced, key=lambda c: (c is None, c or "")),
         "review_pending": review_pending,
         "assigned_per_account": [
             {
@@ -227,10 +250,13 @@ async def start_campaign(
     )
     if not report["ready"]:
         raise ConflictError(
-            "Campaign preflight failed: check account, lifecycle, audio and local media"
+            "Campaign preflight failed: check account, lifecycle, audio, local media and "
+            "grid category distribution"
         )
     allocations = cast(dict[UUID, UUID], report["_assignments"])
-    selected_ids = sorted(set(allocations.values()))
+    # Accounts in their send sequence; allocation insertion order is the send order.
+    selected_ids = list(dict.fromkeys(allocations.values()))
+    send_order = {row_id: position for position, row_id in enumerate(allocations)}
     await save_pool(
         session,
         campaign_id,
@@ -250,6 +276,7 @@ async def start_campaign(
     campaign.started_at = utcnow()
     for row, reason in rows:
         row.account_id = allocations.get(row.id)
+        row.send_order = send_order.get(row.id)
         if reason:
             row.status = SubmissionStatus.skipped
             row.error_code, row.error_message = reason, "Submission excluded from sending scope"
@@ -337,6 +364,7 @@ class CampaignSender:
 
     async def _claim(self, submission_id: UUID | None) -> Submission | None:
         now = utcnow()
+        earlier = aliased(Submission)
         async with self.sessions() as session, session.begin():
             query = (
                 select(Submission)
@@ -367,8 +395,24 @@ class CampaignSender:
                         Campaign.status == CampaignStatus.running,
                         Submission.vk_send_phase.in_(READBACK),
                     ),
+                    # One account at a time: the next account of a campaign starts only
+                    # when earlier ones have no upload work left. Recovery is never held.
+                    or_(
+                        Submission.vk_send_phase.not_in(PRE_WALL),
+                        ~exists().where(
+                            earlier.campaign_id == Submission.campaign_id,
+                            earlier.send_order < Submission.send_order,
+                            earlier.account_id.is_distinct_from(Submission.account_id),
+                            earlier.status.in_(
+                                [SubmissionStatus.pending, SubmissionStatus.sending]
+                            ),
+                            earlier.vk_send_phase.in_(PRE_WALL),
+                        ),
+                    ),
                 )
-                .order_by(Submission.created_at, Submission.id)
+                .order_by(
+                    Submission.send_order.asc().nulls_last(), Submission.created_at, Submission.id
+                )
                 .with_for_update(of=Submission, skip_locked=True)
             )
             if submission_id:

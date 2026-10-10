@@ -26,6 +26,8 @@ from dropgrid.api.schemas import (
     CommunityRead,
     CommunityResolveInput,
     DashboardRead,
+    GridCategoryGendersInput,
+    GridCategoryGendersRead,
     GridCommunityPage,
     GridCommunityPatch,
     GridCommunityRead,
@@ -50,7 +52,15 @@ from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 from dropgrid.integrations.vk.errors import VKInputError
 from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
 from dropgrid.photos.images import LocalMediaStorage
-from dropgrid.services import account_tokens, campaigns, catalog, sending, vk_accounts, workflow
+from dropgrid.services import (
+    account_tokens,
+    campaigns,
+    catalog,
+    category_genders,
+    sending,
+    vk_accounts,
+    workflow,
+)
 from dropgrid.services.catalog import InvalidGridError
 from dropgrid.services.publication import PublicationMonitor
 
@@ -170,6 +180,18 @@ async def grid_get(
     entity_id: UUID, session: Session, limit: Limit = 100, offset: Offset = 0
 ) -> GridDetail:
     return await workflow.grid_detail(session, entity_id, limit, offset)
+
+
+@router.get("/grids/{grid_id}/category-genders", response_model=GridCategoryGendersRead)
+async def grid_category_genders(grid_id: UUID, session: Session) -> GridCategoryGendersRead:
+    return await category_genders.read(session, grid_id)
+
+
+@router.put("/grids/{grid_id}/category-genders", response_model=GridCategoryGendersRead)
+async def grid_category_genders_save(
+    grid_id: UUID, data: GridCategoryGendersInput, session: Session
+) -> GridCategoryGendersRead:
+    return await category_genders.save(session, grid_id, data.items)
 
 
 @router.get("/campaigns", response_model=list[CampaignSummary])

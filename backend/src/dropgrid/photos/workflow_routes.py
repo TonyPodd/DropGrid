@@ -195,6 +195,7 @@ async def get_pool(
         {
             "account_id": a.id,
             "name": a.name,
+            "gender_tag": a.gender_tag,
             "quota": quota,
             "assigned": counts.get(a.id, 0),
             "usable": usable_account(a),
