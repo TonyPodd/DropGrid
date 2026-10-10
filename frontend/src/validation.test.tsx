@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import { PhotoValidationPage } from "./validation";
 afterEach(() => vi.restoreAllMocks());
-function fixture() {
+function fixture(domain: string | null = "izh_sueta") {
   let position = 0,
     mode = "pending";
   const states = ["pending", "pending", "pending"];
@@ -76,6 +76,8 @@ function fixture() {
           automatic_rank: 1,
           active_rank: ranks[p],
           community: "Community " + p,
+          community_domain: p === 1 ? null : domain,
+          community_url: p !== 1 && domain ? `https://vk.com/${domain}` : null,
           category: "Cars",
           intent: "Honda Accord",
           attention: [],
@@ -102,6 +104,31 @@ function mount() {
     </MemoryRouter>,
   );
 }
+it("links to the original VK community in a protected new tab without changing review state", async () => {
+  const fetch = fixture();
+  mount();
+  const link = await screen.findByRole("link", { name: "Открыть группу ↗" });
+  expect(link).toHaveAttribute("href", "https://vk.com/izh_sueta");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  expect(
+    screen.getByRole("heading", { name: "Community 0" }),
+  ).toBeInTheDocument();
+  expect(
+    fetch.mock.calls.every(
+      ([, init]) => !init?.method || init.method === "GET",
+    ),
+  ).toBe(true);
+});
+
+it("omits the VK link when the community domain is unavailable", async () => {
+  fixture(null);
+  mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  expect(
+    screen.queryByRole("link", { name: "Открыть группу ↗" }),
+  ).not.toBeInTheDocument();
+});
 it("saves dislike, shows the next alternative in the same community, and restores both on reload", async () => {
   const fetch = fixture();
   const view = mount();
@@ -132,9 +159,7 @@ it("saves dislike, shows the next alternative in the same community, and restore
   expect(
     screen.getByRole("img", { name: "Выбрано: Community 0" }),
   ).toHaveAttribute("src", expect.stringContaining("/0-2/content"));
-  await userEvent.click(
-    screen.getByRole("button", { name: "Альтернативы" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Альтернативы" }));
   expect(screen.getByRole("button", { name: /1\..*👎/ })).toHaveClass(
     "is-disliked",
   );

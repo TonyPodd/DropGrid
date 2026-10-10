@@ -68,6 +68,21 @@
   margin: 0;
   font-size: 24px;
 }
+.validation-community {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.validation-community-link {
+  color: #356e65;
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.validation-community-link:hover {
+  color: #195e51;
+}
 .validation-context p {
   margin: 6px 0;
   color: #617477;

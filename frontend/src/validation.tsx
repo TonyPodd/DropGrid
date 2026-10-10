@@ -17,6 +17,8 @@ type Item = {
   automatic_rank: number;
   active_rank: number;
   community: string;
+  community_domain: string | null;
+  community_url: string | null;
   category: string | null;
   intent: string | null;
   attention: string[];
@@ -551,7 +553,19 @@ export function PhotoValidationPage() {
             <>
               <section className="validation-context">
                 <div>
-                  <h2>{item.community}</h2>
+                  <div className="validation-community">
+                    <h2>{item.community}</h2>
+                    {item.community_url && (
+                      <a
+                        className="validation-community-link"
+                        href={item.community_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Открыть группу ↗
+                      </a>
+                    )}
+                  </div>
                   <p>
                     {item.category}
                     {item.intent && <> · {item.intent}</>}

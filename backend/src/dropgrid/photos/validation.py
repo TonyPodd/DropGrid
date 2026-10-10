@@ -343,6 +343,8 @@ async def item_detail(
         automatic_rank=item.automatic_rank,
         active_rank=selection.proposed_rank,
         community=community.name or community.domain,
+        community_domain=community.domain or None,
+        community_url=f"https://vk.com/{community.domain}" if community.domain else None,
         category=selection.category,
         intent=next(
             (

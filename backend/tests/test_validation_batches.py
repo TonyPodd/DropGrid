@@ -9,6 +9,7 @@ from test_readiness_workflow import archive_fixture
 
 from dropgrid.db.models import (
     Campaign,
+    Community,
     PhotoSelectionCandidate,
     PhotoSelectionSession,
     Submission,
@@ -127,6 +128,25 @@ async def batch_fixture(client, sessions, tmp_path):
         )
     ).json()
     return cid, sid, s.id, t, b, planner, http
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("domain", ["izh_sueta", "public242100737", ""])
+async def test_review_item_community_url_uses_domain_not_display_name(
+    client, sessions, tmp_path, domain
+):
+    _, _, selection_id, _, batch, _, _ = await batch_fixture(client, sessions, tmp_path)
+    async with sessions() as db, db.begin():
+        selection = await db.get(PhotoSelectionSession, selection_id)
+        community = await db.get(Community, selection.community_id)
+        community.domain = domain
+        community.name = "Display name, not a VK domain"
+    response = await client.get(f"/api/v1/review-batches/{batch['id']}/items/0")
+    assert response.status_code == 200
+    detail = response.json()
+    assert detail["community"] == "Display name, not a VK domain"
+    assert detail["community_domain"] == (domain or None)
+    assert detail["community_url"] == (f"https://vk.com/{domain}" if domain else None)
 
 
 @pytest.mark.integration
