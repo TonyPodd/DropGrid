@@ -289,7 +289,7 @@ it("records visible alternatives when confirming the unchanged automatic selecti
     fetch.mock.calls.filter(([url]) => String(url).includes("photo-choice")),
   ).toHaveLength(0);
   await userEvent.click(
-    screen.getByRole("button", { name: "Подтвердить", exact: true }),
+      screen.getByRole("button", { name: "Подтвердить" }),
   );
   await screen.findByText(/Подтверждено/);
   const approval = fetch.mock.calls.find(([url]) =>
