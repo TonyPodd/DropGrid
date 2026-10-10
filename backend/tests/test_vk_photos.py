@@ -80,6 +80,10 @@ async def test_complete_photo_pipeline(caplog):
         "multipart",
         "/method/photos.saveWallPhoto",
     ]
+    stages = [r for r in caplog.records if r.message.startswith("vk_photo_stage")]
+    assert len(stages) == 3
+    assert all("success=True" in r.message for r in stages)
+    assert "stage=multipart success=True http_status=200" in stages[1].message
     assert TOKEN not in caplog.text and CAPABILITY not in caplog.text
     assert "hash-sentinel" not in caplog.text
 
@@ -146,6 +150,7 @@ def test_upload_origin_allowlist(url):
 
 @pytest.mark.parametrize("failure", ["timeout", "status", "malformed", "empty_photo"])
 async def test_upload_errors_sanitized_and_no_save(failure, caplog):
+    caplog.set_level(logging.INFO)
     calls = []
 
     def api(request):
@@ -180,6 +185,15 @@ async def test_upload_errors_sanitized_and_no_save(failure, caplog):
             with pytest.raises((VKTransportError, VKProtocolError)) as error:
                 await uploader.upload(PNG, community_id=123, account_id=ACCOUNT, access_token=TOKEN)
     assert calls == ["server", "upload"]
+    stages = [r.message for r in caplog.records if r.message.startswith("vk_photo_stage")]
+    assert len(stages) == 2 and "stage=multipart success=False" in stages[1]
+    assert "stage=save_wall_photo" not in caplog.text
+    if failure in {"malformed", "empty_photo"}:
+        assert "http_status=200" in stages[1] and "error_class=VKProtocolError" in stages[1]
+    if failure == "status":
+        assert "http_status=500" in stages[1]
+    if failure == "timeout":
+        assert "transport_class=ReadTimeout" in stages[1]
     assert (
         TOKEN not in str(error.value)
         and TOKEN not in json.dumps(error.value.as_dict())

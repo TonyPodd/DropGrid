@@ -1,9 +1,13 @@
 import asyncio
 import errno
+import logging
 import re
 import socket
 import ssl
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from time import perf_counter
 from typing import Self
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -13,6 +17,7 @@ from pydantic import SecretStr, TypeAdapter
 
 from dropgrid.integrations.vk.client import VKClient, parse_response
 from dropgrid.integrations.vk.errors import (
+    VKError,
     VKInputError,
     VKProtocolError,
     VKTransportError,
@@ -24,6 +29,44 @@ from dropgrid.integrations.vk.models import (
     WallUploadResult,
     WallUploadServer,
 )
+
+logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def upload_stage(stage: str) -> Iterator[dict[str, int | None]]:
+    """Fixed diagnostics only: never includes payload, exception message or capability URL."""
+    started = perf_counter()
+    metadata: dict[str, int | None] = {"http_status": None}
+    failure: BaseException | None = None
+    try:
+        yield metadata
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        logger.info(
+            "vk_photo_stage stage=%s success=%s http_status=%s "
+            "transport_class=%s vk_code=%s duration_ms=%d error_class=%s",
+            stage,
+            failure is None,
+            metadata["http_status"],
+            failure.exception_type
+            if isinstance(failure, VKUploadTransportError)
+            else "VKTransportError"
+            if isinstance(failure, VKTransportError)
+            else None,
+            failure.code if isinstance(failure, VKError) else None,
+            int((perf_counter() - started) * 1000),
+            "VKProtocolError"
+            if isinstance(failure, VKProtocolError)
+            else "VKError"
+            if isinstance(failure, VKError)
+            else "interrupted"
+            if failure is not None
+            else None,
+        )
+
 
 _UPLOAD_SUFFIXES = ("vk.com", "vk.ru", "vkuserphoto.ru", "userapi.com", "vk-cdn.net")
 
@@ -182,57 +225,63 @@ class WallPhotoUploader:
         data, mime = await asyncio.to_thread(
             load_image, image, mime_type, self.client.settings.vk_max_photo_bytes
         )
-        response = await self.client.call(
-            "photos.getWallUploadServer",
-            access_token=access_token,
-            account_id=account_id,
-            params={"group_id": community_id},
-        )
-        server = parse_response(
-            TypeAdapter(WallUploadServer), response["response"], "photos.getWallUploadServer"
-        )
-        url = validate_upload_url(server.upload_url)
-        await self.client.limiter.acquire(account_id)
-        failure: VKTransportError | None = None
-        uploaded: object = None
-        try:
-            result = await self.http.post(
-                url,
-                files={
-                    "photo": ("upload.png" if mime == "image/png" else "upload.jpg", data, mime)
-                },
-                timeout=self.upload_timeout,
-                follow_redirects=False,
+        with upload_stage("get_upload_server") as server_metadata:
+            response = await self.client.call(
+                "photos.getWallUploadServer",
+                access_token=access_token,
+                account_id=account_id,
+                params={"group_id": community_id},
             )
-        except httpx.HTTPError as error:
-            failure = upload_transport_error(error, url)
-        else:
-            if result.status_code != 200:
-                failure = VKTransportError("photo.upload", "Photo upload HTTP request rejected")
+            server_metadata["http_status"] = 200
+            server = parse_response(
+                TypeAdapter(WallUploadServer), response["response"], "photos.getWallUploadServer"
+            )
+            url = validate_upload_url(server.upload_url)
+        await self.client.limiter.acquire(account_id)
+        with upload_stage("multipart") as stage_metadata:
+            failure: VKTransportError | None = None
+            uploaded: object = None
+            try:
+                result = await self.http.post(
+                    url,
+                    files={
+                        "photo": ("upload.png" if mime == "image/png" else "upload.jpg", data, mime)
+                    },
+                    timeout=self.upload_timeout,
+                    follow_redirects=False,
+                )
+            except httpx.HTTPError as error:
+                failure = upload_transport_error(error, url)
             else:
-                try:
-                    uploaded = result.json()
-                except ValueError:
-                    pass
-        if failure is not None:
-            raise failure
-        upload = parse_response(TypeAdapter(WallUploadResult), uploaded, "photo.upload")
-        if upload.photo.strip() in {"[]", "null"}:
-            raise VKProtocolError("photo.upload", "Upload server did not accept the image")
-        saved = await self.client.call(
-            "photos.saveWallPhoto",
-            access_token=access_token,
-            account_id=account_id,
-            params={
-                "group_id": community_id,
-                "server": upload.server,
-                "photo": upload.photo,
-                "hash": upload.hash,
-            },
-        )
-        photos = parse_response(
-            TypeAdapter(list[SavedPhoto]), saved["response"], "photos.saveWallPhoto"
-        )
-        if len(photos) != 1:
-            raise VKProtocolError("photos.saveWallPhoto", "Expected exactly one saved photo")
-        return photos[0].attachment()
+                stage_metadata["http_status"] = result.status_code
+                if result.status_code != 200:
+                    failure = VKTransportError("photo.upload", "Photo upload HTTP request rejected")
+                else:
+                    try:
+                        uploaded = result.json()
+                    except ValueError:
+                        pass
+            if failure is not None:
+                raise failure
+            upload = parse_response(TypeAdapter(WallUploadResult), uploaded, "photo.upload")
+            if upload.photo.strip() in {"[]", "null"}:
+                raise VKProtocolError("photo.upload", "Upload server did not accept the image")
+        with upload_stage("save_wall_photo") as saved_metadata:
+            saved = await self.client.call(
+                "photos.saveWallPhoto",
+                access_token=access_token,
+                account_id=account_id,
+                params={
+                    "group_id": community_id,
+                    "server": upload.server,
+                    "photo": upload.photo,
+                    "hash": upload.hash,
+                },
+            )
+            saved_metadata["http_status"] = 200
+            photos = parse_response(
+                TypeAdapter(list[SavedPhoto]), saved["response"], "photos.saveWallPhoto"
+            )
+            if len(photos) != 1:
+                raise VKProtocolError("photos.saveWallPhoto", "Expected exactly one saved photo")
+            return photos[0].attachment()
