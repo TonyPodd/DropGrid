@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AccountsPage, CommunitiesPage, DashboardPage } from "./catalog";
 import { GridDetailPage, GridImportPage, GridsPage } from "./grids";
 import { MediaPage } from "./media";
@@ -14,7 +14,15 @@ const VkAuthHelper =
   import.meta.env.VITE_ENABLE_VK_AUTH_HELPER === "true"
     ? lazy(() => import("./dev/VkAuthHelper"))
     : null;
+import { PhotoValidationPage } from "./validation";
 export function App() {
+  const location = useLocation();
+  if (location.pathname.startsWith("/review/"))
+    return (
+      <Routes>
+        <Route path="/review/:batchId" element={<PhotoValidationPage />} />
+      </Routes>
+    );
   return (
     <ActivityProvider>
       <div className="app-shell">

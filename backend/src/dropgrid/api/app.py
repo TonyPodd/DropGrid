@@ -79,6 +79,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from dropgrid.photos.workflow_routes import router as photo_workflow_router
 
     app.include_router(photo_workflow_router)
+    from dropgrid.photos.validation_routes import router as validation_router
+
+    app.include_router(validation_router)
     app.include_router(router)
     app.include_router(activity_router)
     app.include_router(photo_router)

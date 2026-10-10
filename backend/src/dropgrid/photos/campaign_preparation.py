@@ -1,11 +1,11 @@
 """Restartable campaign workflow. Read-only VK context warmup, shared photo planner."""
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dropgrid.db.models import (
@@ -34,6 +34,7 @@ async def enqueue(
     campaign_id: UUID,
     engine: PhotoEngine,
     account_ids: list[UUID] | None = None,
+    submission_ids: list[UUID] | None = None,
 ) -> CampaignPreparationJob:
     campaign = await locked_campaign(session, campaign_id)
     if campaign.status not in {CampaignStatus.draft, CampaignStatus.ready}:
@@ -67,7 +68,12 @@ async def enqueue(
     else:
         job = CampaignPreparationJob(campaign_id=campaign_id)
         session.add(job)
-    job.account_id, job.total = usable[0].id, report.total
+    job.submission_scope = [str(sid) for sid in submission_ids] if submission_ids else None
+    job.result = {"queued_at": utcnow().isoformat()}
+    job.account_id, job.total = (
+        usable[0].id,
+        len(submission_ids) if submission_ids else report.total,
+    )
     await session.flush()
     return job
 
@@ -102,6 +108,18 @@ class CampaignPreparation:
                 token,
                 utcnow() + timedelta(minutes=30),
             )
+            if not (job.result or {}).get("run_started_at"):
+                now = utcnow()
+                queued = (job.result or {}).get("queued_at")
+                job.result = {
+                    **(job.result or {}),
+                    "run_started_at": now.isoformat(),
+                    "queue_wait_seconds": (
+                        now - datetime.fromisoformat(str(queued))
+                    ).total_seconds()
+                    if queued
+                    else 0,
+                }
             jid, campaign_id, account_id, completed, stage = (
                 job.id,
                 job.campaign_id,
@@ -113,13 +131,19 @@ class CampaignPreparation:
                 (
                     await session.scalars(
                         select(Submission)
-                        .where(Submission.campaign_id == campaign_id)
+                        .where(
+                            Submission.campaign_id == campaign_id,
+                            Submission.id.in_(job.submission_scope)
+                            if job.submission_scope is not None
+                            else true(),
+                        )
                         .order_by(Submission.community_id, Submission.id)
                     )
                 ).all()
             )
             grid_id = campaign.grid_id
-            created_at = job.created_at
+            assert job.result
+            created_at = datetime.fromisoformat(str(job.result["run_started_at"]))
             progress_result = dict(job.result or {})
         error = None
         result = None
@@ -139,6 +163,7 @@ class CampaignPreparation:
                     raise ConflictError("Preparation cancelled")
                 current.lease_until = utcnow() + timedelta(minutes=30)
                 current.result = {
+                    **(current.result or {}),
                     "progress_stage": _stage,
                     "current": _current,
                     "total": _total,
@@ -171,7 +196,7 @@ class CampaignPreparation:
                         async with self.sessions() as db, db.begin():
                             fresh = await db.get(Submission, row.id)
                             assert fresh
-                            fresh.photo_attention = ["preparation_error"]
+                            fresh.photo_attention = ["other"]
                         continue
                     if context.resolution_status != "resolved":
                         async with self.sessions() as db, db.begin():
@@ -214,7 +239,7 @@ class CampaignPreparation:
                     fresh_row = await db.get(Submission, failed.id)
                     if fresh_row:
                         fresh_row.photo_attention = sorted(
-                            set(fresh_row.photo_attention + ["preparation_error"])
+                            set(fresh_row.photo_attention + ["other"])
                         )
             completed += len(failed_rows)
             progress_result["operation_failures"] = int(

@@ -1,7 +1,7 @@
 """Safe local preparation summary; no credentials, captions or external payloads."""
 
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import select
@@ -138,8 +138,13 @@ async def report(
     job = await session.scalar(
         select(CampaignPreparationJob).where(CampaignPreparationJob.campaign_id == campaign_id)
     )
+    started_at = (
+        datetime.fromisoformat(str((job.result or {})["run_started_at"]))
+        if job and (job.result or {}).get("run_started_at")
+        else (job.created_at if job else utcnow())
+    )
     duration = (
-        ((job.updated_at if job.state == "ready" else utcnow()) - job.created_at).total_seconds()
+        ((job.updated_at if job.state == "ready" else utcnow()) - started_at).total_seconds()
         if job
         else None
     )
@@ -181,6 +186,7 @@ async def report(
         if job
         else 0,
         "duration_seconds": duration,
+        "queue_wait_seconds": (job.result or {}).get("queue_wait_seconds") if job else None,
         "timings": {key: (job.result or {}).get(key) for key in ("warmup_seconds", "photo_seconds")}
         if job
         else {},
@@ -196,4 +202,80 @@ async def report(
         ),
         "write_attempts": sum(r.attempt_count for r, _ in rows),
         "submitted": sum(r.submitted_at is not None for r, _ in rows),
+    }
+
+
+async def reuse_audit(session: AsyncSession, campaign_id: UUID) -> dict[str, object]:
+    """Audit source provenance of latest snapshots, not ambiguous asset aliases."""
+    from dropgrid.db.models import CommunityContentProfile, MediaAsset
+    from dropgrid.photos.references import eligible_for_archive_reuse
+    from dropgrid.photos.rotation import community_usage, recently_used
+
+    choices = list(
+        (
+            await session.scalars(
+                select(PhotoSelectionSession)
+                .where(PhotoSelectionSession.campaign_id == campaign_id)
+                .distinct(PhotoSelectionSession.submission_id)
+                .order_by(
+                    PhotoSelectionSession.submission_id,
+                    PhotoSelectionSession.created_at.desc(),
+                    PhotoSelectionSession.id.desc(),
+                )
+            )
+        ).all()
+    )
+    own = same = cross = 0
+    violations: list[str] = []
+    for choice in choices:
+        c = await session.get(
+            PhotoSelectionCandidate, (choice.id, choice.chosen_rank or choice.proposed_rank)
+        )
+        if not c or c.provider not in {"vk_archive", "vk_category_archive"}:
+            continue
+        reference = (
+            await session.get(CommunityReferencePhoto, c.reference_id) if c.reference_id else None
+        )
+        source = reference.community_id if reference else c.candidate.get("source_community_id")
+        same_source = str(source) == str(choice.community_id)
+        same += int(same_source)
+        if c.provider == "vk_category_archive":
+            cross += 1
+            if source is None or same_source:
+                violations.append("category_source_target_mismatch")
+        else:
+            own += 1
+            profile = await session.get(CommunityContentProfile, choice.community_id)
+            if not same_source:
+                violations.append("own_source_target_mismatch")
+            if (
+                not reference
+                or not profile
+                or not eligible_for_archive_reuse(
+                    reference.posted_at,
+                    utcnow(),
+                    profile.archive_reuse_min_age_days,
+                    profile.archive_reuse_enabled,
+                    reference.enabled,
+                    profile.archive_reuse_max_age_days,
+                )
+            ):
+                violations.append("own_archive_age_window")
+        asset = await session.get(MediaAsset, c.media_asset_id) if c.media_asset_id else None
+        if asset and recently_used(
+            await community_usage(session, choice.community_id, utcnow()),
+            asset.provider or "library",
+            asset.provider_asset_id or str(asset.id),
+            asset.sha256,
+            asset.perceptual_hash,
+            utcnow(),
+            asset.id,
+        ):
+            violations.append("target_usage_cooldown")
+    return {
+        "own_archive_selected": own,
+        "same_source_community_selected": same,
+        "cross_community_selected": cross,
+        "violations": dict(Counter(violations)),
+        "invariants_pass": not violations,
     }

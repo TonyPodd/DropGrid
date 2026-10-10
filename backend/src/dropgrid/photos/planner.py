@@ -662,6 +662,8 @@ class CampaignMediaPlanner:
         ] = {}
         from dropgrid.photos.pool import archive_pool, materialize_archive, rank_pool
 
+        exhaustion: dict[UUID, Counter[str]] = defaultdict(Counter)
+
         if self.visual:
             communities = {s.id: s.community_id for s, _ in rows}
             reserved_counts = preserved_counts.copy()
@@ -744,6 +746,7 @@ class CampaignMediaPlanner:
                                     item.asset.id if item.asset else None,
                                 ):
                                     report.near_duplicate_exclusions += 1
+                                    exhaustion[sid]["cooldown"] += 1
                                     continue
                                 if item.source == "pinterest":
                                     asset, created, warning = await self._import(
@@ -752,6 +755,8 @@ class CampaignMediaPlanner:
                                     if warning:
                                         warnings.append(warning)
                                     if not asset or reserved_counts[asset.id] >= reuse:
+                                        if asset:
+                                            exhaustion[sid]["reuse"] += 1
                                         continue
                                     item.asset = asset
                                     source_of_asset[asset.id] = "pinterest"
@@ -781,6 +786,7 @@ class CampaignMediaPlanner:
                                         )
                                         continue
                                     if reserved_counts[asset.id] >= reuse:
+                                        exhaustion[sid]["reuse"] += 1
                                         continue
                                     if all(a.id != asset.id for a in available[context]):
                                         available[context].append(asset)
@@ -794,11 +800,13 @@ class CampaignMediaPlanner:
                                     materialized.append(item)
                                     break
                                 if item.asset and reserved_counts[item.asset.id] >= reuse:
+                                    exhaustion[sid]["reuse"] += 1
                                     continue
                                 materialized.append(item)
                                 # A better existing/Pixabay candidate requires no archive import.
                                 if item.asset and reserved_counts[item.asset.id] < reuse:
                                     break
+                            snapshots[sid] = (plan, mixed_ranked, baseline, version, list(warnings))
                             # Only selected reference rows have become local assets.
                             asset_items = [item for item in materialized if item.asset]
                             if asset_items:
@@ -968,14 +976,27 @@ class CampaignMediaPlanner:
                 if submission.id in snapshots and submission.id in assignments:
                     await snapshot(session, submission, *snapshots[submission.id])
                 elif submission.media_asset_id is None:
-                    flags = ["preparation_error"]
+                    from dropgrid.photos.failures import reason
+
+                    failed_pool: list[PoolCandidate] = []
+                    warnings = []
                     if submission.id in snapshots:
                         _, failed_pool, _, _, warnings = snapshots[submission.id]
+                    counts_failed = exhaustion[submission.id]
+                    flags = [
+                        reason(
+                            len(failed_pool),
+                            warnings,
+                            counts_failed["cooldown"],
+                            counts_failed["reuse"],
+                        )
+                    ]
+                    if submission.id in snapshots:
                         if len(failed_pool) < 5:
                             flags.append("small_candidate_pool")
                         if "pinterest_search_unavailable" in warnings:
                             flags.append("pinterest_unavailable")
-                    submission.photo_attention = sorted(set(submission.photo_attention + flags))
+                    submission.photo_attention = sorted(set(flags))
             assigned_ids = {s.media_asset_id for s in current if s.media_asset_id}
             report.unassigned = sum(s.media_asset_id is None for s in current)
             report.unique_assets = len(assigned_ids)

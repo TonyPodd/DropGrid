@@ -1,6 +1,7 @@
 """Bounded displayed choice history and explicit operator decisions."""
 
 from dataclasses import asdict, replace
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -86,9 +87,7 @@ async def snapshot(
     if not chosen:
         submission.photo_attention = ["preparation_error"]
         return
-    shown = viable[:12]
-    if chosen not in shown:
-        shown = shown[:11] + [chosen]
+    shown = display_set(viable, chosen)
     chosen_rank = shown.index(chosen) + 1
     baseline_choice = next((item for item in baseline if item in shown), chosen)
     context = PhotoSelectionSession(
@@ -155,6 +154,22 @@ async def snapshot(
     submission.photo_attention = attention
 
 
+def display_set(items: list[PoolCandidate], chosen: PoolCandidate) -> list[PoolCandidate]:
+    """Explore sources without changing the production winner or scores."""
+    selected = [chosen]
+    providers = {chosen.source}
+    for item in items:
+        if item.source not in providers:
+            selected.append(item)
+            providers.add(item.source)
+    for item in items:
+        if len(selected) >= 12:
+            break
+        if item not in selected:
+            selected.append(item)
+    return [item for item in items if item in selected][:12]
+
+
 async def latest_selection(
     session: AsyncSession, submission_id: UUID, lock: bool = False
 ) -> PhotoSelectionSession:
@@ -178,6 +193,8 @@ async def choose(
     rank: int,
     rating: str | None = None,
     shown_ranks: list[int] | None = None,
+    *,
+    allow_confirmed: bool = False,
 ) -> PhotoSelectionSession:
     submission = await get_entity(session, Submission, submission_id)
     campaign = await session.scalar(
@@ -189,7 +206,7 @@ async def choose(
         campaign.status.value != "ready"
         or submission.status != SubmissionStatus.pending
         or submission.vk_send_phase is not None
-        or selection.confirmed_at
+        or (selection.confirmed_at and not allow_confirmed)
     ):
         raise ConflictError("Review is immutable after confirmation or sending")
     candidate = await session.get(PhotoSelectionCandidate, (selection.id, rank))
@@ -222,6 +239,10 @@ async def confirm(
     *,
     expected_selection_id: UUID | None = None,
     expected_rank: int | None = None,
+    allow_revision: bool = False,
+    reviewer_id: UUID | None = None,
+    review_batch_id: UUID | None = None,
+    expected_confirmed_at: datetime | None = None,
 ) -> None:
     from dropgrid.integrations.vk.read_only import preparation_read_only
 
@@ -232,6 +253,10 @@ async def confirm(
             submission_id,
             expected_selection_id=expected_selection_id,
             expected_rank=expected_rank,
+            allow_revision=allow_revision,
+            reviewer_id=reviewer_id,
+            review_batch_id=review_batch_id,
+            expected_confirmed_at=expected_confirmed_at,
         )
     finally:
         preparation_read_only.reset(marker)
@@ -243,6 +268,10 @@ async def _confirm(
     *,
     expected_selection_id: UUID | None = None,
     expected_rank: int | None = None,
+    allow_revision: bool = False,
+    reviewer_id: UUID | None = None,
+    review_batch_id: UUID | None = None,
+    expected_confirmed_at: datetime | None = None,
 ) -> None:
     async with planner.sessions() as session:
         row = await get_entity(session, Submission, submission_id)
@@ -252,7 +281,7 @@ async def _confirm(
             expected_rank is not None and selection.proposed_rank != expected_rank
         ):
             raise ConflictError("Photo review changed; reload before confirming")
-        if selection.confirmed_at:
+        if selection.confirmed_at and not allow_revision:
             return
         candidate = await session.get(
             PhotoSelectionCandidate, (selection.id, selection.proposed_rank)
@@ -264,7 +293,9 @@ async def _confirm(
             if candidate.media_asset_id
             else None
         )
-    if asset is None:
+    if asset is None or (
+        candidate.provider in {"vk_archive", "vk_category_archive"} and candidate.reference_id
+    ):
         photo = PhotoCandidate.model_validate(
             {k: v for k, v in candidate.candidate.items() if k != "source_community_id"}
         )
@@ -299,8 +330,25 @@ async def _confirm(
         )
         assert campaign
         await session.refresh(row, with_for_update=True)
+        batch_item = batch = None
+        if review_batch_id is not None:
+            from dropgrid.db.models import PhotoReviewBatch, PhotoReviewBatchItem
+
+            batch = await session.get(PhotoReviewBatch, review_batch_id, with_for_update=True)
+            batch_item = await session.scalar(
+                select(PhotoReviewBatchItem)
+                .where(
+                    PhotoReviewBatchItem.batch_id == review_batch_id,
+                    PhotoReviewBatchItem.submission_id == submission_id,
+                )
+                .with_for_update()
+            )
+            if not batch or batch.state != "open" or not batch_item:
+                raise ConflictError("Review batch is closed")
+            if batch_item.selection_session_id != selection.id:
+                raise ConflictError("Review snapshot changed; create a new batch")
         fresh = await latest_selection(session, submission_id, True)
-        if fresh.confirmed_at:
+        if fresh.confirmed_at and not allow_revision:
             return
         if (
             fresh.id != selection.id
@@ -310,6 +358,8 @@ async def _confirm(
             or campaign.status.value != "ready"
         ):
             raise ConflictError("Review context changed")
+        if review_batch_id is not None and fresh.confirmed_at != expected_confirmed_at:
+            raise ConflictError("Another reviewer changed this decision; reload")
         relation = await session.get(GridCommunity, (campaign.grid_id, row.community_id))
         community = await session.get(Community, row.community_id)
         profile = await session.get(CommunityContentProfile, row.community_id)
@@ -365,6 +415,14 @@ async def _confirm(
         if candidate.operator_rating == "dislike":
             row.photo_attention = [*row.photo_attention, "operator_disliked"]
         fresh.chosen_rank, fresh.confirmed_at = proposed, utcnow()
+        if reviewer_id is not None:
+            fresh.reviewer_id = reviewer_id
+        if batch_item is not None and batch is not None:
+            batch_item.state = "confirmed"
+            batch_item.reviewer_id, batch_item.reviewed_at = reviewer_id, fresh.confirmed_at
+            from dropgrid.photos.validation import advance
+
+            await advance(session, batch, batch_item.position)
         candidates = (
             await session.scalars(
                 select(PhotoSelectionCandidate).where(

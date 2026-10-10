@@ -1,0 +1,276 @@
+.validation-shell {
+  max-width: 1520px;
+  margin: auto;
+  padding: 20px 32px;
+  min-height: 100vh;
+  color: #23343a;
+}
+.validation-top {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #dfe7e7;
+  padding-bottom: 16px;
+}
+.validation-top h1 {
+  font-size: 20px;
+  margin: 0;
+  flex: 1;
+}
+.validation-top progress {
+  width: 150px;
+  accent-color: #26786c;
+}
+.reviewer-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.validation-shell button:focus-visible,
+.validation-shell select:focus-visible {
+  outline: 3px solid #319b90;
+  outline-offset: 4px;
+}
+.validation-filters {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.validation-filters button {
+  border: 0;
+  background: transparent;
+  padding: 8px 14px;
+}
+.validation-filters button[aria-pressed="true"] {
+  background: #dff0eb;
+  color: #195e51;
+}
+.validation-counts,
+.validation-shortcuts {
+  font-size: 13px;
+  color: #65777a;
+}
+.validation-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 22px 0 16px;
+}
+.validation-context h2 {
+  margin: 0;
+  font-size: 24px;
+}
+.validation-context p {
+  margin: 6px 0;
+  color: #617477;
+}
+.validation-context > span {
+  white-space: nowrap;
+  font-size: 13px;
+}
+.validation-workspace {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+.validation-primary {
+  flex: 1;
+  min-width: 0;
+}
+.validation-photo {
+  height: clamp(360px, 62vh, 760px);
+  width: 100%;
+  display: grid;
+  place-items: center;
+  background: #e7eeed;
+  border: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 14px;
+}
+.validation-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.source-badge {
+  display: inline-block;
+  padding: 5px 10px;
+  background: #e5eeeb;
+  border-radius: 14px;
+  font-size: 12px;
+  margin: 12px 0;
+}
+.validation-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.validation-actions .primary {
+  min-width: 140px;
+  background: #206f61;
+  color: white;
+}
+.validation-alternatives {
+  width: min(42vw, 600px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.validation-alternatives button {
+  border: 2px solid transparent;
+  padding: 0;
+  overflow: hidden;
+  background: #edf1ef;
+  text-align: left;
+}
+.validation-alternatives button[aria-pressed="true"] {
+  border-color: #277d6b;
+  box-shadow: 0 0 0 2px #cce8dc;
+}
+.validation-alternatives img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  display: block;
+}
+.validation-alternatives span {
+  font-size: 12px;
+  display: block;
+  padding: 7px;
+}
+.validation-navigation {
+  display: flex;
+  justify-content: space-between;
+  margin: 24px 0;
+}
+.validation-diagnostics {
+  margin: 18px 0;
+  color: #627477;
+}
+.validation-diagnostics pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.validation-loading {
+  height: 65vh;
+  display: grid;
+  place-items: center;
+  background: #e7eeed;
+  border-radius: 14px;
+}
+.validation-overlay {
+  position: fixed;
+  inset: 0;
+  background: #10201eee;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  align-items: center;
+  gap: 10px;
+}
+.validation-overlay img {
+  height: calc(100% - 70px);
+  max-width: 100%;
+  object-fit: contain;
+}
+.validation-finish {
+  padding: 40px 0;
+  max-width: 600px;
+}
+.reviewer-create {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin: 20px 0;
+}
+@media (max-width: 900px) {
+  .validation-shell {
+    padding: 16px;
+  }
+  .validation-workspace {
+    display: block;
+  }
+  .validation-alternatives {
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 20px;
+  }
+  .validation-photo {
+    height: 55vh;
+  }
+  .validation-context {
+    align-items: flex-start;
+  }
+  .validation-context h2 {
+    font-size: 20px;
+  }
+  .validation-actions {
+    position: sticky;
+    bottom: 0;
+    background: #f3f6f5;
+    padding: 12px 0;
+    z-index: 3;
+  }
+  .validation-top {
+    gap: 10px;
+  }
+  .validation-top progress {
+    flex: 1;
+  }
+}
+@media (max-width: 480px) {
+  .validation-alternatives {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .validation-top > a {
+    display: none;
+  }
+  .validation-top h1 {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .validation-context > span {
+    white-space: normal;
+    min-width: 75px;
+  }
+  .validation-actions button {
+    padding: 10px;
+  }
+  .validation-shortcuts {
+    display: none;
+  }
+  .validation-context p {
+    overflow-wrap: anywhere;
+  }
+  .validation-shell {
+    overflow-x: clip;
+  }
+}
+.validation-alternatives button {
+  display: block;
+  min-width: 0;
+  width: 100%;
+}
+.validation-alternatives span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .validation-shell {
+    padding-bottom: 125px;
+  }
+  .validation-actions {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 0;
+    box-shadow: 0 -6px 18px #23343a12;
+  }
+}

@@ -299,6 +299,8 @@ async def materialize_archive(
     if cross and (not planner.settings.cross_community_reuse_enabled or target_id is None):
         raise PhotoError("cross_community_reuse_disabled")
     target_id = target_id or row.community_id
+    if not cross and target_id != row.community_id:
+        raise PhotoError("archive_context_changed")
     # Revalidate opt-in and the age window after scoring, including concurrent edits.
     async with provider.collector.sessions() as s:
         p = await s.get(CommunityContentProfile, row.community_id)

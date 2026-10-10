@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dropgrid.config import Settings
 from dropgrid.db.models import (
     PhotoRankingModel,
+    PhotoReviewer,
     PhotoSelectionCandidate,
     PhotoSelectionSession,
     utcnow,
@@ -245,6 +246,27 @@ async def train_one(sessions: async_sessionmaker[AsyncSession], settings: Settin
             "learned_top1": learned / denominator,
             "promotion_ready": len(validation) >= 20 and learned > baseline and bool(comparisons),
         }
+        reviewers = {
+            r.id: r.display_name for r in (await session.scalars(select(PhotoReviewer))).all()
+        }
+        by_reviewer: dict[str, dict[str, int | float]] = {}
+        for decision in decisions:
+            name = (
+                reviewers.get(decision.reviewer_id, "Unattributed")
+                if decision.reviewer_id
+                else "Unattributed"
+            )
+            bucket = by_reviewer.setdefault(
+                name, {"decisions": 0, "validation": 0, "baseline_matches": 0, "learned_matches": 0}
+            )
+            bucket["decisions"] += 1
+            if decision in validation:
+                bucket["validation"] += 1
+                bucket["baseline_matches"] += int(decision.chosen_rank == decision.baseline_rank)
+                bucket["learned_matches"] += int(
+                    predict(groups.get(decision.id, []), decision, model) == decision.chosen_rank
+                )
+        model.metrics["reviewers"] = by_reviewer
         model.training_choices = (
             await session.scalar(
                 select(func.count())

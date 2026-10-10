@@ -19,11 +19,24 @@ from dropgrid.db.models import (
     Grid,
     GridCommunity,
     MediaAsset,
+    PhotoReviewBatch,
+    PhotoReviewer,
+    PhotoSelectionSession,
     Submission,
 )
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 
-type CatalogModel = Account | Campaign | Community | Grid | MediaAsset | Submission
+type CatalogModel = (
+    Account
+    | Campaign
+    | Community
+    | Grid
+    | MediaAsset
+    | Submission
+    | PhotoReviewer
+    | PhotoReviewBatch
+    | PhotoSelectionSession
+)
 
 
 class NotFoundError(Exception):

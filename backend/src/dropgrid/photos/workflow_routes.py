@@ -29,6 +29,30 @@ from dropgrid.services.sending import usable_account
 router = APIRouter(prefix="/api/v1")
 
 
+@router.post("/campaigns/{campaign_id}/retry-failed-photos")
+async def retry_failed(campaign_id: UUID, session: Session, request: Request) -> dict[str, object]:
+    from dropgrid.services.campaigns import locked_campaign
+
+    await locked_campaign(session, campaign_id)
+    failed = list(
+        (
+            await session.scalars(
+                select(Submission.id)
+                .where(
+                    Submission.campaign_id == campaign_id,
+                    Submission.media_asset_id.is_(None),
+                    Submission.status == "pending",
+                )
+                .order_by(Submission.id)
+            )
+        ).all()
+    )
+    if not failed:
+        return {"total": 0, "state": "ready"}
+    job = await enqueue(session, campaign_id, request.app.state.photo_engine, submission_ids=failed)
+    return {"total": job.total, "state": job.state}
+
+
 class WorkflowInput(Input):
     account_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
 
@@ -387,6 +411,16 @@ async def ranking_status(session: Session, request: Request) -> dict[str, object
     )
     model = await latest_model(session)
     pref = await session.get(PhotoRankingPreference, 1)
+    from dropgrid.db.models import PhotoReviewer
+
+    reviewer_counts = (
+        await session.execute(
+            select(PhotoReviewer.display_name, func.count())
+            .join(PhotoSelectionSession, PhotoSelectionSession.reviewer_id == PhotoReviewer.id)
+            .where(PhotoSelectionSession.confirmed_at.is_not(None))
+            .group_by(PhotoReviewer.display_name)
+        )
+    ).all()
     jobs = list(
         (
             await session.scalars(
@@ -396,6 +430,7 @@ async def ranking_status(session: Session, request: Request) -> dict[str, object
     )
     return {
         "mode": pref.mode if pref else "deterministic",
+        "reviewers": {name: count for name, count in reviewer_counts},
         "choices": count,
         "minimum": request.app.state.vk_client.settings.photo_learned_ranker_min_choices,
         "model_version": str(model.id) if model else None,
@@ -508,3 +543,11 @@ async def photo_context(
         "content_hint": plan.content_hint,
         "desired_content": plan.desired_content,
     }
+
+
+@router.get("/campaigns/{campaign_id}/reuse-audit")
+async def audit_reuse(campaign_id: UUID, session: Session) -> dict[str, object]:
+    from dropgrid.photos.readiness import reuse_audit
+
+    await get_entity(session, Campaign, campaign_id)
+    return await reuse_audit(session, campaign_id)

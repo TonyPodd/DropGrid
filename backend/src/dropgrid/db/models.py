@@ -517,6 +517,44 @@ class CampaignPreparationJob(Identity, Updated, Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(80))
     result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    submission_scope: Mapped[list[str] | None] = mapped_column(JSONB)
+
+
+class PhotoReviewer(Identity, Base):
+    __tablename__ = "photo_reviewers"
+    display_name: Mapped[str] = mapped_column(String(100), unique=True)
+
+
+class PhotoReviewBatch(Identity, Updated, Base):
+    __tablename__ = "photo_review_batches"
+    campaign_id: Mapped[UUID] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(200))
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
+    reviewer_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
+    state: Mapped[str] = mapped_column(String(20), default="open")
+    target_count: Mapped[int] = mapped_column(Integer)
+    current_position: Mapped[int] = mapped_column(Integer, default=0)
+    current_filter: Mapped[str] = mapped_column(String(30), default="pending")
+
+
+class PhotoReviewBatchItem(Base):
+    __tablename__ = "photo_review_batch_items"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "submission_id"),
+        CheckConstraint(
+            "state IN ('pending','confirmed','skipped','needs_attention')", name="review_state"
+        ),
+    )
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("photo_review_batches.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[UUID] = mapped_column(ForeignKey("submissions.id", ondelete="CASCADE"))
+    selection_session_id: Mapped[UUID] = mapped_column(ForeignKey("photo_selection_sessions.id"))
+    automatic_rank: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(24), default="pending")
+    reviewer_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PhotoSelectionSession(Identity, Base):
@@ -536,6 +574,7 @@ class PhotoSelectionSession(Identity, Base):
     chosen_rank: Mapped[int | None] = mapped_column(Integer)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     ranking_model_version: Mapped[str] = mapped_column(String(100), default="deterministic-v1")
+    reviewer_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
 
 
 class PhotoSelectionCandidate(Base):
