@@ -22,7 +22,9 @@ export function AccountTokenImport({
         : accountsApi.connect(token));
       setToken("");
       setOpen(false);
-      onSaved(`VK account connected · ${result.vk_user_id} · ${result.name}`);
+      onSaved(
+        `VK account connected · ${result.vk_user_id} · ${result.name}${"status" in result ? ` · ${result.status} · campaign quota ${result.campaign_send_quota ?? 100}` : ""}`,
+      );
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 503
@@ -39,6 +41,7 @@ export function AccountTokenImport({
   return (
     <>
       <button
+        className={accountId ? undefined : "primary"}
         onClick={() => {
           setError("");
           setOpen(true);

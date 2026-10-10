@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,7 +52,12 @@ async def prepare_campaign(session: AsyncSession, campaign_id: UUID) -> PrepareR
         raise ConflictError("Campaign cannot be prepared in its current status")
     community_ids = (
         await session.scalars(
-            select(GridCommunity.community_id).where(GridCommunity.grid_id == campaign.grid_id)
+            select(GridCommunity.community_id).where(
+                GridCommunity.grid_id == campaign.grid_id,
+                GridCommunity.community_id.in_(campaign.dry_run_scope)
+                if campaign.dry_run_scope is not None
+                else true(),
+            )
         )
     ).all()
     created = 0

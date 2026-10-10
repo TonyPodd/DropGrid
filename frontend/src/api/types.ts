@@ -62,6 +62,7 @@ export type GridPreview = {
   errors: { line: number; value: string; message: string }[];
 };
 export type Campaign = {
+  is_dry_run?: boolean;
   photo_review_mode?: "AUTO" | "REVIEW_BEFORE_SEND";
   preparation_state?: string;
   account_id?: string | null;

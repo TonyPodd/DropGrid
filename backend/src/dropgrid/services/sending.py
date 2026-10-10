@@ -157,7 +157,8 @@ async def preflight(
         else 0
     )
     ready = (
-        campaign.status == CampaignStatus.ready
+        not campaign.is_dry_run
+        and campaign.status == CampaignStatus.ready
         and campaign.preparation_state in {"legacy", "ready"}
         and bool(usable)
         and campaign.track_owner_id is not None
@@ -213,6 +214,8 @@ async def start_campaign(
     account_ids: list[UUID] | None = None,
 ) -> Campaign:
     campaign = await locked_campaign(session, campaign_id)
+    if campaign.is_dry_run:
+        raise ConflictError("Dry-run campaigns cannot be sent")
     report, rows = await preflight(
         session,
         campaign_id,
@@ -340,6 +343,7 @@ class CampaignSender:
                 .join(Campaign)
                 .outerjoin(Account, Submission.account_id == Account.id)
                 .where(
+                    Campaign.is_dry_run.is_(False),
                     Submission.vk_send_readback_attempts < MAX_READBACK_ATTEMPTS,
                     or_(
                         Submission.vk_send_phase != "wall_post_started",

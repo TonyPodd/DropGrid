@@ -226,6 +226,7 @@ class CampaignPreflight(BaseModel):
 
 
 class CampaignRead(Output):
+    is_dry_run: bool = False
     photo_review_mode: str = "AUTO"
     preparation_state: str = "legacy"
     account_id: UUID | None = None

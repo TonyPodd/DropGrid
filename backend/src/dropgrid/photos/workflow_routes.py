@@ -8,7 +8,7 @@ from pydantic import Field
 from sqlalchemy import func, select
 
 from dropgrid.api.dependencies import Session
-from dropgrid.api.schemas import Input
+from dropgrid.api.schemas import CampaignCreate, Input
 from dropgrid.db.models import (
     Campaign,
     CampaignPreparationJob,
@@ -51,6 +51,72 @@ async def prepare_workflow(
         "total": job.total,
         "completed": job.completed,
     }
+
+
+class DryRunInput(CampaignCreate):
+    account_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
+    grid_id: UUID
+    name: str = Field(default="Preparation dry run", min_length=1, max_length=200)
+    photo_review_mode: Literal["AUTO", "REVIEW_BEFORE_SEND"] = "AUTO"
+    community_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=10000)
+
+
+@router.post("/campaign-dry-runs")
+async def create_dry_run(
+    data: DryRunInput, session: Session, request: Request
+) -> dict[str, object]:
+    from dropgrid.api.schemas import CampaignCreate
+    from dropgrid.db.models import GridCommunity
+    from dropgrid.services.campaigns import create_campaign
+
+    available = list(
+        (
+            await session.scalars(
+                select(Community.id)
+                .join(GridCommunity)
+                .where(
+                    GridCommunity.grid_id == data.grid_id,
+                    Community.is_active.is_(True),
+                    Community.resolution_status == "resolved",
+                    Community.vk_group_id.is_not(None),
+                )
+                .order_by(Community.id)
+            )
+        ).all()
+    )
+    if data.community_ids is not None:
+        if not set(data.community_ids) <= set(available):
+            raise ConflictError("Dry-run scope must contain available grid communities")
+        available = sorted(set(data.community_ids), key=str)
+    if not available:
+        raise ConflictError("No available communities in dry-run scope")
+    campaign = await create_campaign(
+        session,
+        CampaignCreate(
+            name=data.name,
+            grid_id=data.grid_id,
+            track_url=data.track_url,
+            photo_review_mode=data.photo_review_mode,
+        ),
+    )
+    campaign.is_dry_run, campaign.dry_run_scope = True, [str(cid) for cid in available]
+    await session.flush()
+    job = await enqueue(session, campaign.id, request.app.state.photo_engine, data.account_ids)
+    return {"campaign_id": campaign.id, "is_dry_run": True, "total": job.total, "state": job.state}
+
+
+@router.get("/campaigns/{campaign_id}/readiness-report")
+async def readiness_report(
+    campaign_id: UUID, session: Session, request: Request
+) -> dict[str, object]:
+    from dropgrid.photos.readiness import report
+
+    return await report(
+        session,
+        campaign_id,
+        request.app.state.photo_engine.planner.settings,
+        request.app.state.photo_engine.embedder,
+    )
 
 
 @router.get("/campaigns/{campaign_id}/preparation-workflow")

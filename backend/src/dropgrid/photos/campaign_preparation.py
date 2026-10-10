@@ -1,5 +1,6 @@
 """Restartable campaign workflow. Read-only VK context warmup, shared photo planner."""
 
+import asyncio
 from datetime import timedelta
 from typing import cast
 from uuid import UUID, uuid4
@@ -15,6 +16,7 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.domain.enums import CampaignStatus
+from dropgrid.integrations.vk.read_only import preparation_read_only
 from dropgrid.photos.engine import PhotoEngine
 from dropgrid.photos.preparation import MediaPreparation
 from dropgrid.photos.progress import observer
@@ -23,6 +25,8 @@ from dropgrid.services.account_pools import pool, save_pool
 from dropgrid.services.campaigns import locked_campaign, prepare_campaign
 from dropgrid.services.catalog import ConflictError
 from dropgrid.services.sending import preflight, usable_account
+
+PHOTO_BATCH_SIZE = 3
 
 
 async def enqueue(
@@ -115,6 +119,7 @@ class CampaignPreparation:
                 ).all()
             )
             grid_id = campaign.grid_id
+            created_at = job.created_at
             progress_result = dict(job.result or {})
         error = None
         result = None
@@ -141,39 +146,94 @@ class CampaignPreparation:
                 }
 
         progress_token = observer.set(heartbeat)
+        safety_token = preparation_read_only.set(True)
         try:
             if stage == "communities" and completed < len(rows):
-                context = await self.preparation.prepare_community_media_context(
-                    grid_id, rows[completed].community_id, account_id
+                width = min(2, self.engine.planner.settings.media_preparation_concurrency)
+                batch = rows[completed : completed + width]
+                contexts = await asyncio.gather(
+                    *(
+                        self.preparation.prepare_community_media_context(
+                            grid_id, row.community_id, account_id
+                        )
+                        for row in batch
+                    ),
+                    return_exceptions=True,
                 )
-                if context.resolution_status != "resolved":
-                    async with self.sessions() as session, session.begin():
-                        row = await session.get(Submission, rows[completed].id)
-                        assert row
-                        row.photo_attention = ["community_unavailable"]
-                progress_result["communities_prepared"] = completed + 1
-                progress_result["styles_ready"] = int(
-                    cast(int, progress_result.get("styles_ready", 0))
-                ) + int(context.references_ready)
-                completed += 1
+                from collections import Counter
+
+                warmup_warnings = Counter(
+                    cast(dict[str, int], progress_result.get("warmup_warnings", {}))
+                )
+                for row, context in zip(batch, contexts, strict=True):
+                    if isinstance(context, BaseException):
+                        warmup_warnings.update(["community_warmup_failed"])
+                        async with self.sessions() as db, db.begin():
+                            fresh = await db.get(Submission, row.id)
+                            assert fresh
+                            fresh.photo_attention = ["preparation_error"]
+                        continue
+                    if context.resolution_status != "resolved":
+                        async with self.sessions() as db, db.begin():
+                            fresh = await db.get(Submission, row.id)
+                            assert fresh
+                            fresh.photo_attention = ["community_unavailable"]
+                    warmup_warnings.update(context.warnings)
+                    progress_result["styles_ready"] = int(
+                        cast(int, progress_result.get("styles_ready", 0))
+                    ) + int(context.references_ready)
+                progress_result["warmup_warnings"] = dict(warmup_warnings)
+                completed += len(batch)
+                progress_result["communities_prepared"] = completed
                 if completed >= len(rows):
-                    stage = "photos"
+                    progress_result["warmup_seconds"] = (utcnow() - created_at).total_seconds()
+                    stage, completed = "photos", 0
             else:
-                result = (await self.engine.planner.plan(campaign_id, MediaPlanInput())).model_dump(
-                    mode="json"
-                )
-                stage = "complete"
+                batch = rows[completed : completed + PHOTO_BATCH_SIZE]
+                result = (
+                    await self.engine.planner.plan(
+                        campaign_id, MediaPlanInput(), submission_ids=[r.id for r in batch]
+                    )
+                ).model_dump(mode="json")
+                progress_result["near_duplicate_exclusions"] = int(
+                    cast(int, progress_result.get("near_duplicate_exclusions", 0))
+                ) + int(result.get("near_duplicate_exclusions", 0))
+                completed += len(batch)
+                if completed >= len(rows):
+                    progress_result["photo_seconds"] = (
+                        utcnow() - created_at
+                    ).total_seconds() - float(cast(float, progress_result.get("warmup_seconds", 0)))
+                    stage = "complete"
         except Exception:
-            error = "campaign_preparation_failed"
+            # One failed community/batch must not discard a full-grid preparation.
+            failed_rows = rows[
+                completed : completed + (1 if stage == "communities" else PHOTO_BATCH_SIZE)
+            ]
+            async with self.sessions() as db, db.begin():
+                for failed in failed_rows:
+                    fresh_row = await db.get(Submission, failed.id)
+                    if fresh_row:
+                        fresh_row.photo_attention = sorted(
+                            set(fresh_row.photo_attention + ["preparation_error"])
+                        )
+            completed += len(failed_rows)
+            progress_result["operation_failures"] = int(
+                cast(int, progress_result.get("operation_failures", 0))
+            ) + len(failed_rows)
+            if completed >= len(rows):
+                stage, completed = (
+                    ("photos", 0) if stage == "communities" else ("complete", completed)
+                )
         finally:
             observer.reset(progress_token)
+            preparation_read_only.reset(safety_token)
         async with self.sessions() as session, session.begin():
             current = await session.get(CampaignPreparationJob, jid, with_for_update=True)
             campaign = await session.get(Campaign, campaign_id, with_for_update=True)
             if not current or current.lease_token != token or not campaign:
                 return 1
             current.completed, current.stage, current.error_code = completed, stage, error
-            current.result = {**(current.result or {}), **progress_result, **(result or {})}
+            current.result = {**(current.result or {}), **(result or {}), **progress_result}
             current.lease_token = current.lease_until = None
             if campaign.status == CampaignStatus.cancelled:
                 current.state = "cancelled"

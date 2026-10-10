@@ -77,7 +77,8 @@ export function CampaignWorkflow({
     [error, setError] = useState(""),
     [ids, setIds] = useState<string[] | null>(null),
     [opened, setOpened] = useState<string | null>(null),
-    [attentionOnly, setAttentionOnly] = useState(false);
+    [attentionOnly, setAttentionOnly] = useState(false),
+    [dryRunUrl, setDryRunUrl] = useState("");
   const accounts = useLoad((signal) => accountsApi.all(signal), []);
   const pool = useLoad(
     (signal) =>
@@ -105,6 +106,15 @@ export function CampaignWorkflow({
         signal,
       }),
     [campaign.id, page, revision],
+  );
+  const readiness = useLoad(
+    (signal) =>
+      request<{
+        scope: number;
+        real_capacity: number;
+        capacity_shortfall: number;
+      }>(`/campaigns/${campaign.id}/readiness-report`, { signal }),
+    [campaign.id, revision],
   );
   const ranking = useLoad(
     (signal) =>
@@ -150,6 +160,30 @@ export function CampaignWorkflow({
       setBusy(false);
     }
   }
+  async function dryRun() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await request<{ campaign_id: string }>(
+        "/campaign-dry-runs",
+        {
+          method: "POST",
+          body: {
+            grid_id: campaign.grid_id,
+            track_url: campaign.track_url,
+            name: `${campaign.name.slice(0, 150)} · DRY RUN`,
+            photo_review_mode: campaign.photo_review_mode ?? "AUTO",
+            account_ids: selected,
+          },
+        },
+      );
+      setDryRunUrl(`/campaigns/${result.campaign_id}`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
   const stage =
     campaign.status === "draft"
       ? "Настройки"
@@ -167,6 +201,27 @@ export function CampaignWorkflow({
   return (
     <section className="form-card">
       <h2>Сейчас: {stage}</h2>
+      {campaign.is_dry_run && (
+        <p role="status">
+          <strong>DRY RUN · отправка запрещена</strong>. Подготовка использует
+          рабочий pipeline.
+        </p>
+      )}
+      {!!readiness.data && readiness.data.scope > 0 && (
+        <div className="activity-card">
+          <p>Нужно отправить: {readiness.data.scope}</p>
+          <p>Доступная ёмкость: {readiness.data.real_capacity}</p>
+          <p>Не хватает: {readiness.data.capacity_shortfall}</p>
+          {readiness.data.capacity_shortfall > 0 && (
+            <p>Подключите дополнительные аккаунты или уменьшите scope.</p>
+          )}
+        </div>
+      )}
+      {dryRunUrl && (
+        <p>
+          <a href={dryRunUrl}>Открыть отдельную dry-run кампанию</a>
+        </p>
+      )}
       <p>
         Настройки → Подготовка →{" "}
         {campaign.photo_review_mode === "REVIEW_BEFORE_SEND"
@@ -217,6 +272,14 @@ export function CampaignWorkflow({
               Подготовить кампанию
             </button>
           </fieldset>
+          {!campaign.is_dry_run && (
+            <button
+              disabled={busy || !!active || !selected.length}
+              onClick={() => void dryRun()}
+            >
+              Создать отдельный dry run
+            </button>
+          )}
           <p>
             {campaign.photo_review_mode === "REVIEW_BEFORE_SEND"
               ? "Проверка фото перед отправкой"

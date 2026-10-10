@@ -53,7 +53,10 @@ export function CampaignSendControls({
       setBusy(false);
     }
   }
-  if (!["ready", "running", "monitoring"].includes(campaign.status))
+  if (
+    campaign.is_dry_run ||
+    !["ready", "running", "monitoring"].includes(campaign.status)
+  )
     return null;
   return (
     <section className="form-card">
