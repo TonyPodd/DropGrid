@@ -1,0 +1,5 @@
+[Unit]
+Description=Daily DropGrid PostgreSQL backup
+[Service]
+Type=oneshot
+ExecStart=/opt/dropgrid/deploy/server/backup.sh

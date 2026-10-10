@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew short-lived DropGrid IP certificate and reload Caddy
+[Service]
+Type=oneshot
+ExecStart=/opt/dropgrid-certbot/bin/certbot renew --quiet --cert-name dropgrid-ip --preferred-profile shortlived --no-random-sleep-on-renew
+ExecStartPost=/usr/bin/openssl x509 -in /etc/letsencrypt/live/dropgrid-ip/fullchain.pem -noout -checkend 86400

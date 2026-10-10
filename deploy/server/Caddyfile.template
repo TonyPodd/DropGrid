@@ -1,0 +1,32 @@
+# Append this IP site to the existing Caddyfile; keep all existing sites.
+# HTTP ACME webroot route is installed separately, outside authentication.
+https://45.147.177.46 {
+    tls /config/dropgrid/tls/fullchain.pem /config/dropgrid/tls/privkey.pem
+    encode zstd gzip
+    log {
+        output discard
+    }
+    route {
+        request_header -X-DropGrid-Remote-User
+        request_header -X-DropGrid-Proxy-Key
+        basic_auth {
+            tony __TONY_HASH__
+            tima __TIMA_HASH__
+        }
+        handle {
+            @api path /api/*
+            handle @api {
+                reverse_proxy dropgrid-api:8000 {
+                    header_up -Authorization
+                    header_up X-DropGrid-Remote-User {http.auth.user.id}
+                    header_up X-DropGrid-Proxy-Key __PROXY_KEY__
+                }
+            }
+            handle {
+                reverse_proxy dropgrid-frontend:80 {
+                    header_up -Authorization
+                }
+            }
+        }
+    }
+}

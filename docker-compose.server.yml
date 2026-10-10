@@ -1,0 +1,103 @@
+name: dropgrid
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-backend: &backend
+  image: dropgrid-backend:server
+  build:
+    context: .
+    dockerfile: docker/backend.Dockerfile
+    args:
+      INSTALL_VISUAL: 'true'
+  env_file: .env.server
+  restart: unless-stopped
+  logging: *logging
+  networks: [private]
+  volumes:
+    - /srv/dropgrid/media:/app/media
+  environment: &safe-env
+    APP_ENV: production
+    VK_WRITE_ENABLED: 'false'
+    VK_TEST_ACCESS_TOKEN: ''
+    VK_TEST_ALLOWED_COMMUNITY_IDS: ''
+    MEDIA_STORAGE_DIR: /app/media
+    VISUAL_MODEL_PATH: /app/media/models/clip-vision-int8.onnx
+    MEDIA_PREPARATION_CONCURRENCY: '1'
+    VK_READ_CONCURRENCY: '1'
+    PHOTO_DOWNLOAD_CONCURRENCY: '1'
+    OMP_NUM_THREADS: '1'
+    OPENBLAS_NUM_THREADS: '1'
+  depends_on:
+    postgres:
+      condition: service_healthy
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dropgrid
+      POSTGRES_DB: dropgrid
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Configure private server password}
+    command: [postgres, -c, shared_buffers=64MB, -c, max_connections=40, -c, work_mem=2MB]
+    restart: unless-stopped
+    mem_limit: 192m
+    logging: *logging
+    networks: [private]
+    volumes:
+      - /srv/dropgrid/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U dropgrid -d dropgrid']
+      interval: 5s
+      retries: 20
+  migrate:
+    <<: *backend
+    restart: 'no'
+    command: [alembic, upgrade, head]
+    mem_limit: 256m
+  api:
+    <<: *backend
+    command: [python, -m, uvicorn, 'dropgrid.api.app:create_app', --factory, --host, 0.0.0.0, --port, '8000', --no-access-log]
+    mem_limit: 640m
+    memswap_limit: 1280m
+    networks:
+      private: {}
+      edge:
+        aliases: [dropgrid-api]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health',timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_BACKEND_URL: https://45.147.177.46
+    restart: unless-stopped
+    mem_limit: 48m
+    logging: *logging
+    networks:
+      edge:
+        aliases: [dropgrid-frontend]
+  worker:
+    <<: *backend
+    command: [python, -m, dropgrid.worker]
+    mem_limit: 96m
+  reference-study:
+    <<: *backend
+    command: [python, -m, dropgrid.photos.reference_worker]
+    mem_limit: 640m
+    memswap_limit: 1280m
+  sender:
+    <<: *backend
+    profiles: [sender]
+    command: [python, -m, dropgrid.worker.sender]
+    mem_limit: 256m
+    # Writes remain disabled even if the profile is accidentally selected.
+networks:
+  private: {}
+  edge:
+    external: true
+    name: ${DROPGRID_EDGE_NETWORK:-personal-backend_backend}
