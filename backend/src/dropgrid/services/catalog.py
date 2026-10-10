@@ -12,10 +12,18 @@ from dropgrid.api.schemas import (
     GridCommunityRead,
     GridImport,
 )
-from dropgrid.db.models import Account, Campaign, Community, Grid, GridCommunity, MediaAsset
+from dropgrid.db.models import (
+    Account,
+    Campaign,
+    Community,
+    Grid,
+    GridCommunity,
+    MediaAsset,
+    Submission,
+)
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
 
-type CatalogModel = Account | Campaign | Community | Grid | MediaAsset
+type CatalogModel = Account | Campaign | Community | Grid | MediaAsset | Submission
 
 
 class NotFoundError(Exception):

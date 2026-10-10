@@ -3,6 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func, select
 
 from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens, database
 from dropgrid.api.schemas import (
@@ -41,7 +42,7 @@ from dropgrid.api.schemas import (
     TrackInput,
     TrackRead,
 )
-from dropgrid.db.models import Account, Campaign, Community, Grid
+from dropgrid.db.models import Account, Campaign, Community, Grid, Submission
 from dropgrid.db.session import Database
 from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.domain.grid_parser import ParseGridResult, parse_grid
@@ -73,6 +74,17 @@ async def campaign_published(
 @router.get("/accounts", response_model=list[AccountRead])
 async def accounts(session: Session, limit: Limit = 100, offset: Offset = 0) -> Sequence[Account]:
     return await catalog.list_entities(session, Account, limit, offset)
+
+
+@router.post("/accounts/connect", response_model=AccountRead)
+async def connect_account(
+    data: AccountTokenInput, request: Request, session: Session, client: VK
+) -> Account:
+    if client.settings.app_env != "development":
+        raise HTTPException(403, "Token import is local development only")
+    return await account_tokens.connect_token(
+        session, data.access_token, client, request.app.state.token_cipher
+    )
 
 
 @router.post("/accounts", response_model=AccountRead, status_code=201)
@@ -272,6 +284,7 @@ async def campaign_preflight(
         data.max_submissions,
         LocalMediaStorage(settings.media_storage_dir),
         settings,
+        account_ids=data.account_ids,
     )
     return report
 
@@ -288,9 +301,67 @@ async def campaign_start(
         data.max_submissions,
         LocalMediaStorage(settings.media_storage_dir),
         settings,
+        account_ids=data.account_ids,
     )
 
 
 @router.post("/campaigns/{entity_id}/cancel", response_model=CampaignRead)
 async def campaign_cancel(entity_id: UUID, session: Session) -> Campaign:
     return await sending.cancel_campaign(session, entity_id)
+
+
+@router.get("/account-usage")
+async def account_usage(session: Session, request: Request) -> dict[str, object]:
+    from dropgrid.db.models import Account, CampaignAccount
+
+    rows = (
+        await session.execute(
+            select(CampaignAccount, Campaign.name, Account.name, Account.campaign_send_quota)
+            .join(Campaign, Campaign.id == CampaignAccount.campaign_id)
+            .join(Account, Account.id == CampaignAccount.account_id)
+            .where(
+                CampaignAccount.enabled.is_(True),
+                Campaign.status.in_(("ready", "running", "monitoring")),
+            )
+            .order_by(Campaign.created_at.desc())
+        )
+    ).all()
+    items = []
+    for membership, campaign_name, _account_name, _quota in rows:
+        assigned = (
+            await session.scalar(
+                select(func.count())
+                .select_from(Submission)
+                .where(
+                    Submission.campaign_id == membership.campaign_id,
+                    Submission.account_id == membership.account_id,
+                )
+            )
+            or 0
+        )
+        sent = (
+            await session.scalar(
+                select(func.count())
+                .select_from(Submission)
+                .where(
+                    Submission.campaign_id == membership.campaign_id,
+                    Submission.account_id == membership.account_id,
+                    Submission.submitted_at.is_not(None),
+                )
+            )
+            or 0
+        )
+        items.append(
+            {
+                "account_id": membership.account_id,
+                "campaign_id": membership.campaign_id,
+                "campaign": campaign_name,
+                "assigned": assigned,
+                "sent": sent,
+                "quota": membership.max_submissions,
+            }
+        )
+    return {
+        "default_quota": request.app.state.vk_client.settings.account_campaign_send_quota,
+        "items": items,
+    }

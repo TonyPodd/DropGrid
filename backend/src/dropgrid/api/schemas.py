@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -28,6 +28,7 @@ class AccountCreate(Input):
 
 
 class AccountPatch(Input):
+    campaign_send_quota: int | None = Field(default=None, ge=1, le=10000)
     name: Name | None = None
     vk_user_id: int | None = Field(default=None, gt=0, le=2**63 - 1)
     gender_tag: GenderTag | None = None
@@ -48,6 +49,8 @@ class AccountRead(Output):
     gender_tag: GenderTag | None
     status: AccountStatus
     token_configured: bool
+    last_validated_at: datetime | None = None
+    campaign_send_quota: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -149,6 +152,7 @@ class CampaignCreate(Input):
     track_owner_id: int | None = Field(default=None, ge=-(2**63), le=2**63 - 1)
     track_audio_id: int | None = Field(default=None, gt=0, le=2**63 - 1)
     caption: str | None = Field(default=None, max_length=10_000)
+    photo_review_mode: Literal["AUTO", "REVIEW_BEFORE_SEND"] = "AUTO"
     publication_check_hours: int = Field(default=72, gt=0, le=2**31 - 1)
 
     @field_validator("name", mode="before")
@@ -169,6 +173,7 @@ class CampaignCreate(Input):
 
 
 class CampaignPatch(Input):
+    photo_review_mode: Literal["AUTO", "REVIEW_BEFORE_SEND"] | None = None
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     name: Name | None = None
@@ -197,7 +202,8 @@ class CampaignPatch(Input):
 
 
 class CampaignStart(Input):
-    account_id: UUID
+    account_id: UUID | None = None
+    account_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
     max_submissions: int | None = Field(default=None, ge=1, le=10000)
 
 
@@ -211,10 +217,17 @@ class CampaignPreflight(BaseModel):
     media_missing: int
     media_invalid: int
     account_usable: bool
+    accounts_ready: int = 0
+    total_send_capacity: int = 0
+    capacity_unassigned: int = 0
+    assigned_per_account: list[dict[str, object]] = Field(default_factory=list)
+    review_pending: int = 0
     ready: bool
 
 
 class CampaignRead(Output):
+    photo_review_mode: str = "AUTO"
+    preparation_state: str = "legacy"
     account_id: UUID | None = None
     id: UUID
     name: str

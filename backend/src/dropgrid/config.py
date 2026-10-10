@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     pixabay_api_key: SecretStr | None = None
     pinterest_search_enabled: bool = False
     pinterest_direct_enabled: bool = True
-    pinterest_publication_enabled: bool = False
+    pinterest_publication_enabled: bool = True
+    account_campaign_send_quota: int = Field(default=100, ge=1, le=10000)
+    photo_learned_ranker_min_choices: int = Field(default=100, ge=10)
+    photo_learned_ranker_retrain_choices: int = Field(default=25, ge=1)
     photo_primary_min_candidates: int = Field(default=16, ge=1, le=32)
     photo_primary_target_candidates: int = Field(default=32, ge=16, le=40)
     photo_fallback_diversity_candidates: int = Field(default=0, ge=0, le=8)

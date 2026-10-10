@@ -1,11 +1,12 @@
 """Explicit local user-token import and read-only capability diagnostics."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import SecretStr
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dropgrid.db.models import Account
+from dropgrid.db.models import Account, utcnow
 from dropgrid.domain.enums import AccountStatus
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.credentials import TokenProvider
@@ -36,6 +37,7 @@ async def import_token(
     account.vk_user_id = user.id
     if user.display_name:
         account.name = user.display_name[:200]
+    account.last_validated_at = utcnow()
     account.status = AccountStatus.active
     account.encrypted_access_token = encrypted
     await session.flush()
@@ -83,3 +85,28 @@ async def capabilities(
     except VKError as error:
         result["error"] = error.as_dict()
     return result
+
+
+async def connect_token(
+    session: AsyncSession, token: SecretStr, client: VKClient, cipher: AccountTokenCipher
+) -> Account:
+    provisional_id = uuid4()
+    cipher.encrypt(token, provisional_id)  # configuration/input check before read-only validation
+    user = await client.get_current_user(access_token=token, account_id=provisional_id)
+    await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": user.id})
+    account = await session.scalar(
+        select(Account).where(Account.vk_user_id == user.id).with_for_update()
+    )
+    if account is None:
+        account = Account(
+            id=provisional_id, vk_user_id=user.id, name=user.display_name[:200] or "VK account"
+        )
+        session.add(account)
+    elif account.status == AccountStatus.disabled:
+        raise ConflictError("Account is disabled; enable it explicitly before replacing its token")
+    account.name = user.display_name[:200] or account.name
+    account.encrypted_access_token = cipher.encrypt(token, account.id)
+    account.last_validated_at = utcnow()
+    account.status = AccountStatus.active
+    await session.flush()
+    return account

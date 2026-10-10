@@ -1,7 +1,7 @@
 import { AccountTokenImport } from "./account-token";
 import { useState } from "react";
 import { accountsApi, communitiesApi, getDashboard } from "./api/accounts";
-import { ApiError, errorMessage } from "./api/client";
+import { request, ApiError, errorMessage } from "./api/client";
 import { CampaignTable } from "./campaigns";
 import { campaignStatuses } from "./api/types";
 import { Badge, categoryName, Pager, State, useLoad } from "./shared";
@@ -53,6 +53,20 @@ export function DashboardPage() {
 export function AccountsPage() {
   const [page, setPage] = useState(1);
   const state = useLoad((signal) => accountsApi.list(page, signal), [page]);
+  const usage = useLoad(
+    (signal) =>
+      request<{
+        default_quota: number;
+        items: {
+          account_id: string;
+          campaign: string;
+          assigned: number;
+          sent: number;
+          quota: number;
+        }[];
+      }>("/account-usage", { signal }),
+    [state.data],
+  );
   const [busy, setBusy] = useState<string>();
   const [message, setMessage] = useState("");
   async function validate(id: string) {
@@ -83,6 +97,12 @@ export function AccountsPage() {
         Локальные single-user Accounts. Токены импортируются вручную и хранятся
         зашифрованными; проверка VK запускается только по вашему действию.
       </p>
+      <AccountTokenImport
+        onSaved={(value) => {
+          setMessage(value);
+          state.reload();
+        }}
+      />
       {message && <p role="status">{message}</p>}
       <State {...state} retry={state.reload}>
         {state.data?.length ? (
@@ -101,14 +121,92 @@ export function AccountsPage() {
               <tbody>
                 {state.data.map((a) => (
                   <tr key={a.id}>
-                    <td>{a.name}</td>
+                    <td>
+                      {a.name}
+                      {usage.data?.items
+                        .filter((row) => row.account_id === a.id)
+                        .map((row, i) => (
+                          <p key={i}>
+                            {row.campaign}: отправлено {row.sent} / {row.quota}{" "}
+                            · назначено {row.assigned}
+                          </p>
+                        ))}
+                    </td>
                     <td>{a.vk_user_id ?? "—"}</td>
-                    <td>{a.gender_tag ?? "—"}</td>
+                    <td>
+                      <select
+                        aria-label={`Gender ${a.name}`}
+                        value={a.gender_tag ?? ""}
+                        onChange={async (e) => {
+                          try {
+                            await accountsApi.patch(a.id, {
+                              gender_tag: e.target.value || null,
+                            });
+                            state.reload();
+                          } catch (err) {
+                            setMessage(errorMessage(err));
+                          }
+                        }}
+                      >
+                        <option value="">Любой</option>
+                        <option value="male">Мужской</option>
+                        <option value="female">Женский</option>
+                      </select>
+                    </td>
                     <td>
                       <Badge status={a.status} />
                     </td>
-                    <td>{a.token_configured ? "yes" : "no"}</td>
                     <td>
+                      {a.token_configured ? "yes" : "no"}
+                      <p>
+                        Проверка:{" "}
+                        {a.last_validated_at
+                          ? new Date(a.last_validated_at).toLocaleString()
+                          : "—"}
+                      </p>
+                      <label>
+                        Квота кампании
+                        <input
+                          type="number"
+                          min={1}
+                          max={10000}
+                          defaultValue={
+                            a.campaign_send_quota ??
+                            usage.data?.default_quota ??
+                            100
+                          }
+                          onBlur={async (e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isInteger(n) && n > 0 && n <= 10000) {
+                              try {
+                                await accountsApi.patch(a.id, {
+                                  campaign_send_quota: n,
+                                });
+                                state.reload();
+                              } catch (err) {
+                                setMessage(errorMessage(err));
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                    </td>
+                    <td>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await accountsApi.patch(a.id, {
+                              status:
+                                a.status === "disabled" ? "active" : "disabled",
+                            });
+                            state.reload();
+                          } catch (err) {
+                            setMessage(errorMessage(err));
+                          }
+                        }}
+                      >
+                        {a.status === "disabled" ? "Enable" : "Disable"}
+                      </button>
                       <AccountTokenImport
                         accountId={a.id}
                         onSaved={(value) => {
@@ -130,8 +228,7 @@ export function AccountsPage() {
           </div>
         ) : (
           <p className="empty">
-            Аккаунтов пока нет. Добавьте метаданные через API; credentials для
-            подготовки кампании не нужны.
+            Аккаунтов пока нет. Подключите VK аккаунт по кнопке выше.
           </p>
         )}
       </State>
@@ -171,7 +268,9 @@ export function CommunitiesPage() {
               <tbody>
                 {state.data.map((c) => (
                   <tr key={c.id}>
-                    <td><Link to={`/communities/${c.id}`}>{c.domain}</Link></td>
+                    <td>
+                      <Link to={`/communities/${c.id}`}>{c.domain}</Link>
+                    </td>
                     <td>{c.name ?? "—"}</td>
                     <td>{categoryName(c.category)}</td>
                     <td>{c.vk_group_id ?? "—"}</td>

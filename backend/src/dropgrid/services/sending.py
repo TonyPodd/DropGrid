@@ -11,7 +11,16 @@ from sqlalchemy import and_, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from dropgrid.config import Settings
-from dropgrid.db.models import Account, Campaign, Community, MediaAsset, Submission, utcnow
+from dropgrid.db.models import (
+    Account,
+    Campaign,
+    CampaignAccount,
+    Community,
+    MediaAsset,
+    PhotoSelectionSession,
+    Submission,
+    utcnow,
+)
 from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.credentials import TokenProvider
@@ -29,6 +38,7 @@ from dropgrid.integrations.vk.media import checked_media
 from dropgrid.integrations.vk.models import VKAttachment, WallPostReceipt
 from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.photos.images import MediaStorage
+from dropgrid.services.account_pools import distribute, pool, save_pool
 from dropgrid.services.campaigns import locked_campaign
 from dropgrid.services.catalog import ConflictError, get_entity
 from dropgrid.services.publication import attachments, record_suggested_submission
@@ -69,13 +79,18 @@ def exclusion(community: Community, account: Account) -> str | None:
 async def preflight(
     session: AsyncSession,
     campaign_id: UUID,
-    account_id: UUID,
+    account_id: UUID | None,
     max_submissions: int | None,
     storage: MediaStorage,
     settings: Settings,
+    *,
+    account_ids: list[UUID] | None = None,
 ) -> tuple[dict[str, object], list[tuple[Submission, str | None]]]:
     campaign = await get_entity(session, Campaign, campaign_id)
-    account = await get_entity(session, Account, account_id)
+    accounts = await pool(
+        session, campaign_id, settings, account_ids or ([account_id] if account_id else None)
+    )
+    usable = [(a, quota, order) for a, quota, order in accounts if usable_account(a)]
     rows = (
         await session.execute(
             select(Submission, Community, MediaAsset)
@@ -86,20 +101,27 @@ async def preflight(
         )
     ).all()
     selected: list[tuple[Submission, str | None]] = []
-    eligible = assigned = missing = unavailable = incompatible = invalid = intended = 0
+    intended_rows: list[tuple[Submission, Community]] = []
+    missing = invalid = assigned = unavailable = incompatible = eligible = 0
     checked: dict[UUID, bool] = {}
     for row, community, asset in rows:
-        reason = exclusion(community, account)
-        if reason == "community_unavailable":
+        reason = None
+        if (
+            not community.is_active
+            or community.resolution_status != "resolved"
+            or not community.vk_group_id
+        ):
+            reason = "community_unavailable"
             unavailable += 1
-        elif reason:
+        elif account_id and accounts and exclusion(community, accounts[0][0]):
+            reason = "account_gender_mismatch"
             incompatible += 1
         else:
             eligible += 1
-            if max_submissions is not None and intended >= max_submissions:
+            if max_submissions is not None and len(intended_rows) >= max_submissions:
                 reason = "pilot_scope_excluded"
             else:
-                intended += 1
+                intended_rows.append((row, community))
                 if asset is None:
                     missing += 1
                 else:
@@ -114,54 +136,117 @@ async def preflight(
                             checked[asset.id] = True
                         except VKInputError:
                             checked[asset.id] = False
-                    if not checked[asset.id]:
-                        invalid += 1
+                    invalid += int(not checked[asset.id])
         selected.append((row, reason))
+    allocation, failures = distribute(intended_rows, usable)
+    capacity_missing = sum(reason == "account_capacity_exhausted" for reason in failures.values())
+    incompatible += sum(reason == "account_gender_mismatch" for reason in failures.values())
+    reviews = (
+        await session.scalars(
+            select(PhotoSelectionSession)
+            .where(PhotoSelectionSession.campaign_id == campaign_id)
+            .order_by(PhotoSelectionSession.created_at.desc(), PhotoSelectionSession.id.desc())
+        )
+    ).all()
+    latest: dict[UUID, PhotoSelectionSession] = {}
+    for review in reviews:
+        latest.setdefault(review.submission_id, review)
+    review_pending = (
+        sum(row.id not in latest or latest[row.id].confirmed_at is None for row, _ in intended_rows)
+        if campaign.photo_review_mode == "REVIEW_BEFORE_SEND"
+        else 0
+    )
     ready = (
         campaign.status == CampaignStatus.ready
-        and usable_account(account)
+        and campaign.preparation_state in {"legacy", "ready"}
+        and bool(usable)
         and campaign.track_owner_id is not None
         and bool(campaign.track_audio_id)
-        and intended > 0
-        and missing == 0
-        and invalid == 0
-        and all(row.status == SubmissionStatus.pending for row, _ in selected)
+        and bool(intended_rows)
+        and not missing
+        and not invalid
+        and not failures
+        and not review_pending
+        and all(
+            row.status == SubmissionStatus.pending
+            and row.vk_send_phase in {None, "queued"}
+            and row.vk_send_receipt_post_id is None
+            for row, _ in selected
+        )
     )
     return {
         "total": len(rows),
         "resolved_sendable": eligible,
         "unavailable": unavailable,
         "gender_incompatible": incompatible,
-        "intended": intended,
+        "intended": len(intended_rows),
         "media_assigned": assigned,
         "media_missing": missing,
         "media_invalid": invalid,
-        "account_usable": usable_account(account),
+        "account_usable": bool(usable),
+        "accounts_ready": len(usable),
+        "total_send_capacity": sum(quota for _, quota, _ in usable),
+        "capacity_unassigned": capacity_missing,
+        "review_pending": review_pending,
+        "assigned_per_account": [
+            {
+                "account_id": str(a.id),
+                "name": a.name,
+                "assigned": sum(v == a.id for v in allocation.values()),
+                "quota": quota,
+            }
+            for a, quota, _ in usable
+        ],
         "ready": bool(ready),
+        "_assignments": allocation,
     }, selected
 
 
 async def start_campaign(
     session: AsyncSession,
     campaign_id: UUID,
-    account_id: UUID,
+    account_id: UUID | None,
     max_submissions: int | None,
     storage: MediaStorage,
     settings: Settings,
+    *,
+    account_ids: list[UUID] | None = None,
 ) -> Campaign:
     campaign = await locked_campaign(session, campaign_id)
     report, rows = await preflight(
-        session, campaign_id, account_id, max_submissions, storage, settings
+        session,
+        campaign_id,
+        account_id,
+        max_submissions,
+        storage,
+        settings,
+        account_ids=account_ids,
     )
     if not report["ready"]:
         raise ConflictError(
             "Campaign preflight failed: check account, lifecycle, audio and local media"
         )
-    campaign.account_id = account_id
+    allocations = cast(dict[UUID, UUID], report["_assignments"])
+    selected_ids = sorted(set(allocations.values()))
+    await save_pool(
+        session,
+        campaign_id,
+        account_ids or ([account_id] if account_id else selected_ids),
+        settings,
+    )
+    for membership in (
+        await session.scalars(
+            select(CampaignAccount).where(CampaignAccount.campaign_id == campaign_id)
+        )
+    ).all():
+        membership.assigned_count = sum(
+            aid == membership.account_id for aid in allocations.values()
+        )
+    campaign.account_id = account_id or (selected_ids[0] if selected_ids else None)
     campaign.status = CampaignStatus.running
     campaign.started_at = utcnow()
     for row, reason in rows:
-        row.account_id = account_id
+        row.account_id = allocations.get(row.id)
         if reason:
             row.status = SubmissionStatus.skipped
             row.error_code, row.error_message = reason, "Submission excluded from sending scope"

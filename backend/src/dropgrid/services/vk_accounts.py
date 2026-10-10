@@ -37,6 +37,7 @@ async def validate_account(
         if user.display_name:
             account.name = user.display_name[:200]
         account.status = AccountStatus.active
+    account.last_validated_at = utcnow()
     await session.flush()
     # Return authentication failure rather than raise: the invalid state must commit.
     return account, failure

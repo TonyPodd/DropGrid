@@ -6,7 +6,7 @@ export function AccountTokenImport({
   accountId,
   onSaved,
 }: {
-  accountId: string;
+  accountId?: string;
   onSaved: (message: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -17,7 +17,9 @@ export function AccountTokenImport({
     setBusy(true);
     setError("");
     try {
-      const result = await accountsApi.importToken(accountId, token);
+      const result = await (accountId
+        ? accountsApi.importToken(accountId, token)
+        : accountsApi.connect(token));
       setToken("");
       setOpen(false);
       onSaved(`VK account connected · ${result.vk_user_id} · ${result.name}`);
@@ -42,7 +44,7 @@ export function AccountTokenImport({
           setOpen(true);
         }}
       >
-        Добавить/заменить VK token
+        {accountId ? "Добавить/заменить VK token" : "+ Подключить VK аккаунт"}
       </button>
       {open && (
         <div

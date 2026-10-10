@@ -1,6 +1,21 @@
 import { request } from "./client";
 import type { Account, Community, Dashboard } from "./types";
 export const accountsApi = {
+  connect: (access_token: string) =>
+    request<Account>("/accounts/connect", {
+      method: "POST",
+      body: { access_token },
+    }),
+  patch: (id: string, body: Partial<Account>) =>
+    request<Account>(`/accounts/${id}`, { method: "PATCH", body }),
+  all: async (signal?: AbortSignal): Promise<Account[]> => {
+    const rows: Account[] = [];
+    for (let page = 1; ; page++) {
+      const next = await accountsApi.list(page, signal);
+      rows.push(...next);
+      if (next.length < 25) return rows;
+    }
+  },
   list: (page: number, signal?: AbortSignal) =>
     request<Account[]>(`/accounts?limit=25&offset=${(page - 1) * 25}`, {
       signal,

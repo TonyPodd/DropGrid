@@ -19,6 +19,8 @@ export const submissionStatuses = [
 export type CampaignStatus = (typeof campaignStatuses)[number];
 export type SubmissionStatus = (typeof submissionStatuses)[number];
 export type Account = {
+  last_validated_at?: string | null;
+  campaign_send_quota?: number | null;
   token_configured?: boolean;
   id: string;
   name: string;
@@ -60,6 +62,8 @@ export type GridPreview = {
   errors: { line: number; value: string; message: string }[];
 };
 export type Campaign = {
+  photo_review_mode?: "AUTO" | "REVIEW_BEFORE_SEND";
+  preparation_state?: string;
   account_id?: string | null;
   id: string;
   name: string;
@@ -76,6 +80,7 @@ export type Campaign = {
   created_at: string;
 };
 export type CampaignInput = {
+  photo_review_mode?: "AUTO" | "REVIEW_BEFORE_SEND";
   name: string;
   grid_id: string;
   track_url: string;
@@ -149,7 +154,18 @@ export type MediaAsset = {
 };
 
 export type CampaignPreflight = {
-  total: number; resolved_sendable: number; unavailable: number;
-  gender_incompatible: number; intended: number; media_assigned: number;
-  media_missing: number; media_invalid: number; account_usable: boolean; ready: boolean;
+  accounts_ready?: number;
+  total_send_capacity?: number;
+  capacity_unassigned?: number;
+  review_pending?: number;
+  total: number;
+  resolved_sendable: number;
+  unavailable: number;
+  gender_incompatible: number;
+  intended: number;
+  media_assigned: number;
+  media_missing: number;
+  media_invalid: number;
+  account_usable: boolean;
+  ready: boolean;
 };

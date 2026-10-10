@@ -54,8 +54,16 @@ class Updated:
 
 class Account(Identity, Updated, Base):
     __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("vk_user_id", name="uq_accounts_vk_user_id"),
+        CheckConstraint(
+            "campaign_send_quota IS NULL OR campaign_send_quota > 0", name="quota_positive"
+        ),
+    )
     vk_user_id: Mapped[int | None] = mapped_column(BigInteger)
     name: Mapped[str] = mapped_column(String(200))
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    campaign_send_quota: Mapped[int | None] = mapped_column(Integer)
     gender_tag: Mapped[GenderTag | None] = mapped_column(Enum(GenderTag, name="gender_tag"))
     status: Mapped[AccountStatus] = mapped_column(
         Enum(AccountStatus, name="account_status"), default=AccountStatus.active
@@ -307,6 +315,12 @@ class Campaign(Identity, Base):
         Enum(CampaignStatus, name="campaign_status"), default=CampaignStatus.draft
     )
     account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
+    photo_review_mode: Mapped[str] = mapped_column(
+        String(24), default="AUTO", server_default="AUTO"
+    )
+    preparation_state: Mapped[str] = mapped_column(
+        String(24), default="legacy", server_default="legacy"
+    )
     publication_check_hours: Mapped[int] = mapped_column(Integer, default=72)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -328,6 +342,11 @@ class Submission(Identity, Updated, Base):
     status: Mapped[SubmissionStatus] = mapped_column(
         Enum(SubmissionStatus, name="submission_status"), default=SubmissionStatus.pending
     )
+    ranking_model_version: Mapped[str] = mapped_column(
+        String(100), default="deterministic-v1", server_default="deterministic-v1"
+    )
+    photo_source: Mapped[str | None] = mapped_column(String(50))
+    photo_attention: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[str | None] = mapped_column(String(100))
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -459,3 +478,86 @@ class PhotoOperationJob(Identity, Updated, Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CampaignAccount(Base):
+    __tablename__ = "campaign_accounts"
+    __table_args__ = (CheckConstraint("max_submissions > 0", name="quota_positive"),)
+    campaign_id: Mapped[UUID] = mapped_column(
+        ForeignKey("campaigns.id", ondelete="CASCADE"), primary_key=True
+    )
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    max_submissions: Mapped[int] = mapped_column(Integer, default=100)
+    assigned_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class CampaignPreparationJob(Identity, Updated, Base):
+    __tablename__ = "campaign_preparation_jobs"
+    campaign_id: Mapped[UUID] = mapped_column(
+        ForeignKey("campaigns.id", ondelete="CASCADE"), unique=True
+    )
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"))
+    state: Mapped[str] = mapped_column(String(24), default="queued")
+    stage: Mapped[str] = mapped_column(String(40), default="communities")
+    completed: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    lease_token: Mapped[UUID | None]
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    result: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+
+
+class PhotoSelectionSession(Identity, Base):
+    __tablename__ = "photo_selection_sessions"
+    campaign_id: Mapped[UUID] = mapped_column(
+        ForeignKey("campaigns.id", ondelete="CASCADE"), index=True
+    )
+    submission_id: Mapped[UUID] = mapped_column(
+        ForeignKey("submissions.id", ondelete="CASCADE"), index=True
+    )
+    community_id: Mapped[UUID] = mapped_column(ForeignKey("communities.id"))
+    category: Mapped[str | None] = mapped_column(String(200))
+    content_hint: Mapped[str | None] = mapped_column(String(500))
+    baseline_rank: Mapped[int] = mapped_column(Integer)
+    proposed_rank: Mapped[int] = mapped_column(Integer)
+    learned_rank: Mapped[int | None] = mapped_column(Integer)
+    chosen_rank: Mapped[int | None] = mapped_column(Integer)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    ranking_model_version: Mapped[str] = mapped_column(String(100), default="deterministic-v1")
+
+
+class PhotoSelectionCandidate(Base):
+    __tablename__ = "photo_selection_candidates"
+    __table_args__ = (CheckConstraint("rank >= 1 AND rank <= 12", name="rank_bounded"),)
+    selection_session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("photo_selection_sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    rank: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50))
+    source_identity: Mapped[str] = mapped_column(String(100))
+    media_asset_id: Mapped[UUID | None] = mapped_column(ForeignKey("media_assets.id"))
+    preview_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_preview_cache.id"))
+    reference_id: Mapped[UUID | None] = mapped_column(ForeignKey("community_reference_photos.id"))
+    features: Mapped[dict[str, object]] = mapped_column(JSONB)
+    candidate: Mapped[dict[str, object]] = mapped_column(JSONB)
+    displayed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    operator_rating: Mapped[str | None] = mapped_column(String(10))
+
+
+class PhotoRankingModel(Identity, Base):
+    __tablename__ = "photo_ranking_models"
+    state: Mapped[str] = mapped_column(String(20), default="queued")
+    feature_schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    training_choices: Mapped[int] = mapped_column(Integer, default=0)
+    trained_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    coefficients: Mapped[list[float] | None] = mapped_column(JSONB)
+    metrics: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+
+
+class PhotoRankingPreference(Base):
+    __tablename__ = "photo_ranking_preferences"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mode: Mapped[str] = mapped_column(String(20), default="deterministic")

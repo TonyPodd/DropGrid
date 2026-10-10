@@ -10,14 +10,12 @@ import { ApiError } from "./api/client";
 afterEach(() => vi.restoreAllMocks());
 const token = "fake-ui-token-sentinel";
 it("shows password input, saves explicitly, clears token and never redisplays saved credentials", async () => {
-  const save = vi
-    .spyOn(accountsApi, "importToken")
-    .mockResolvedValue({
-      account_id: "a",
-      vk_user_id: 123,
-      name: "VK User",
-      valid: true,
-    });
+  const save = vi.spyOn(accountsApi, "importToken").mockResolvedValue({
+    account_id: "a",
+    vk_user_id: 123,
+    name: "VK User",
+    valid: true,
+  });
   const saved = vi.fn();
   const user = userEvent.setup();
   render(<AccountTokenImport accountId="a" onSaved={saved} />);
@@ -99,4 +97,35 @@ it("shows configured indicator and connected account metadata", async () => {
   expect(await screen.findByText("yes")).toBeInTheDocument();
   expect(screen.getByText("123")).toBeInTheDocument();
   expect(document.body.textContent).not.toContain(token);
+});
+
+it("creates an account directly from an externally pasted token", async () => {
+  const connect = vi
+    .spyOn(accountsApi, "connect")
+    .mockResolvedValue({
+      id: "new",
+      name: "User",
+      vk_user_id: 123,
+      status: "active",
+      gender_tag: null,
+      token_configured: true,
+    });
+  const saved = vi.fn();
+  render(<AccountTokenImport onSaved={saved} />);
+  await userEvent.click(
+    screen.getByRole("button", { name: "+ Подключить VK аккаунт" }),
+  );
+  await userEvent.type(
+    screen.getByLabelText("VK user access token"),
+    "fresh-external-token",
+  );
+  expect(connect).not.toHaveBeenCalled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Validate / Save" }),
+  );
+  await waitFor(() =>
+    expect(connect).toHaveBeenCalledExactlyOnceWith("fresh-external-token"),
+  );
+  expect(saved).toHaveBeenCalledWith(expect.stringContaining("123"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
