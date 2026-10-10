@@ -21,7 +21,7 @@ from dropgrid.db.models import (
 )
 from dropgrid.photos.campaign_preparation import enqueue
 from dropgrid.photos.learning import latest_model, queue_training, valid_model
-from dropgrid.photos.review import choose, confirm
+from dropgrid.photos.review import choose, confirm, latest_selection
 from dropgrid.services.account_pools import pool, save_pool
 from dropgrid.services.catalog import ConflictError, get_entity
 from dropgrid.services.sending import usable_account
@@ -282,14 +282,56 @@ async def set_choice(submission_id: UUID, data: ChoiceInput, session: Session) -
     return {"proposed_rank": selection.proposed_rank, "confirmed": False}
 
 
+class ApprovalInput(Input):
+    selection_id: UUID | None = None
+    proposed_rank: int | None = Field(default=None, ge=1, le=12)
+    shown_ranks: list[int] = Field(default_factory=list, max_length=12)
+
+
+class DisplayedApproval(ApprovalInput):
+    submission_id: UUID
+
+
+class BatchApprovalInput(Input):
+    reviews: list[DisplayedApproval] = Field(default_factory=list, max_length=25)
+
+
+async def record_approval_view(
+    session: Session, submission_id: UUID, data: ApprovalInput
+) -> tuple[UUID, int]:
+    from dropgrid.services.campaigns import locked_campaign
+
+    row = await get_entity(session, Submission, submission_id)
+    await locked_campaign(session, row.campaign_id)
+    selection = await latest_selection(session, submission_id, True)
+    if (data.selection_id and data.selection_id != selection.id) or (
+        data.proposed_rank is not None and data.proposed_rank != selection.proposed_rank
+    ):
+        raise ConflictError("Photo review changed; reload before confirming")
+    if not selection.confirmed_at:
+        await choose(session, submission_id, selection.proposed_rank, shown_ranks=data.shown_ranks)
+    return selection.id, selection.proposed_rank
+
+
 @router.post("/submissions/{submission_id}/photo-approve")
-async def approve_one(submission_id: UUID, request: Request) -> dict[str, object]:
-    await confirm(request.app.state.photo_engine.planner, submission_id)
+async def approve_one(
+    submission_id: UUID, request: Request, data: ApprovalInput | None = None
+) -> dict[str, object]:
+    planner = request.app.state.photo_engine.planner
+    expected_id = expected_rank = None
+    if data:
+        async with planner.sessions() as session, session.begin():
+            expected_id, expected_rank = await record_approval_view(session, submission_id, data)
+    await confirm(
+        planner, submission_id, expected_selection_id=expected_id, expected_rank=expected_rank
+    )
     return {"confirmed": True}
 
 
 @router.post("/campaigns/{campaign_id}/photo-approve-all")
-async def approve_all(campaign_id: UUID, request: Request) -> dict[str, object]:
+async def approve_all(
+    campaign_id: UUID, request: Request, data: BatchApprovalInput | None = None
+) -> dict[str, object]:
     engine = request.app.state.photo_engine
     async with engine.planner.sessions() as session:
         campaign = await get_entity(session, Campaign, campaign_id)
@@ -305,9 +347,22 @@ async def approve_all(campaign_id: UUID, request: Request) -> dict[str, object]:
                 )
             ).all()
         )
+    observed: dict[UUID, tuple[UUID, int]] = {}
+    if data:
+        by_id = {row.id: row for row in rows}
+        async with engine.planner.sessions() as session, session.begin():
+            for displayed in data.reviews:
+                if displayed.submission_id not in by_id:
+                    raise ConflictError("Displayed review is outside this campaign approval scope")
+                observed[displayed.submission_id] = await record_approval_view(
+                    session, displayed.submission_id, displayed
+                )
     confirmed = 0
     for row in rows:
-        await confirm(engine.planner, row.id)
+        expected_id, expected_rank = observed.get(row.id, (None, None))
+        await confirm(
+            engine.planner, row.id, expected_selection_id=expected_id, expected_rank=expected_rank
+        )
         confirmed += 1
     async with engine.planner.sessions() as session, session.begin():
         campaign = await get_entity(session, Campaign, campaign_id)

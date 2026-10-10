@@ -278,3 +278,25 @@ it("keeps shadow diagnostics under Advanced and never promotes automatically", a
     fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
   ).toHaveLength(0);
 });
+it("records visible alternatives when confirming the unchanged automatic selection", async () => {
+  const fetch = mock();
+  render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
+  await screen.findByText("Girl car");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Заменить / альтернативы" }),
+  );
+  expect(
+    fetch.mock.calls.filter(([url]) => String(url).includes("photo-choice")),
+  ).toHaveLength(0);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Подтвердить", exact: true }),
+  );
+  await screen.findByText(/Подтверждено/);
+  const approval = fetch.mock.calls.find(([url]) =>
+    String(url).includes("/photo-approve"),
+  );
+  expect(JSON.parse(String(approval?.[1]?.body))).toEqual({
+    proposed_rank: 1,
+    shown_ranks: [1, 2],
+  });
+});

@@ -216,11 +216,42 @@ async def choose(
     return selection
 
 
-async def confirm(planner: CampaignMediaPlanner, submission_id: UUID) -> None:
+async def confirm(
+    planner: CampaignMediaPlanner,
+    submission_id: UUID,
+    *,
+    expected_selection_id: UUID | None = None,
+    expected_rank: int | None = None,
+) -> None:
+    from dropgrid.integrations.vk.read_only import preparation_read_only
+
+    marker = preparation_read_only.set(True)
+    try:
+        await _confirm(
+            planner,
+            submission_id,
+            expected_selection_id=expected_selection_id,
+            expected_rank=expected_rank,
+        )
+    finally:
+        preparation_read_only.reset(marker)
+
+
+async def _confirm(
+    planner: CampaignMediaPlanner,
+    submission_id: UUID,
+    *,
+    expected_selection_id: UUID | None = None,
+    expected_rank: int | None = None,
+) -> None:
     async with planner.sessions() as session:
         row = await get_entity(session, Submission, submission_id)
         selection = await latest_selection(session, submission_id)
         review_campaign = await get_entity(session, Campaign, row.campaign_id)
+        if (expected_selection_id is not None and selection.id != expected_selection_id) or (
+            expected_rank is not None and selection.proposed_rank != expected_rank
+        ):
+            raise ConflictError("Photo review changed; reload before confirming")
         if selection.confirmed_at:
             return
         candidate = await session.get(
@@ -306,6 +337,7 @@ async def confirm(planner: CampaignMediaPlanner, submission_id: UUID) -> None:
                     .select_from(Submission)
                     .where(
                         Submission.media_asset_id == asset.id,
+                        Submission.campaign_id == row.campaign_id,
                         Submission.status == SubmissionStatus.pending,
                         Submission.id != row.id,
                     )

@@ -8,7 +8,8 @@ Photo Engine and Photo Lab share `DiscoveryPolicy` and `discover`:
 
 Retrieval priority never adds a source bonus to final ranking. The existing exact/perceptual dedup,
 visual ranking and community rotation/cooldown remain unchanged. Planning does not trigger archive
-indexing. Category archive reuse remains under its existing preview-only policy.
+indexing. Category archive candidates can be selected for campaign assignment or explicit review
+confirmation when cross-community reuse is enabled; see [dry-run readiness](campaign-dry-run.md).
 
 ## Bounds and fallback
 

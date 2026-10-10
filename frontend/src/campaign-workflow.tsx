@@ -27,6 +27,7 @@ type Candidate = {
   features: Record<string, number>;
 };
 type Row = {
+  selection_id?: string;
   submission_id: string;
   community_id: string;
   community: string;
@@ -185,6 +186,16 @@ export function CampaignWorkflow({
     } finally {
       setBusy(false);
     }
+  }
+  function approval(row: Row) {
+    return {
+      selection_id: row.selection_id,
+      proposed_rank: row.proposed_rank,
+      shown_ranks:
+        opened === row.submission_id
+          ? row.candidates.map((c) => c.rank)
+          : [row.proposed_rank],
+    };
   }
   const stage =
     campaign.status === "draft"
@@ -359,7 +370,14 @@ export function CampaignWorkflow({
             <button
               disabled={busy || !!active || !review.data.prepared}
               onClick={() =>
-                void action(`/campaigns/${campaign.id}/photo-approve-all`)
+                void action(`/campaigns/${campaign.id}/photo-approve-all`, {
+                  reviews: review.data?.items
+                    .filter((row) => !row.confirmed && row.candidates.length)
+                    .map((row) => ({
+                      submission_id: row.submission_id,
+                      ...approval(row),
+                    })),
+                })
               }
             >
               Подтвердить все выбранные
@@ -408,6 +426,7 @@ export function CampaignWorkflow({
                           onClick={() =>
                             void action(
                               `/submissions/${row.submission_id}/photo-approve`,
+                              approval(row),
                             )
                           }
                         >

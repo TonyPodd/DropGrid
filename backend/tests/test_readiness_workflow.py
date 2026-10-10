@@ -398,3 +398,126 @@ def test_514_gender_constrained_pool():
         for row, community in male + female
     )
     assert max(Counter(assigned.values()).values()) == 100
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("batch", [False, True])
+async def test_approval_keeps_auto_choice_and_records_only_visible_comparisons(
+    client, sessions, tmp_path, batch
+):
+    cid, sid, target, ref, _, _, planner, item, http = await archive_fixture(sessions, tmp_path)
+    client._transport.app.state.photo_engine.planner = planner
+    async with sessions() as db, db.begin():
+        row = await db.get(Submission, sid)
+        asset, _ = await materialize_archive(
+            planner.archive, planner, item, "Cats", target_id=target
+        )
+        row.media_asset_id = asset.id
+        decision = PhotoSelectionSession(
+            campaign_id=cid,
+            submission_id=sid,
+            community_id=target,
+            category="Cats",
+            proposed_rank=1,
+            baseline_rank=1,
+        )
+        db.add(decision)
+        await db.flush()
+        for rank in (1, 2, 3):
+            db.add(
+                PhotoSelectionCandidate(
+                    selection_session_id=decision.id,
+                    rank=rank,
+                    provider="vk_category_archive",
+                    source_identity=str(rank),
+                    media_asset_id=asset.id,
+                    features={},
+                    candidate=item.photo.model_dump(mode="json"),
+                )
+            )
+    body = {"selection_id": str(decision.id), "proposed_rank": 1, "shown_ranks": [1, 2]}
+    if batch:
+        path = f"/api/v1/campaigns/{cid}/photo-approve-all"
+        body = {"reviews": [{"submission_id": str(sid), **body}]}
+    else:
+        path = f"/api/v1/submissions/{sid}/photo-approve"
+    stale = {"selection_id": str(UUID(int=999)), "proposed_rank": 1, "shown_ranks": [1, 2]}
+    stale_body = {"reviews": [{"submission_id": str(sid), **stale}]} if batch else stale
+    assert (await client.post(path, json=stale_body)).status_code == 409
+    async with sessions() as db:
+        assert not (await db.get(PhotoSelectionSession, decision.id)).confirmed_at
+        assert not any(
+            c.displayed for c in (await db.scalars(select(PhotoSelectionCandidate))).all()
+        )
+    response = await client.post(path, json=body)
+    assert response.status_code == 200, response.text
+    async with sessions() as db:
+        decision = await db.get(PhotoSelectionSession, decision.id)
+        assert decision.chosen_rank == 1 and decision.confirmed_at
+        choices = (
+            await db.scalars(select(PhotoSelectionCandidate).order_by(PhotoSelectionCandidate.rank))
+        ).all()
+        assert [c.displayed for c in choices] == [True, True, False]
+        assert [c.selected for c in choices] == [True, False, False]
+    await http.aclose()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("same_campaign", [False, True])
+async def test_review_reuse_limit_is_per_campaign_not_dry_run_reservations(
+    sessions, tmp_path, same_campaign
+):
+    cid, sid, target, ref, _, provider, planner, item, http = await archive_fixture(
+        sessions, tmp_path
+    )
+    asset, _ = await materialize_archive(provider, planner, item, "Cats", target_id=target)
+    async with sessions() as db, db.begin():
+        current = await db.get(Campaign, cid)
+        reserve = Campaign(
+            name="Other dry run",
+            grid_id=current.grid_id,
+            track_url="https://vk.com/audio1_2",
+            is_dry_run=True,
+        )
+        db.add(reserve)
+        await db.flush()
+        for i in range(3):
+            c = Community(domain=f"reserved{i}")
+            db.add(c)
+            await db.flush()
+            db.add(
+                Submission(
+                    campaign_id=cid if same_campaign else reserve.id,
+                    community_id=c.id,
+                    media_asset_id=asset.id,
+                )
+            )
+        context = PhotoSelectionSession(
+            campaign_id=cid,
+            submission_id=sid,
+            community_id=target,
+            category="Cats",
+            proposed_rank=1,
+            baseline_rank=1,
+        )
+        db.add(context)
+        await db.flush()
+        db.add(
+            PhotoSelectionCandidate(
+                selection_session_id=context.id,
+                rank=1,
+                provider="vk_category_archive",
+                source_identity=item.photo.provider_asset_id,
+                media_asset_id=asset.id,
+                features={},
+                candidate=item.photo.model_dump(mode="json"),
+            )
+        )
+    if same_campaign:
+        with pytest.raises(ConflictError, match="Photo reuse limit reached"):
+            await confirm(planner, sid)
+    else:
+        await confirm(planner, sid)
+        async with sessions() as db:
+            assert (await db.get(Submission, sid)).media_asset_id == asset.id
+    await http.aclose()
