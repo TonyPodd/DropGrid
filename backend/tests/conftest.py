@@ -36,7 +36,8 @@ async def sessions(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncS
             text(
                 "TRUNCATE submissions, campaigns, grid_communities, grids, "
                 "communities, accounts, media_assets, photo_search_cache, "
-                "photo_provider_state, photo_preview_cache CASCADE"
+                "photo_provider_state, photo_preview_cache, photo_ranking_models, "
+                "photo_ranking_preferences CASCADE"
             )
         )
     try:

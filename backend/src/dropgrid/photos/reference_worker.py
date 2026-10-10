@@ -13,8 +13,11 @@ from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
 from dropgrid.photos.archive import VKArchivePhotoProvider
+from dropgrid.photos.campaign_preparation import CampaignPreparation
 from dropgrid.photos.engine import PhotoEngine
+from dropgrid.photos.learning import train_one
 from dropgrid.photos.operation_jobs import PhotoJobs
+from dropgrid.photos.preparation import MediaPreparation
 from dropgrid.photos.reference_jobs import ReferenceJobs
 from dropgrid.photos.references import CommunityReferenceCollector
 
@@ -40,12 +43,17 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
     )
     engine.planner.archive = VKArchivePhotoProvider(service.collector)
     operations = PhotoJobs(engine, service.collector)
+    workflow = CampaignPreparation(engine, MediaPreparation(service.collector))
     try:
         while not stop.is_set():
             try:
                 processed = await service.tick()
                 if not processed:
                     processed = await operations.tick()
+                if not processed:
+                    processed = await workflow.tick()
+                if not processed:
+                    processed = int(await train_one(db.sessions, settings))
             except (SQLAlchemyError, PostgresError, OSError, TimeoutError):
                 logger.warning("Reference study worker temporarily unavailable")
                 processed = 0

@@ -204,7 +204,7 @@ async def test_campaign_import_fails_closed_without_network(sessions, tmp_path):
         assert await planner._import(pin_candidate(pin(), 0), "honda", False) == (
             None,
             False,
-            "publication_ineligible",
+            "pinterest_preview_unavailable",
         )
         assert await planner._import(
             pin_candidate(pin(), 0).model_copy(update={"provider": "fake"}), "honda", False

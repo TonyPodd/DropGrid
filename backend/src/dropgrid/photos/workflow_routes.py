@@ -1,0 +1,379 @@
+"""Product workflow endpoints; all photo preparation and review are read/local only."""
+
+from typing import Literal
+from uuid import UUID
+
+from fastapi import APIRouter, Request
+from pydantic import Field
+from sqlalchemy import func, select
+
+from dropgrid.api.dependencies import Session
+from dropgrid.api.schemas import Input
+from dropgrid.db.models import (
+    Campaign,
+    CampaignPreparationJob,
+    Community,
+    PhotoRankingModel,
+    PhotoRankingPreference,
+    PhotoSelectionCandidate,
+    PhotoSelectionSession,
+    Submission,
+)
+from dropgrid.photos.campaign_preparation import enqueue
+from dropgrid.photos.learning import latest_model, queue_training, valid_model
+from dropgrid.photos.review import choose, confirm
+from dropgrid.services.account_pools import pool, save_pool
+from dropgrid.services.catalog import ConflictError, get_entity
+from dropgrid.services.sending import usable_account
+
+router = APIRouter(prefix="/api/v1")
+
+
+class WorkflowInput(Input):
+    account_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ChoiceInput(Input):
+    rank: int = Field(ge=1, le=12)
+    rating: Literal["like", "dislike"] | None = None
+    shown_ranks: list[int] = Field(default_factory=list, max_length=12)
+
+
+@router.post("/campaigns/{campaign_id}/prepare-workflow")
+async def prepare_workflow(
+    campaign_id: UUID, data: WorkflowInput, session: Session, request: Request
+) -> dict[str, object]:
+    job = await enqueue(session, campaign_id, request.app.state.photo_engine, data.account_ids)
+    return {
+        "id": job.id,
+        "state": job.state,
+        "stage": job.stage,
+        "total": job.total,
+        "completed": job.completed,
+    }
+
+
+@router.get("/campaigns/{campaign_id}/preparation-workflow")
+async def preparation_status(campaign_id: UUID, session: Session) -> dict[str, object] | None:
+    await get_entity(session, Campaign, campaign_id)
+    job = await session.scalar(
+        select(CampaignPreparationJob).where(CampaignPreparationJob.campaign_id == campaign_id)
+    )
+    return (
+        {
+            "id": job.id,
+            "state": job.state,
+            "stage": job.stage,
+            "total": job.total,
+            "completed": job.completed,
+            "error_code": job.error_code,
+            "result": job.result,
+        }
+        if job
+        else None
+    )
+
+
+@router.put("/campaigns/{campaign_id}/account-pool")
+async def update_pool(
+    campaign_id: UUID, data: WorkflowInput, session: Session, request: Request
+) -> dict[str, object]:
+    if data.account_ids is None:
+        raise ConflictError("Explicit account selection required")
+    await save_pool(session, campaign_id, data.account_ids, request.app.state.vk_client.settings)
+    return {"saved": True}
+
+
+@router.get("/campaigns/{campaign_id}/account-pool")
+async def get_pool(
+    campaign_id: UUID, session: Session, request: Request
+) -> list[dict[str, object]]:
+    accounts = await pool(session, campaign_id, request.app.state.vk_client.settings)
+    counts: dict[UUID | None, int] = {
+        aid: count
+        for aid, count in (
+            (
+                await session.execute(
+                    select(Submission.account_id, func.count())
+                    .where(Submission.campaign_id == campaign_id)
+                    .group_by(Submission.account_id)
+                )
+            ).all()
+        )
+    }
+    return [
+        {
+            "account_id": a.id,
+            "name": a.name,
+            "quota": quota,
+            "assigned": counts.get(a.id, 0),
+            "usable": usable_account(a),
+            "priority": order,
+        }
+        for a, quota, order in accounts
+    ]
+
+
+@router.get("/campaigns/{campaign_id}/photo-review")
+async def photo_review(campaign_id: UUID, session: Session, page: int = 1) -> dict[str, object]:
+    await get_entity(session, Campaign, campaign_id)
+    page = max(1, page)
+    query = (
+        select(Submission, Community).join(Community).where(Submission.campaign_id == campaign_id)
+    )
+    rows = (
+        await session.execute(
+            query.order_by(Community.domain, Submission.id).limit(25).offset((page - 1) * 25)
+        )
+    ).all()
+    total = (
+        await session.scalar(
+            select(func.count())
+            .select_from(Submission)
+            .where(Submission.campaign_id == campaign_id)
+        )
+        or 0
+    )
+    prepared = (
+        await session.scalar(
+            select(func.count())
+            .select_from(Submission)
+            .where(Submission.campaign_id == campaign_id, Submission.media_asset_id.is_not(None))
+        )
+        or 0
+    )
+    attention = (
+        await session.scalar(
+            select(func.count())
+            .select_from(Submission)
+            .where(
+                Submission.campaign_id == campaign_id,
+                func.jsonb_array_length(Submission.photo_attention) > 0,
+            )
+        )
+        or 0
+    )
+    items = []
+    for row, community in rows:
+        selection = await session.scalar(
+            select(PhotoSelectionSession)
+            .where(PhotoSelectionSession.submission_id == row.id)
+            .order_by(PhotoSelectionSession.created_at.desc(), PhotoSelectionSession.id.desc())
+            .limit(1)
+        )
+        candidates = (
+            (
+                await session.scalars(
+                    select(PhotoSelectionCandidate)
+                    .where(PhotoSelectionCandidate.selection_session_id == selection.id)
+                    .order_by(PhotoSelectionCandidate.rank)
+                )
+            ).all()
+            if selection
+            else []
+        )
+        items.append(
+            {
+                "submission_id": row.id,
+                "community_id": community.id,
+                "community": community.name or community.domain,
+                "media_asset_id": row.media_asset_id,
+                "account_id": row.account_id,
+                "attention": row.photo_attention,
+                "status": row.status,
+                "ranking_model_version": row.ranking_model_version,
+                "selection_id": selection.id if selection else None,
+                "confirmed": bool(selection and selection.confirmed_at),
+                "proposed_rank": selection.proposed_rank if selection else None,
+                "candidates": [
+                    {
+                        "rank": c.rank,
+                        "provider": c.provider,
+                        "source_identity": c.source_identity,
+                        "media_asset_id": c.media_asset_id,
+                        "preview_id": c.preview_id,
+                        "reference_id": c.reference_id,
+                        "source_community_id": c.candidate.get("source_community_id", community.id),
+                        "features": c.features,
+                        "operator_rating": c.operator_rating,
+                    }
+                    for c in candidates
+                ],
+            }
+        )
+    return {
+        "items": items,
+        "total": total,
+        "prepared": prepared,
+        "needs_attention": attention,
+        "page": page,
+    }
+
+
+@router.put("/submissions/{submission_id}/photo-choice")
+async def set_choice(submission_id: UUID, data: ChoiceInput, session: Session) -> dict[str, object]:
+    selection = await choose(session, submission_id, data.rank, data.rating, data.shown_ranks)
+    return {"proposed_rank": selection.proposed_rank, "confirmed": False}
+
+
+@router.post("/submissions/{submission_id}/photo-approve")
+async def approve_one(submission_id: UUID, request: Request) -> dict[str, object]:
+    await confirm(request.app.state.photo_engine.planner, submission_id)
+    return {"confirmed": True}
+
+
+@router.post("/campaigns/{campaign_id}/photo-approve-all")
+async def approve_all(campaign_id: UUID, request: Request) -> dict[str, object]:
+    engine = request.app.state.photo_engine
+    async with engine.planner.sessions() as session:
+        campaign = await get_entity(session, Campaign, campaign_id)
+        rows = list(
+            (
+                await session.scalars(
+                    select(Submission)
+                    .where(
+                        Submission.campaign_id == campaign_id,
+                        Submission.media_asset_id.is_not(None),
+                    )
+                    .order_by(Submission.id)
+                )
+            ).all()
+        )
+    confirmed = 0
+    for row in rows:
+        await confirm(engine.planner, row.id)
+        confirmed += 1
+    async with engine.planner.sessions() as session, session.begin():
+        campaign = await get_entity(session, Campaign, campaign_id)
+        if campaign.status.value == "ready":
+            campaign.preparation_state = "ready"
+    return {"confirmed": confirmed}
+
+
+class RankingInput(Input):
+    mode: Literal["deterministic", "learned"]
+
+
+@router.get("/photo-ranking")
+async def ranking_status(session: Session, request: Request) -> dict[str, object]:
+    count = (
+        await session.scalar(
+            select(func.count())
+            .select_from(PhotoSelectionSession)
+            .where(PhotoSelectionSession.confirmed_at.is_not(None))
+        )
+        or 0
+    )
+    model = await latest_model(session)
+    pref = await session.get(PhotoRankingPreference, 1)
+    jobs = list(
+        (
+            await session.scalars(
+                select(PhotoRankingModel).where(PhotoRankingModel.state.in_(("queued", "training")))
+            )
+        ).all()
+    )
+    return {
+        "mode": pref.mode if pref else "deterministic",
+        "choices": count,
+        "minimum": request.app.state.vk_client.settings.photo_learned_ranker_min_choices,
+        "model_version": str(model.id) if model else None,
+        "metrics": model.metrics if model else None,
+        "promotion_ready": bool(
+            valid_model(model) and model and model.metrics and model.metrics.get("promotion_ready")
+        ),
+        "training": bool(jobs),
+    }
+
+
+@router.put("/photo-ranking")
+async def set_ranking(data: RankingInput, session: Session) -> dict[str, object]:
+    model = await latest_model(session)
+    if data.mode == "learned" and not (
+        valid_model(model) and model and model.metrics and model.metrics.get("promotion_ready")
+    ):
+        raise ConflictError(
+            "Learned ranking is not ready; deterministic baseline remains available"
+        )
+    preference = await session.get(PhotoRankingPreference, 1)
+    if preference is None:
+        preference = PhotoRankingPreference(id=1)
+        session.add(preference)
+    preference.mode = data.mode
+    return {"mode": data.mode}
+
+
+@router.post("/photo-ranking/train")
+async def request_training(session: Session, request: Request) -> dict[str, object]:
+    model = await queue_training(session, request.app.state.vk_client.settings, explicit=True)
+    return {
+        "queued": model is not None,
+        "minimum": request.app.state.vk_client.settings.photo_learned_ranker_min_choices,
+    }
+
+
+@router.get("/campaigns/{campaign_id}/results-breakdown")
+async def results_breakdown(campaign_id: UUID, session: Session) -> dict[str, object]:
+    campaign = await get_entity(session, Campaign, campaign_id)
+    from dropgrid.db.models import Account, GridCommunity, MediaAsset
+
+    rows = (
+        await session.execute(
+            select(Submission, GridCommunity.category, Account.name, MediaAsset.provider)
+            .join(
+                GridCommunity,
+                (GridCommunity.community_id == Submission.community_id)
+                & (GridCommunity.grid_id == campaign.grid_id),
+            )
+            .outerjoin(Account, Account.id == Submission.account_id)
+            .outerjoin(MediaAsset, MediaAsset.id == Submission.media_asset_id)
+            .where(Submission.campaign_id == campaign_id)
+        )
+    ).all()
+    groups: dict[str, dict[str, dict[str, int | float]]] = {
+        kind: {} for kind in ("category", "provider", "account")
+    }
+    for row, category, account, provider in rows:
+        for kind, label in (
+            ("category", category or "Без категории"),
+            ("provider", row.photo_source or provider or "Без фото"),
+            ("account", f"{account} · {row.account_id}" if account else "Не назначен"),
+        ):
+            bucket = groups[kind].setdefault(label, {"total": 0, "sent": 0})
+            bucket["total"] += 1
+            status = row.status.value
+            bucket[status] = bucket.get(status, 0) + 1
+            if row.submitted_at is not None:
+                bucket["sent"] += 1
+    for values in groups.values():
+        for bucket in values.values():
+            # Acceptance among successful submissions; pending moderation is included in sent.
+            bucket["acceptance_rate"] = (
+                bucket.get("published", 0) / bucket["sent"] if bucket["sent"] else 0
+            )
+    return {"breakdowns": groups}
+
+
+@router.get("/communities/{community_id}/photo-context")
+async def photo_context(
+    community_id: UUID, session: Session, grid_id: UUID | None = None
+) -> dict[str, object]:
+    from dropgrid.db.models import CommunityContentProfile, GridCommunity
+    from dropgrid.photos.concepts import retrieval_hint
+    from dropgrid.photos.domain import PhotoQueryBuilder
+
+    community = await get_entity(session, Community, community_id)
+    relation = await session.get(GridCommunity, (grid_id, community_id)) if grid_id else None
+    if grid_id and not relation:
+        raise ConflictError("Community is not in this grid")
+    profile = await session.get(CommunityContentProfile, community_id)
+    category = relation.category if relation else community.category
+    comment = relation.comment if relation else None
+    hint = retrieval_hint(relation.content_hint if relation else None, community.name, comment)
+    plan = PhotoQueryBuilder().build(category, hint, profile.desired_content if profile else None)
+    return {
+        "category": category,
+        "comment": comment,
+        "content_hint": plan.content_hint,
+        "desired_content": plan.desired_content,
+    }

@@ -148,26 +148,23 @@ async def test_real_planner_pinterest_boundary_cached_import_and_provenance(
             visual,
         )
         result = await planner.plan(campaign_id, MediaPlanInput())
-        assert result.newly_assigned == int(publication)
-        assert bool(fallback.calls) != publication
+        assert result.newly_assigned == 1
+        assert not fallback.calls
         assert downloads == ["i.pinimg.com"]
         async with sessions() as session:
             submission = await session.scalar(select(Submission))
             assets = (await session.scalars(select(MediaAsset))).all()
-            if publication:
-                assert len(assets) == 1 and submission.media_asset_id == assets[0].id
-                provenance = await session.scalar(select(MediaProviderImport))
-                assert provenance.provider == "pinterest"
-                assert provenance.provider_asset_id == "123450001"
-                assert provenance.source_url == pin()["url"]
-                assert provenance.image_source_url == pin()["imageUrl"]
-                assert provenance.retrieval_query == "honda accord"
-                assert provenance.license_code == assets[0].license_code == "unverified-public-pin"
-                assert planner.eligible(assets[0])
-                planner.settings.pinterest_publication_enabled = False
-                assert not planner.eligible(assets[0])
-            else:
-                assert not assets and submission.media_asset_id is None
+            assert len(assets) == 1 and submission.media_asset_id == assets[0].id
+            provenance = await session.scalar(select(MediaProviderImport))
+            assert provenance.provider == "pinterest"
+            assert provenance.provider_asset_id == "123450001"
+            assert provenance.source_url == pin()["url"]
+            assert provenance.image_source_url == pin()["imageUrl"]
+            assert provenance.retrieval_query == "honda accord"
+            assert provenance.license_code == assets[0].license_code == "unverified-public-pin"
+            assert planner.eligible(assets[0])
+            planner.settings.pinterest_publication_enabled = False
+            assert planner.eligible(assets[0])
         assert community_id
 
 

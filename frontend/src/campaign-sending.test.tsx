@@ -34,6 +34,14 @@ const report = {
 };
 afterEach(() => vi.restoreAllMocks());
 function mock() {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response(
+      JSON.stringify([
+        { account_id: "a", name: "Usable", assigned: 1, quota: 100 },
+      ]),
+      { status: 200 },
+    ),
+  );
   vi.spyOn(accountsApi, "list").mockResolvedValue([
     {
       id: "a",
@@ -57,16 +65,12 @@ function mock() {
     .spyOn(campaignsApi, "start")
     .mockResolvedValue({ ...campaign, status: "running" });
 }
-it("requires explicit Account and confirmation, starts a pilot scope only on click", async () => {
+it("uses persisted account pool and confirmation, starts a pilot scope only on click", async () => {
   const start = mock(),
     changed = vi.fn();
   render(<CampaignSendControls campaign={campaign} onChanged={changed} />);
   expect(screen.getByRole("button", { name: "Start campaign" })).toBeDisabled();
-  await screen.findByRole("option", { name: /Usable/ });
-  expect(
-    screen.queryByRole("option", { name: /Disabled/ }),
-  ).not.toBeInTheDocument();
-  await userEvent.selectOptions(screen.getByRole("combobox"), "a");
+  await screen.findByText(/Выбранный пул: Usable/);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Start campaign" }),
@@ -78,7 +82,6 @@ it("requires explicit Account and confirmation, starts a pilot scope only on cli
   expect(start).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Продолжить" }));
   expect(start).toHaveBeenCalledWith("campaign", {
-    account_id: "a",
     max_submissions: 1,
   });
   expect(changed).toHaveBeenCalledOnce();
@@ -91,8 +94,7 @@ it("blocks missing media preflight", async () => {
     media_missing: 1,
   });
   render(<CampaignSendControls campaign={campaign} onChanged={vi.fn()} />);
-  await screen.findByRole("option", { name: /Usable/ });
-  await userEvent.selectOptions(screen.getByRole("combobox"), "a");
+  await screen.findByText(/Выбранный пул: Usable/);
   await screen.findByText(/Без фото: 1/);
   expect(screen.getByRole("button", { name: "Start campaign" })).toBeDisabled();
 });
@@ -100,8 +102,7 @@ it("supports full scope explicitly and surfaces fixed start errors", async () =>
   const start = mock();
   start.mockRejectedValue(new Error("Temporary failure"));
   render(<CampaignSendControls campaign={campaign} onChanged={vi.fn()} />);
-  await screen.findByRole("option", { name: /Usable/ });
-  await userEvent.selectOptions(screen.getByRole("combobox"), "a");
+  await screen.findByText(/Выбранный пул: Usable/);
   await userEvent.click(screen.getByRole("checkbox"));
   await waitFor(() =>
     expect(
@@ -111,7 +112,6 @@ it("supports full scope explicitly and surfaces fixed start errors", async () =>
   await userEvent.click(screen.getByRole("button", { name: "Start campaign" }));
   await userEvent.click(screen.getByRole("button", { name: "Продолжить" }));
   expect(start).toHaveBeenCalledWith("campaign", {
-    account_id: "a",
     max_submissions: null,
   });
   expect(await screen.findByRole("alert")).toBeInTheDocument();

@@ -124,6 +124,7 @@ describe("Campaign creation", () => {
         track_url: "https://vk.ru/audio-123_456",
         caption: "  caption  ",
         publication_check_hours: 96,
+        photo_review_mode: "AUTO",
       }),
     );
   });

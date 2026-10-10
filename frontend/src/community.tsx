@@ -185,13 +185,19 @@ export const communityVisualApi = {
       method: "POST",
       body: { kind: "archive", archive: { max_pages: 20 } },
     }),
-  preview: (id: string, gridId?: string, providers?: Providers) =>
+  preview: (
+    id: string,
+    gridId?: string,
+    providers?: Providers,
+    prepare = false,
+  ) =>
     request<PhotoJob>(`/communities/${id}/photo-jobs`, {
       method: "POST",
       body: {
         kind: "preview",
+        prepare,
         preview: {
-          candidate_limit: 8,
+          candidate_limit: 12,
           diagnostics: true,
           ...(gridId ? { grid_id: gridId } : {}),
           ...providers,
@@ -234,12 +240,6 @@ function CandidateScores({
               loading="lazy"
             />
             <figcaption>
-              {item.publication_eligible === false && (
-                <strong>
-                  Только предпросмотр
-                  <br />
-                </strong>
-              )}
               {item.pin_url && (
                 <a href={item.pin_url} target="_blank" rel="noreferrer">
                   Pin · {item.title || item.source_identity}
@@ -314,6 +314,9 @@ const roleReasons: Record<string, string> = {
 function PhotoProgress({ job }: { job: PhotoJob }) {
   const stages: Record<string, string> = {
     queued: "В очереди",
+    communities: "Изучаем группу",
+    references: "Готовим CORE референсы",
+    pinterest_materializing: "Проверяем изображения Pinterest",
     archive_seek: "Ищем начало диапазона архива",
     archive_scan: "Индексируем посты",
     pixabay_search: "Ищем фото в Pixabay",
@@ -396,6 +399,28 @@ export function CommunityDetailPage() {
   const state = useLoad(
     (signal) => communityVisualApi.profile(id, signal),
     [id, revision],
+  );
+  const [profileCache, setProfileCache] = useState<{
+    id: string;
+    data: Profile;
+  } | null>(null);
+  useEffect(() => {
+    if (state.data) setProfileCache({ id, data: state.data });
+  }, [id, state.data]);
+  const displayedProfile =
+    state.data ?? (profileCache?.id === id ? profileCache.data : undefined);
+  const context = useLoad(
+    (signal) =>
+      request<{
+        category: string | null;
+        comment: string | null;
+        content_hint: string | null;
+        desired_content: string | null;
+      }>(
+        `/communities/${id}/photo-context${gridId ? `?grid_id=${gridId}` : ""}`,
+        { signal },
+      ),
+    [id, gridId, revision],
   );
   const metadata = useLoad(
     (signal) => communityVisualApi.metadata(id, signal),
@@ -501,13 +526,20 @@ export function CommunityDetailPage() {
       clearTimeout(timer);
     };
   }, [id, pollRevision]);
-  async function run(operation: "save" | "sync" | "archive" | "preview") {
+  async function run(
+    operation: "save" | "sync" | "archive" | "preview" | "prepare",
+  ) {
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      if (operation === "preview") {
-        const job = await communityVisualApi.preview(id, gridId, providers);
+      if (operation === "preview" || operation === "prepare") {
+        const job = await communityVisualApi.preview(
+          id,
+          gridId,
+          providers,
+          operation === "prepare",
+        );
         setJobs((old) => [...old.filter((row) => row.kind !== "preview"), job]);
       } else {
         await communityVisualApi.save(id, body);
@@ -575,12 +607,18 @@ export function CommunityDetailPage() {
           <p>
             {metadata.data?.domain} ·{" "}
             {preview?.category ??
+              context.data?.category ??
               metadata.data?.category ??
               "Категория не задана"}
           </p>
           <p>
-            Комментарий: {preview?.comment ?? "—"} · Контент:{" "}
-            {preview?.content_hint ?? body.desired_content ?? "—"}
+            Комментарий: {preview?.comment ?? context.data?.comment ?? "—"} ·
+            Контент:{" "}
+            {preview?.content_hint ??
+              context.data?.content_hint ??
+              context.data?.desired_content ??
+              body.desired_content ??
+              "—"}
           </p>
         </div>
         <span
@@ -589,7 +627,11 @@ export function CommunityDetailPage() {
           }
         >
           Визуальный движок:{" "}
-          {preview?.visual_engine?.active ? "ACTIVE" : "INACTIVE"}
+          {preview
+            ? preview.visual_engine?.active
+              ? "ACTIVE"
+              : "INACTIVE"
+            : "Подбор ещё не запускался"}
         </span>
       </section>
       <div className="lab-counters">
@@ -644,11 +686,20 @@ export function CommunityDetailPage() {
           </strong>
         </span>
       </div>
-      <CommunityActivities id={id} />
-      {jobs.map((job) => (
-        <PhotoProgress key={job.id} job={job} />
-      ))}
-      {study && (
+      <button
+        className="primary"
+        disabled={busy || working}
+        onClick={() => void run("prepare")}
+      >
+        Подобрать фото
+      </button>
+      {jobs
+        .filter((job) => job.kind === "preview")
+        .slice(-1)
+        .map((job) => (
+          <PhotoProgress key={job.id} job={job} />
+        ))}
+      {study && !jobs.some((job) => job.kind === "preview") && (
         <article className="activity-card" role="status">
           {
             (
@@ -667,10 +718,16 @@ export function CommunityDetailPage() {
           {studying && <progress aria-label="Прогресс изучения" />}
         </article>
       )}
-      <State {...state} retry={state.reload}>
-        {state.data && (
+      <State
+        {...state}
+        loading={state.loading && !displayedProfile}
+        retry={state.reload}
+      >
+        {displayedProfile && (
           <>
-            <section className="form-card">
+            <details className="form-card">
+              <summary>Расширенные настройки / Диагностика</summary>
+              <CommunityActivities id={id} />
               <h2>Сравнить источники</h2>
               <div className="provider-toggles">
                 {(
@@ -700,11 +757,7 @@ export function CommunityDetailPage() {
               >
                 Сравнить подбор фото
               </button>
-              <p className="note">
-                Pinterest и фото других сообществ доступны только для
-                исследования. Визуальное сходство — не вероятность качества.
-              </p>
-            </section>
+            </details>
             <details className="form-card">
               <summary>Настройки профиля и индексации</summary>
               <form
@@ -833,11 +886,18 @@ export function CommunityDetailPage() {
                 "Часть источников недоступна; сравнение остальных сохранено."}
             </p>
           ))}
-          <h2>BEST MATCHES</h2>
-          <p>
-            Лучшее совпадение не означает разрешение использовать фото в
-            кампании.
-          </p>
+          <h2>Выбрано системой</h2>
+          {best[0] && (
+            <button
+              className="selected-photo"
+              onClick={() => setSelected(best[0])}
+            >
+              <img src={imageUrl(best[0], id)} alt="Выбрано системой" />
+              <strong>{sources[best[0].source ?? "library"]}</strong>
+              <span>{styleScore(best[0])}</span>
+            </button>
+          )}
+          <h3>Альтернативы</h3>
           <p>
             Pinterest: {preview.pinterest_retrieved ?? 0} найдено ·{" "}
             {preview.pinterest_embedded ?? 0} проверено. Pixabay:{" "}
@@ -906,6 +966,7 @@ export function CommunityDetailPage() {
           </div>
           <div className="match-grid">
             {best
+              .slice(1, 12)
               .filter((item) => source === "all" || item.source === source)
               .map((item) => (
                 <button
@@ -923,14 +984,6 @@ export function CommunityDetailPage() {
                     {sources[item.source ?? "library"] ?? item.source}
                   </strong>
                   <span>{styleScore(item)}</span>
-                  {(item.provider === "pinterest" ||
-                    item.source === "pinterest") &&
-                    item.publication_eligible === true && (
-                      <small>Разрешено настройкой</small>
-                    )}
-                  {item.publication_eligible === false && (
-                    <small>Только предпросмотр</small>
-                  )}
                 </button>
               ))}
           </div>
@@ -995,7 +1048,7 @@ export function CommunityDetailPage() {
             />
             <CandidateScores
               communityId={id}
-              title="Pinterest · experimental preview"
+              title="Pinterest"
               items={preview.pinterest ?? []}
             />
             <CandidateScores
@@ -1083,15 +1136,6 @@ export function CommunityDetailPage() {
               {selected.retrieval_queries?.join(" · ") ||
                 "Индексированная библиотека"}
             </p>
-            {(selected.provider === "pinterest" ||
-              selected.source === "pinterest") && (
-              <p>
-                {selected.publication_eligible
-                  ? "Разрешено настройкой"
-                  : "Только предпросмотр"}
-                . Права на публикацию не проверены.
-              </p>
-            )}
             <div className="actions">
               {["like", "dislike"].map((rating) => (
                 <button

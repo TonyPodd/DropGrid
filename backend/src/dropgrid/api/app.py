@@ -76,6 +76,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Content-Type"],
     )
+    from dropgrid.photos.workflow_routes import router as photo_workflow_router
+
+    app.include_router(photo_workflow_router)
     app.include_router(router)
     app.include_router(activity_router)
     app.include_router(photo_router)

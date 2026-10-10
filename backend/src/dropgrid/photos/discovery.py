@@ -95,10 +95,7 @@ async def discover(
         and (not for_campaign or policy.candidate_allowed(item.photo, plan.sensitive))
         for item in result.pins
     )
-    if for_campaign and not settings.pinterest_publication_enabled:
-        viable = 0
-        result.fallback_reason = "primary_preview_only"
-    elif viable < roles.minimum:
+    if viable < roles.minimum:
         result.fallback_reason = "primary_insufficient" if result.pins else "primary_unavailable"
     elif roles.diversity:
         result.fallback_reason = "diversity"

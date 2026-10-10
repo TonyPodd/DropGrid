@@ -160,7 +160,7 @@ it("submits provider toggles and explicit grid context only after click", async 
   await userEvent.click(
     screen.getByRole("button", { name: /Сравнить подбор/ }),
   );
-  await screen.findByRole("heading", { name: "BEST MATCHES" });
+  await screen.findByRole("heading", { name: "Выбрано системой" });
   expect(communityVisualApi.preview).toHaveBeenCalledExactlyOnceWith(
     "c1",
     "g1",
@@ -169,6 +169,7 @@ it("submits provider toggles and explicit grid context only after click", async 
       include_category_library: true,
       include_pinterest: true,
     }),
+    false,
   );
 });
 it("shows one ranked grid, filters sources and explains source vs target images", async () => {
@@ -176,18 +177,15 @@ it("shows one ranked grid, filters sources and explains source vs target images"
     kind === "preview" ? photoJob() : null,
   );
   open();
-  await screen.findByRole("heading", { name: "BEST MATCHES" });
-  expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(2);
-  await userEvent.click(
-    screen.getByRole("button", { name: "VK category library" }),
-  );
+  await screen.findByRole("heading", { name: "Выбрано системой" });
   expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(1);
-  expect(screen.getByAltText("Подобранное фото")).toHaveAttribute(
+  expect(screen.getByAltText("Выбрано системой")).toBeInTheDocument();
+  expect(screen.getByAltText("Выбрано системой")).toHaveAttribute(
     "src",
     expect.stringContaining("/communities/other/references/r2/content"),
   );
   await userEvent.click(
-    screen.getByRole("button", { name: /#1 · VK category/ }),
+    screen.getByRole("button", { name: /VK category library.*Итоговое/ }),
   );
   const dialog = screen.getByRole("dialog", { name: "Почему это фото" });
   expect(
@@ -257,7 +255,8 @@ it("shows safe provider warning while retaining other results", async () => {
   );
   open();
   await screen.findByText("Pinterest временно не вернул результаты.");
-  expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(2);
+  expect(screen.getAllByAltText("Подобранное фото")).toHaveLength(1);
+  expect(screen.getByAltText("Выбрано системой")).toBeInTheDocument();
 });
 it("shows source contributions, publication boundary and stores feedback", async () => {
   const job = photoJob();
@@ -291,19 +290,20 @@ it("shows source contributions, publication boundary and stores feedback", async
   vi.mocked(communityVisualApi.latest).mockImplementation(async (_id, kind) =>
     kind === "preview" ? job : null,
   );
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response(JSON.stringify({ rating: "like" }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    }),
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ rating: "like" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
   );
   open();
   await screen.findByText(/27 найдено/);
   expect(screen.getByText(/не понадобился/)).toBeInTheDocument();
-  await userEvent.click(screen.getByAltText("Подобранное фото"));
+  await userEvent.click(screen.getByAltText("Выбрано системой"));
   expect(
-    screen.getByText(/Права на публикацию не проверены/),
-  ).toBeInTheDocument();
+    screen.queryByText(/Права на публикацию не проверены/),
+  ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "👍 подходит" }));
   await screen.findByText(/Оценка сохранена/);
   expect(fetch).toHaveBeenCalledWith(
@@ -330,4 +330,23 @@ it("navigates review communities and counts only persisted manual feedback", asy
     "href",
     "/communities/c2?grid=g1&review=c1%2Cc2%2Cc3",
   );
+});
+
+it("one primary action prepares references and photos, diagnostics are collapsed", async () => {
+  open("/communities/c1?grid=g1");
+  await screen.findByRole("button", { name: "Подобрать фото" });
+  expect(
+    screen.getByText("Расширенные настройки / Диагностика").closest("details"),
+  ).not.toHaveAttribute("open");
+  await userEvent.click(screen.getByRole("button", { name: "Подобрать фото" }));
+  await waitFor(() =>
+    expect(communityVisualApi.preview).toHaveBeenCalledWith(
+      "c1",
+      "g1",
+      expect.any(Object),
+      true,
+    ),
+  );
+  await screen.findByRole("heading", { name: "Выбрано системой" });
+  expect(screen.queryByText("Только предпросмотр")).not.toBeInTheDocument();
 });

@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dropgrid.api.dependencies import Session
 from dropgrid.db.models import (
+    Account,
     Campaign,
+    CampaignPreparationJob,
     Community,
     MediaPreparationJob,
     PhotoOperationJob,
@@ -160,6 +162,98 @@ async def list_activity(session: AsyncSession) -> list[ActivityRead]:
                     else None,
                 )
             )
+    jobs = (
+        await session.execute(
+            select(CampaignPreparationJob, Campaign.name)
+            .join(Campaign)
+            .order_by(CampaignPreparationJob.updated_at.desc())
+            .limit(100)
+        )
+    ).all()
+    for job, name in jobs:
+        result.append(
+            ActivityRead(
+                id=f"campaign-preparation:{job.id}",
+                kind="campaign_preparation",
+                label=f"Подготовка кампании · {name}",
+                state="success"
+                if job.state == "ready"
+                else "failed"
+                if job.state == "failed"
+                else "warning"
+                if job.state == "cancelled"
+                else "queued"
+                if job.state == "queued"
+                else "running",
+                stage="Группы и референсы"
+                if job.stage == "communities"
+                else "Фото и назначения"
+                if job.stage == "photos"
+                else "Готово",
+                counters={
+                    "Группы подготовлены": int(
+                        (job.result or {}).get("communities_prepared", job.completed)
+                    ),
+                    "Стиль изучен": int((job.result or {}).get("styles_ready", 0)),
+                    "Фото назначено": int((job.result or {}).get("newly_assigned", 0))
+                    + int((job.result or {}).get("previously_assigned", 0)),
+                },
+                current=job.completed,
+                total=job.total,
+                started_at=job.created_at,
+                updated_at=job.updated_at,
+                elapsed_seconds=max(0, int((job.updated_at - job.created_at).total_seconds())),
+                target_url=f"/campaigns/{job.campaign_id}",
+            )
+        )
+    campaigns = (
+        await session.scalars(
+            select(Campaign)
+            .where(Campaign.status.in_(("ready", "running", "monitoring")))
+            .limit(100)
+        )
+    ).all()
+    for campaign in campaigns:
+        allocated = (
+            await session.execute(
+                select(Submission, Account.name)
+                .outerjoin(Account)
+                .where(Submission.campaign_id == campaign.id)
+            )
+        ).all()
+        campaign_counters: dict[str, int] = {}
+        for submission, account_name in allocated:
+            key = submission.status.value
+            campaign_counters[key] = campaign_counters.get(key, 0) + 1
+            if submission.submitted_at:
+                key = f"{account_name or 'Account'} · отправлено"
+                campaign_counters[key] = campaign_counters.get(key, 0) + 1
+        result.append(
+            ActivityRead(
+                id=f"campaign:{campaign.id}",
+                kind="campaign",
+                label=campaign.name,
+                state="running"
+                if campaign.status.value in ("running", "monitoring")
+                else "success",
+                stage="Мониторинг"
+                if campaign.status.value == "monitoring"
+                else "Отправка"
+                if campaign.status.value == "running"
+                else "Проверка фото"
+                if campaign.preparation_state == "awaiting_review"
+                else "Готово к отправке",
+                counters=campaign_counters,
+                current=sum(1 for row, _ in allocated if row.submitted_at),
+                total=len(allocated),
+                started_at=campaign.created_at,
+                updated_at=max(
+                    (row.updated_at for row, _ in allocated), default=campaign.created_at
+                ),
+                elapsed_seconds=0,
+                target_url=f"/campaigns/{campaign.id}",
+            )
+        )
     submission_rows = (
         await session.execute(
             select(Submission, Campaign.name)

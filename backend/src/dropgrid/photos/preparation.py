@@ -111,6 +111,7 @@ class MediaPreparation:
                 select(CommunityReferencePhoto.community_id, func.count())
                 .where(
                     CommunityReferencePhoto.is_style_reference.is_(True),
+                    CommunityReferencePhoto.reference_role == "core",
                     CommunityReferencePhoto.enabled.is_(True),
                     CommunityReferencePhoto.posted_at
                     >= utcnow() - timedelta(days=self.settings.campaign_reference_recent_days),
@@ -135,6 +136,7 @@ class MediaPreparation:
                     select(CommunityReferencePhoto).where(
                         CommunityReferencePhoto.community_id == community_id,
                         CommunityReferencePhoto.is_style_reference.is_(True),
+                        CommunityReferencePhoto.reference_role == "core",
                         CommunityReferencePhoto.enabled.is_(True),
                         CommunityReferencePhoto.posted_at
                         >= utcnow() - timedelta(days=self.settings.campaign_reference_recent_days),

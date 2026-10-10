@@ -39,6 +39,7 @@ from dropgrid.photos.domain import (
     PhotoError,
     PhotoPolicy,
     PhotoQueryBuilder,
+    PhotoQueryPlan,
     PhotoRanker,
     normalize_category,
 )
@@ -127,8 +128,7 @@ class CampaignMediaPlanner:
 
     def eligible(self, asset: MediaAsset, sensitive: bool = False) -> bool:
         if (
-            (asset.provider == "pinterest" and not self.settings.pinterest_publication_enabled)
-            or asset.provider == "vk_category_archive"
+            asset.provider == "vk_category_archive"
             or not asset.enabled
             or not asset.sha256
             or not asset.license_code
@@ -167,8 +167,6 @@ class CampaignMediaPlanner:
     ) -> tuple[MediaAsset | None, bool, str | None]:
         if (
             candidate.provider == "vk_category_archive"
-            or candidate.provider == "pinterest"
-            and not self.settings.pinterest_publication_enabled
             or not candidate.publication_eligible
             and candidate.provider != "pinterest"
         ):
@@ -633,9 +631,7 @@ class CampaignMediaPlanner:
                                     assets.append(asset)
                                 if all(a.id != asset.id for a in library):
                                     library.append(asset)
-                    if len(assets) < len(submission_ids) and not (
-                        self.settings.pinterest_publication_enabled and discovered_pins.get(context)
-                    ):
+                    if len(assets) < len(submission_ids) and not (discovered_pins.get(context)):
                         warnings.append("limited_unique_photos")
         except TimeoutError:
             for category in categories.values():
@@ -643,6 +639,9 @@ class CampaignMediaPlanner:
         visual_scores: dict[UUID, dict[UUID, float]] = {}
         allowed_assets: dict[UUID, set[UUID]] = {}
         archive_sources: dict[UUID, dict[UUID, UUID]] = {}
+        snapshots: dict[
+            UUID, tuple[PhotoQueryPlan, list[PoolCandidate], list[PoolCandidate], str, list[str]]
+        ] = {}
         from dropgrid.photos.pool import archive_pool, materialize_archive, rank_pool
 
         if self.visual:
@@ -673,28 +672,6 @@ class CampaignMediaPlanner:
                                 replace(i, score=None, reference_matches=[])
                                 for i in discovered_pins.get(context, [])
                             ]
-                            if (
-                                not archives
-                                and not pins
-                                and not self.settings.cross_community_reuse_enabled
-                            ):
-                                from dropgrid.photos.rotation import community_usage
-
-                                async with self.sessions() as s:
-                                    usage = await community_usage(s, community_id, utcnow())
-                                if not usage:
-                                    assets = [item.asset for item in pool if item.asset]
-                                    scores = await self.visual.rank_assets(
-                                        community_id, assets, plan
-                                    )
-                                    allowed_assets[sid] = {a.id for a in assets}
-                                    if scores and all(
-                                        score.visual_score is not None for score in scores.values()
-                                    ):
-                                        visual_scores[sid] = {
-                                            aid: score.final_score for aid, score in scores.items()
-                                        }
-                                    continue
                             report.source_contributions["vk_archive"]["retrieved"] += len(archives)
                             pool += archives + pins
                             if self.archive and self.settings.cross_community_reuse_enabled:
@@ -715,6 +692,11 @@ class CampaignMediaPlanner:
                                     len(category_pool)
                                 )
                             mixed_ranked = await rank_pool(self.visual, community_id, pool, plan)
+                            from dropgrid.photos.review import rerank
+
+                            baseline = list(mixed_ranked)
+                            mixed_ranked, version = await rerank(self, mixed_ranked, plan)
+                            snapshots[sid] = (plan, mixed_ranked, baseline, version, list(warnings))
                             for pool_item in mixed_ranked:
                                 report.source_contributions[pool_item.source]["deduplicated"] += 1
                             for pool_item in mixed_ranked[:10]:
@@ -726,8 +708,6 @@ class CampaignMediaPlanner:
                                 if item.source == "vk_category_archive":
                                     continue
                                 if item.source == "pinterest":
-                                    if not self.settings.pinterest_publication_enabled:
-                                        continue
                                     asset, created, warning = await self._import(
                                         item.photo, category, plan.sensitive
                                     )
@@ -872,7 +852,9 @@ class CampaignMediaPlanner:
                 valid = []
                 for asset in available.get(context, []):
                     fresh = await session.get(MediaAsset, asset.id)
-                    if fresh and self.eligible(fresh, self.builder.build(category).sensitive):
+                    if fresh and self.eligible(
+                        fresh, self.builder.build(category, hint, wanted).sensitive
+                    ):
                         valid.append(fresh)
                 eligible_ids = {s.id for s in current if s.status == SubmissionStatus.pending}
                 if self.visual:
@@ -933,6 +915,15 @@ class CampaignMediaPlanner:
                     ]["selected"] += 1
                 elif data.force and submission.status == SubmissionStatus.pending:
                     submission.media_asset_id = None
+            from dropgrid.photos.review import snapshot
+
+            for submission in current:
+                if submission.id in snapshots and submission.id in assignments:
+                    await snapshot(session, submission, *snapshots[submission.id])
+                elif submission.media_asset_id is None:
+                    submission.photo_attention = sorted(
+                        set(submission.photo_attention + ["preparation_error"])
+                    )
             assigned_ids = {s.media_asset_id for s in current if s.media_asset_id}
             report.unassigned = sum(s.media_asset_id is None for s in current)
             report.unique_assets = len(assigned_ids)

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from dropgrid.api.schemas import Input
 from dropgrid.db.models import (
+    Account,
     Community,
     CommunityContentProfile,
     PhotoOperationJob,
@@ -34,6 +35,8 @@ from dropgrid.services.catalog import get_entity
 
 class OperationInput(Input):
     kind: Literal["archive", "preview"]
+    prepare: bool = False
+    account_id: UUID | None = None
     preview: PhotoPreviewInput = Field(default_factory=PhotoPreviewInput)
     archive: ArchiveSyncInput = Field(default_factory=ArchiveSyncInput)
 
@@ -182,6 +185,65 @@ class PhotoJobs:
                     community_id, data.archive.account_id, data.archive.max_pages
                 )
             else:
+                if data.prepare:
+                    from dropgrid.domain.enums import AccountStatus
+                    from dropgrid.photos.preparation import MediaPreparation
+
+                    preparation = MediaPreparation(self.collector)
+                    async with self.sessions() as session:
+                        account = (
+                            await session.get(Account, data.account_id)
+                            if data.account_id
+                            else await session.scalar(
+                                select(Account)
+                                .where(
+                                    Account.status == AccountStatus.active,
+                                    Account.encrypted_access_token.is_not(None),
+                                )
+                                .order_by(Account.id)
+                                .limit(1)
+                            )
+                        )
+                    if (
+                        account is None
+                        or account.status != AccountStatus.active
+                        or not account.encrypted_access_token
+                    ):
+                        raise PhotoConflict("usable_account_required")
+                    await progress("communities", 0, 1, {})
+                    if data.preview.grid_id:
+                        await preparation.prepare_community_media_context(
+                            data.preview.grid_id, community_id, account.id
+                        )
+                    else:
+                        from dropgrid.services.vk_accounts import resolve_community
+
+                        async with self.sessions() as session, session.begin():
+                            community = await session.get(Community, community_id)
+                            if community and community.resolution_status != "resolved":
+                                await resolve_community(
+                                    session,
+                                    community_id,
+                                    account.id,
+                                    self.collector.client,
+                                    self.collector.tokens,
+                                )
+                        count = await preparation.compatible_count(community_id)
+                        if count < preparation.target:
+                            await progress(
+                                "references", count, preparation.target, {"references_ready": count}
+                            )
+                            await self.collector.sync(
+                                community_id,
+                                account.id,
+                                preparation.target,
+                                max_scanned_posts=100,
+                                timeout_seconds=120,
+                            )
+                    count = await preparation.compatible_count(community_id)
+                    await progress(
+                        "references", count, preparation.target, {"references_ready": count}
+                    )
                 result = await photo_preview(
                     self.engine.planner, self.engine.visual, community_id, data.preview
                 )

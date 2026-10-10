@@ -25,21 +25,14 @@ Pinterest unavailability is a warning and falls back to Pixabay plus internal so
 
 ## Publication boundary
 
-`PINTEREST_PUBLICATION_ENABLED=false` by default. A best match is not permission to publish.
-Photo Lab shows **Только предпросмотр**, or **Разрешено настройкой** after explicit local opt-in.
-The provenance warning **Права на публикацию не проверены** remains visible in both cases.
+Pinterest is a normal assignment source. The legacy `PINTEREST_PUBLICATION_ENABLED`
+setting is retained for configuration compatibility and no longer gates assignment.
+Only the selected viable Pin is imported through the normal dedup/provenance pipeline;
+normalized bytes and embeddings are reused. The unrelated VK write guard is unchanged.
 
-Campaign planning requires publishable candidates. With Pinterest publication disabled, its
-retrieval result is still evaluated but cannot enter assignment; Pixabay may supplement with
-reason `primary_preview_only`, even if preview volume was sufficient. With explicit opt-in,
-only the selected viable Pin is imported through the normal dedup/provenance pipeline. Cached
-normalized bytes and embeddings are reused, not downloaded or embedded again. Final assignment
-rechecks the current publication setting. No sender or VK authorization behavior is changed.
-
-`MediaProviderImport` retains provider, Pin ID, Pin page URL, original image source URL, retrieval
-query and `unverified-public-pin` license/provenance status. Submission references the MediaAsset,
-so provider provenance survives through publication monitoring without introducing a learning model.
-Opt-in is a product configuration choice and does not verify publication rights.
+`MediaProviderImport` retains provider, Pin ID, Pin page URL, original image source URL,
+retrieval query and `unverified-public-pin` provenance. Photo Lab uses source badges,
+without preview-only or prominent rights banners.
 
 ## Caches, diagnostics, feedback
 

@@ -172,6 +172,14 @@ it("campaign keeps partial warning after refreshing its data", async () => {
     if (url.includes("/accounts?")) data = [];
     else if (url.endsWith("/stats"))
       data = { total: 10, statuses: {}, media_assigned: 4, media_unique: 2 };
+    else if (url.includes("/account-pool") || url.includes("/accounts"))
+      data = [];
+    else if (url.includes("/preparation-workflow")) data = null;
+    else if (url.includes("/photo-review"))
+      data = { items: [], total: 0, prepared: 0, needs_attention: 0 };
+    else if (url.includes("/photo-ranking"))
+      data = { mode: "deterministic", choices: 0, minimum: 100 };
+    else if (url.includes("/results-breakdown")) data = { breakdowns: {} };
     else if (url.includes("/submissions"))
       data = { items: [], total: 10, page: 1, page_size: 25 };
     else if (url.includes("/grids/"))

@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { accountsApi } from "./api/accounts";
+import { request } from "./api/client";
 import { campaignsApi } from "./api/campaigns";
 import { errorMessage } from "./api/client";
 import type { Campaign } from "./api/types";
-import { Confirm, Pager, State, useLoad } from "./shared";
+import { Confirm, State, useLoad } from "./shared";
 
 export function CampaignSendControls({
   campaign,
@@ -12,9 +12,13 @@ export function CampaignSendControls({
   campaign: Campaign;
   onChanged: () => void;
 }) {
-  const [page, setPage] = useState(1);
-  const accounts = useLoad((signal) => accountsApi.list(page, signal), [page]);
-  const [accountId, setAccountId] = useState("");
+  const accounts = useLoad(
+    (signal) =>
+      request<
+        { account_id: string; name: string; assigned: number; quota: number }[]
+      >(`/campaigns/${campaign.id}/account-pool`, { signal }),
+    [campaign.id, campaign.preparation_state],
+  );
   const [limit, setLimit] = useState("1");
   const [full, setFull] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -26,15 +30,14 @@ export function CampaignSendControls({
       Number(limit) >= 1 &&
       Number(limit) <= 10000);
   const scope = {
-    account_id: accountId,
     max_submissions: full ? null : Number(limit),
   };
   const report = useLoad(
     (signal) =>
-      campaign.status === "ready" && accountId && validLimit
+      campaign.status === "ready" && validLimit
         ? campaignsApi.preflight(campaign.id, scope, signal)
         : Promise.resolve(undefined),
-    [campaign.id, campaign.status, accountId, limit, full],
+    [campaign.id, campaign.status, campaign.preparation_state, limit, full],
   );
   async function act() {
     setBusy(true);
@@ -58,37 +61,13 @@ export function CampaignSendControls({
       {campaign.status === "ready" && (
         <>
           <State {...accounts} retry={accounts.reload}>
-            <label>
-              Account
-              <select
-                value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-              >
-                <option value="">Выберите Account</option>
-                {accountId &&
-                  !accounts.data?.some((a) => a.id === accountId) && (
-                    <option value={accountId}>Выбранный Account</option>
-                  )}
-                {accounts.data
-                  ?.filter(
-                    (a) =>
-                      a.status === "active" &&
-                      a.vk_user_id &&
-                      a.token_configured,
-                  )
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} · {a.vk_user_id}
-                    </option>
-                  ))}
-              </select>
-            </label>
+            <p>
+              Выбранный пул:{" "}
+              {accounts.data
+                ?.map((a) => `${a.name} ${a.assigned}/${a.quota}`)
+                .join(" · ")}
+            </p>
           </State>
-          <Pager
-            page={page}
-            hasNext={accounts.data?.length === 25}
-            onPage={setPage}
-          />
           <label>
             <input
               type="checkbox"
@@ -113,7 +92,7 @@ export function CampaignSendControls({
             Остальные submissions pilot-кампании будут пропущены. Фото должны
             быть подготовлены заранее.
           </p>
-          {accountId && (
+          {
             <State {...report} retry={report.reload}>
               {report.data && (
                 <p role="status">
@@ -123,15 +102,21 @@ export function CampaignSendControls({
                   {report.data.intended} · Фото назначено:{" "}
                   {report.data.media_assigned} · Без фото:{" "}
                   {report.data.media_missing} · Некорректных файлов:{" "}
-                  {report.data.media_invalid}
+                  {report.data.media_invalid} · Аккаунтов готово:{" "}
+                  {report.data.accounts_ready} · Ёмкость:{" "}
+                  {report.data.total_send_capacity} · Без назначения:{" "}
+                  {report.data.capacity_unassigned} · Ожидают проверки:{" "}
+                  {report.data.review_pending}
                 </p>
               )}
             </State>
-          )}
+          }
           <button
             className="primary"
             disabled={
               busy ||
+              (campaign.preparation_state !== undefined &&
+                !["ready", "legacy"].includes(campaign.preparation_state)) ||
               !validLimit ||
               !report.data?.ready ||
               report.loading ||
@@ -166,7 +151,7 @@ export function CampaignSendControls({
         >
           <p>
             {confirm === "start"
-              ? `Worker отправит ${report.data?.intended ?? 0} предложенных постов с выбранного Account.`
+              ? `Worker отправит ${report.data?.intended ?? 0} предложенных постов с выбранного пула аккаунтов.`
               : "Новые отправки прекратятся. Уже отправленные посты сохранятся."}
           </p>
           {error && <p role="alert">{error}</p>}

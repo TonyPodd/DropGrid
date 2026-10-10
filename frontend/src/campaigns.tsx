@@ -5,6 +5,8 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
+import { CampaignResults } from "./campaign-results";
+import { CampaignWorkflow } from "./campaign-workflow";
 import { CampaignSendControls } from "./campaign-sending";
 import { campaignsApi } from "./api/campaigns";
 import { gridsApi } from "./api/grids";
@@ -119,6 +121,9 @@ export function CampaignForm({
     [gridId],
   );
   const [track, setTrack] = useState(initial?.track_url ?? "");
+  const [reviewMode, setReviewMode] = useState<"AUTO" | "REVIEW_BEFORE_SEND">(
+    initial?.photo_review_mode ?? "AUTO",
+  );
   const [caption, setCaption] = useState(initial?.caption ?? "");
   const [hours, setHours] = useState(
     String(initial?.publication_check_hours ?? 72),
@@ -174,6 +179,7 @@ export function CampaignForm({
         grid_id: gridId,
         track_url: track,
         caption,
+        photo_review_mode: reviewMode,
         publication_check_hours: Number(hours),
       });
     } catch (err) {
@@ -271,6 +277,20 @@ export function CampaignForm({
         )}
         {trackError && <p role="alert">{trackError}</p>}
         <label>
+          Фото
+          <select
+            value={reviewMode}
+            onChange={(e) =>
+              setReviewMode(e.target.value as "AUTO" | "REVIEW_BEFORE_SEND")
+            }
+          >
+            <option value="AUTO">Автоматически</option>
+            <option value="REVIEW_BEFORE_SEND">
+              Проверить перед отправкой
+            </option>
+          </select>
+        </label>
+        <label>
           Caption <span className="muted">— необязательно</span>
           <textarea
             rows={4}
@@ -295,8 +315,8 @@ export function CampaignForm({
           <p role="alert">Введите целое число от 1 до 2147483647.</p>
         )}
         <p className="note">
-          Сохранение и Prepare не обращаются к VK. Отправленные предложки
-          проверяются до конца указанного периода.
+          Сохранение создаёт черновик. Подготовка читает VK и подбирает фото.
+          Отправленные предложки проверяются до конца указанного периода.
         </p>
         {error && <p role="alert">{error}</p>}
         <div className="actions">
@@ -385,7 +405,10 @@ export function PrepareButton({
     </>
   );
 }
-export function SubmissionTable({ items, onChecked }: {
+export function SubmissionTable({
+  items,
+  onChecked,
+}: {
   items: Submission[];
   onChecked?: () => void;
 }) {
@@ -459,26 +482,37 @@ export function SubmissionTable({ items, onChecked }: {
   );
 }
 
-export function PublicationCheckButton({ id, onChecked }: { id: string; onChecked: () => void }) {
+export function PublicationCheckButton({
+  id,
+  onChecked,
+}: {
+  id: string;
+  onChecked: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   return (
     <>
-      <button disabled={busy} onClick={async () => {
-        setBusy(true);
-        setMessage("");
-        try {
-          const result = await campaignsApi.checkPublication(id);
-          if (result.evidence.result === "read_error") {
-            setMessage("Проверка временно недоступна. Статус публикации не изменён.");
+      <button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setMessage("");
+          try {
+            const result = await campaignsApi.checkPublication(id);
+            if (result.evidence.result === "read_error") {
+              setMessage(
+                "Проверка временно недоступна. Статус публикации не изменён.",
+              );
+            }
+            onChecked();
+          } catch {
+            setMessage("Проверка временно недоступна. Попробуйте позже.");
+          } finally {
+            setBusy(false);
           }
-          onChecked();
-        } catch {
-          setMessage("Проверка временно недоступна. Попробуйте позже.");
-        } finally {
-          setBusy(false);
-        }
-      }}>
+        }}
+      >
         {busy ? "Проверка…" : "Проверить публикацию"}
       </button>
       {message && <p role="status">{message}</p>}
@@ -590,7 +624,8 @@ export function CampaignDetailPage() {
     [id, revision],
   );
   useEffect(() => {
-    if (!state.data || !["running", "monitoring"].includes(state.data.status)) return;
+    if (!state.data || !["running", "monitoring"].includes(state.data.status))
+      return;
     const timer = setInterval(() => setRevision((n) => n + 1), 10000);
     return () => clearInterval(timer);
   }, [state.data?.status]);
@@ -643,29 +678,32 @@ export function CampaignDetailPage() {
                       <button onClick={() => setEditing(true)}>
                         Редактировать
                       </button>
-                      <PrepareButton
-                        count={state.data.community_count}
-                        onPrepare={async () => {
-                          await campaignsApi.prepare(id);
-                          setRevision((n) => n + 1);
-                        }}
-                      />
                     </>
                   ) : null}
                 </div>
                 {state.data.status === "ready" && (
-                  <PhotoPlanButton
-                    campaignId={id}
-                    showResult={false}
-                    onPlanned={(result) => {
-                      setPhotoResult(result);
-                      setRevision((n) => n + 1);
-                    }}
-                  />
+                  <details>
+                    <summary>Диагностика подбора</summary>
+                    <PhotoPlanButton
+                      campaignId={id}
+                      showResult={false}
+                      onPlanned={(result) => {
+                        setPhotoResult(result);
+                        setRevision((n) => n + 1);
+                      }}
+                    />
+                  </details>
                 )}
               </>
             )}
-            <CampaignSendControls campaign={state.data} onChanged={() => setRevision((n) => n + 1)} />
+            <CampaignWorkflow
+              campaign={state.data}
+              onChanged={() => setRevision((n) => n + 1)}
+            />
+            <CampaignSendControls
+              campaign={state.data}
+              onChanged={() => setRevision((n) => n + 1)}
+            />
             <h2>Статистика</h2>
             {stats.data && (
               <p>
@@ -690,6 +728,7 @@ export function CampaignDetailPage() {
                 </div>
               )}
             </State>
+            <CampaignResults id={id} revision={revision} />
             <SubmissionsPanel
               key={id}
               campaign={state.data}

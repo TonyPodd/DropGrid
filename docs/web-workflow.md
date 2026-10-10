@@ -1,11 +1,10 @@
 # Web workflow: campaign preparation
 
-Grid import → Campaign draft → Prepare → Submission inspection.
+Grid import → Campaign draft → **Подготовить кампанию** → optional photo review → sending → monitoring/results.
 
-**Prepare does not contact VK.** Preparation works without VK credentials. The worker
-now checks recorded submitted receipts through the read-only [Publication Monitor](publication-monitor.md).
-Campaign sending remains unavailable. Accepted submissions show publication time and VK URL;
-«Проверить публикацию» runs an explicit read-only VK reconciliation.
+The product preparation action performs bounded read-only VK warmup and shared photo planning.
+It needs a validated Account; it never sends posts. The legacy `/prepare` endpoint only creates
+local Submission rows. See [campaign preparation, review and account pools](campaign-product-workflow.md).
 
 ## Import a grid
 

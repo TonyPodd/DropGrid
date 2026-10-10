@@ -10,11 +10,30 @@ import type {
   MediaPlan,
 } from "./types";
 export const campaignsApi = {
-  preflight: (id: string, body: { account_id: string; max_submissions: number | null }, signal?: AbortSignal) =>
-    request<CampaignPreflight>(`/campaigns/${id}/preflight`, { method: "POST", body, signal }),
-  start: (id: string, body: { account_id: string; max_submissions: number | null }) =>
-    request<Campaign>(`/campaigns/${id}/start`, { method: "POST", body }),
-  cancel: (id: string) => request<Campaign>(`/campaigns/${id}/cancel`, { method: "POST" }),
+  preflight: (
+    id: string,
+    body: {
+      account_id?: string;
+      account_ids?: string[];
+      max_submissions: number | null;
+    },
+    signal?: AbortSignal,
+  ) =>
+    request<CampaignPreflight>(`/campaigns/${id}/preflight`, {
+      method: "POST",
+      body,
+      signal,
+    }),
+  start: (
+    id: string,
+    body: {
+      account_id?: string;
+      account_ids?: string[];
+      max_submissions: number | null;
+    },
+  ) => request<Campaign>(`/campaigns/${id}/start`, { method: "POST", body }),
+  cancel: (id: string) =>
+    request<Campaign>(`/campaigns/${id}/cancel`, { method: "POST" }),
   list: (page: number, signal?: AbortSignal) =>
     request<Campaign[]>(`/campaigns?limit=25&offset=${(page - 1) * 25}`, {
       signal,
@@ -58,10 +77,18 @@ export const campaignsApi = {
       body: { track_url },
       signal,
     }),
-  checkPublication: (id: string) => request<{ current_status: string; evidence: Record<string, unknown> }>(
-    `/submissions/${id}/check-publication`, { method: "POST" }),
-  published: (id: string, signal?: AbortSignal) => request<{
-    community: Submission["community"]; category: string | null;
-    published_post_url: string; published_at: string;
-  }[]>(`/campaigns/${id}/published`, { signal }),
+  checkPublication: (id: string) =>
+    request<{ current_status: string; evidence: Record<string, unknown> }>(
+      `/submissions/${id}/check-publication`,
+      { method: "POST" },
+    ),
+  published: (id: string, signal?: AbortSignal) =>
+    request<
+      {
+        community: Submission["community"];
+        category: string | null;
+        published_post_url: string;
+        published_at: string;
+      }[]
+    >(`/campaigns/${id}/published`, { signal }),
 };

@@ -152,7 +152,7 @@ curl -X POST http://localhost:8000/api/v1/grids/import \
 GET `/grids/{id}` включает ограниченный список сообществ и summary категорий;
 `GET /grids/{id}/communities` даёт пагинацию с категориями GridCommunity.
 Полный browser workflow: [docs/web-workflow.md](docs/web-workflow.md).
-**Prepare does not contact VK.**
+**Product preparation reads VK but does not write to VK.** The legacy local `/prepare` endpoint does not contact VK. See [campaign workflow](docs/campaign-product-workflow.md).
 
 Создайте campaign через `POST /api/v1/campaigns` с name, grid_id, track_url;
 `publication_check_hours` по умолчанию 72, меняется для конкретной кампании.
