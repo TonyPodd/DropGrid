@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from dropgrid.api.access import ProxyAccess
 from dropgrid.api.activity import router as activity_router
 from dropgrid.api.dependencies import database
 from dropgrid.api.routes import router
@@ -70,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await app.state.database.close()
 
     app = FastAPI(title="DropGrid", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(ProxyAccess, settings=config)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[config.frontend_origin],

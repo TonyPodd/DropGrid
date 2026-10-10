@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_env: str = "development"
+    trusted_proxy_enabled: bool = False
+    trusted_proxy_key: SecretStr = SecretStr("")
     app_secret_key: SecretStr = SecretStr("")  # Fernet key for local Account credential encryption.
     database_url: SecretStr = SecretStr(
         "postgresql+asyncpg://dropgrid:dropgrid@localhost:5432/dropgrid"

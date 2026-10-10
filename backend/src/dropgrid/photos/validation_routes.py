@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from pydantic import Field
 from sqlalchemy import select
 
+from dropgrid.api.access import check_reviewer, proxy_reviewer
 from dropgrid.api.dependencies import Session
 from dropgrid.api.schemas import Input
 from dropgrid.db.models import (
@@ -87,8 +88,16 @@ async def campaign_batches(campaign_id: UUID, session: Session) -> list[dict[str
 
 
 @router.get("/review-batches/{batch_id}")
-async def batch_get(batch_id: UUID, session: Session) -> dict[str, object]:
-    return await batch_summary(session, await get_entity(session, PhotoReviewBatch, batch_id))
+async def batch_get(batch_id: UUID, session: Session, request: Request) -> dict[str, object]:
+    result = await batch_summary(session, await get_entity(session, PhotoReviewBatch, batch_id))
+    actor = await proxy_reviewer(request, session)
+    if actor:
+        result.update(
+            reviewer_id=actor.id,
+            trusted_reviewer={"id": actor.id, "display_name": actor.display_name},
+            owner=getattr(request.state, "remote_user", None) in {"tony", "tima"},
+        )
+    return result
 
 
 @router.get("/review-batches/{batch_id}/items/{position}")
@@ -105,7 +114,10 @@ class CursorInput(Input):
 
 
 @router.put("/review-batches/{batch_id}/cursor")
-async def cursor(batch_id: UUID, data: CursorInput, session: Session) -> dict[str, object]:
+async def cursor(
+    batch_id: UUID, data: CursorInput, session: Session, request: Request
+) -> dict[str, object]:
+    await check_reviewer(request, session, data.reviewer_id)
     batch = await get_entity(session, PhotoReviewBatch, batch_id)
     if data.position >= batch.target_count:
         raise ConflictError("Review position outside batch")
@@ -139,6 +151,7 @@ async def action(
             PhotoReviewBatch, batch_id, with_for_update=True, populate_existing=True
         )
         item = await session.get(PhotoReviewBatchItem, (batch_id, position), with_for_update=True)
+        await check_reviewer(request, session, data.reviewer_id)
         await get_entity(session, PhotoReviewer, data.reviewer_id)
         if (
             not campaign

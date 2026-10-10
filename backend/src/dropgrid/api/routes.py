@@ -2,9 +2,10 @@ from collections.abc import Sequence
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 
+from dropgrid.api.access import owner_token_access
 from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens, database
 from dropgrid.api.schemas import (
     AccountCreate,
@@ -80,8 +81,7 @@ async def accounts(session: Session, limit: Limit = 100, offset: Offset = 0) -> 
 async def connect_account(
     data: AccountTokenInput, request: Request, session: Session, client: VK
 ) -> Account:
-    if client.settings.app_env != "development":
-        raise HTTPException(403, "Token import is local development only")
+    owner_token_access(request, client.settings)
     return await account_tokens.connect_token(
         session, data.access_token, client, request.app.state.token_cipher
     )
@@ -106,8 +106,7 @@ async def account_patch(entity_id: UUID, data: AccountPatch, session: Session) -
 async def account_token_import(
     account_id: UUID, data: AccountTokenInput, request: Request, session: Session, client: VK
 ) -> AccountTokenRead:
-    if client.settings.app_env != "development":
-        raise HTTPException(403, "Token import is local development only")
+    owner_token_access(request, client.settings)
     account = await account_tokens.import_token(
         session, account_id, data.access_token, client, request.app.state.token_cipher
     )
@@ -119,8 +118,7 @@ async def account_token_import(
 async def account_token_clear(
     account_id: UUID, request: Request, session: Session, client: VK
 ) -> Account:
-    if client.settings.app_env != "development":
-        raise HTTPException(403, "Token clear is local development only")
+    owner_token_access(request, client.settings)
     account = await catalog.get_entity(session, Account, account_id)
     account.encrypted_access_token = None
     await session.flush()

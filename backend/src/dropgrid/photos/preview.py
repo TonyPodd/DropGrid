@@ -73,6 +73,8 @@ async def _photo_preview(
     visual: VisualLibrary,
     community_id: UUID,
     data: PhotoPreviewInput,
+    *,
+    capture: list[PoolCandidate] | None = None,
 ) -> PhotoPreviewRead:
     async with planner.sessions() as session:
         community = await get_entity(session, Community, community_id)
@@ -267,6 +269,8 @@ async def _photo_preview(
         ],
         plan,
     )
+    if capture is not None:
+        capture.extend(best)
     await emit("finalizing", len(best), len(best), candidates=len(best))
     diagnostic_candidates = mixed + ranked_pinterest + category_pool
     embeddings = sum(item.embedding is not None for item in diagnostic_candidates)

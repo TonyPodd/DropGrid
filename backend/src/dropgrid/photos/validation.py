@@ -83,6 +83,8 @@ async def create_batch(
     count: int,
     reviewer_id: UUID | None,
     created_by: UUID | None = None,
+    *,
+    selection_ids: set[UUID] | None = None,
 ) -> PhotoReviewBatch:
     campaign = await get_entity(session, Campaign, campaign_id)
     if campaign.status.value != "ready" or campaign.preparation_state == "preparing":
@@ -123,7 +125,9 @@ async def create_batch(
     rows = [
         (s, submissions[s.submission_id])
         for s in selections
-        if submissions[s.submission_id].media_asset_id and grouped[s.id]
+        if submissions[s.submission_id].media_asset_id
+        and grouped[s.id]
+        and (selection_ids is None or s.id in selection_ids)
     ]
     if len(rows) < count:
         raise ConflictError("Not enough prepared snapshots for requested batch")
