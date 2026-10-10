@@ -700,41 +700,58 @@ export function CampaignDetailPage() {
               campaign={state.data}
               onChanged={() => setRevision((n) => n + 1)}
             />
-            <CampaignSendControls
-              campaign={state.data}
-              onChanged={() => setRevision((n) => n + 1)}
-            />
-            <h2>Статистика</h2>
-            {stats.data && (
-              <p>
-                Фото: {stats.data.media_assigned ?? 0} / {stats.data.total} ·
-                Уникальных: {stats.data.media_unique ?? 0} · Без фото:{" "}
-                {stats.data.total - (stats.data.media_assigned ?? 0)}
-              </p>
+            {!state.data.is_dry_run && (
+              <details
+                open={
+                  state.data.status === "running" ||
+                  (state.data.status === "ready" &&
+                    state.data.preparation_state === "ready")
+                }
+              >
+                <summary>Отправка</summary>
+                <CampaignSendControls
+                  campaign={state.data}
+                  onChanged={() => setRevision((n) => n + 1)}
+                />
+              </details>
             )}
-            <State {...stats} retry={stats.reload}>
-              {stats.data && (
-                <div className="metrics">
-                  <div>
-                    <span>Total</span>
-                    <strong>{stats.data.total}</strong>
-                  </div>
-                  {submissionStatuses.map((s) => (
-                    <div key={s}>
-                      <span>{publicationLabel(s)}</span>
-                      <strong>{stats.data?.statuses[s]}</strong>
-                    </div>
-                  ))}
-                </div>
+            <details
+              open={["completed", "failed", "cancelled", "monitoring"].includes(
+                state.data.status,
               )}
-            </State>
-            <CampaignResults id={id} revision={revision} />
-            <SubmissionsPanel
-              key={id}
-              campaign={state.data}
-              revision={revision}
-              onChecked={() => setRevision((n) => n + 1)}
-            />
+            >
+              <summary>Результаты</summary>
+              {stats.data && (
+                <p>
+                  Фото: {stats.data.media_assigned ?? 0} / {stats.data.total} ·
+                  Уникальных: {stats.data.media_unique ?? 0} · Без фото:{" "}
+                  {stats.data.total - (stats.data.media_assigned ?? 0)}
+                </p>
+              )}
+              <State {...stats} retry={stats.reload}>
+                {stats.data && (
+                  <div className="metrics">
+                    <div>
+                      <span>Total</span>
+                      <strong>{stats.data.total}</strong>
+                    </div>
+                    {submissionStatuses.map((s) => (
+                      <div key={s}>
+                        <span>{publicationLabel(s)}</span>
+                        <strong>{stats.data?.statuses[s]}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </State>
+              <CampaignResults id={id} revision={revision} />
+              <SubmissionsPanel
+                key={id}
+                campaign={state.data}
+                revision={revision}
+                onChecked={() => setRevision((n) => n + 1)}
+              />
+            </details>
           </>
         )}
       </State>

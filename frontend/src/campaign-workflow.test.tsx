@@ -142,6 +142,7 @@ it("replacement remains unconfirmed until approval and only displayed choices ar
   const fetch = mock();
   render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
   await screen.findByText("Girl car");
+  await userEvent.click(screen.getByText("Диагностика snapshots"));
   expect(
     screen.getByText(
       "Ваш выбор будет использоваться для улучшения автоподбора.",
@@ -184,6 +185,7 @@ it("recovers durable campaign progress on reload without enqueue", async () => {
     <CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />,
   );
   await screen.findByText("2 / 3 групп");
+  await userEvent.click(screen.getByText("Настройки"));
   expect(
     screen.getByRole("button", { name: "Подготовить кампанию" }),
   ).toBeDisabled();
@@ -282,15 +284,14 @@ it("records visible alternatives when confirming the unchanged automatic selecti
   const fetch = mock();
   render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
   await screen.findByText("Girl car");
+  await userEvent.click(screen.getByText("Диагностика snapshots"));
   await userEvent.click(
     screen.getByRole("button", { name: "Заменить / альтернативы" }),
   );
   expect(
     fetch.mock.calls.filter(([url]) => String(url).includes("photo-choice")),
   ).toHaveLength(0);
-  await userEvent.click(
-      screen.getByRole("button", { name: "Подтвердить" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Подтвердить" }));
   await screen.findByText(/Подтверждено/);
   const approval = fetch.mock.calls.find(([url]) =>
     String(url).includes("/photo-approve"),
