@@ -360,6 +360,36 @@ export function CommunityDetailPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
   const gridId = searchParams.get("grid") ?? undefined;
+  const reviewKey = searchParams.get("review") ?? "";
+  const reviewIds = [
+    ...new Set(
+      reviewKey
+        .split(",")
+        .filter((value) => /^[a-zA-Z0-9-]{1,64}$/.test(value)),
+    ),
+  ].slice(0, 16);
+  const reviewIndex = reviewIds.indexOf(id);
+  const [feedbackRevision, setFeedbackRevision] = useState(0);
+  const reviewFeedback = useLoad(
+    async (signal) =>
+      Promise.all(
+        reviewIds.map(async (communityId) => {
+          const ratings = await request<unknown[]>(
+            `/communities/${communityId}/photo-feedback`,
+            { signal },
+          );
+          return ratings.length > 0;
+        }),
+      ),
+    [reviewKey, feedbackRevision],
+  );
+  useEffect(() => {
+    setPreview(undefined);
+    setSelected(undefined);
+    setMessage("");
+    setError("");
+    setPage(1);
+  }, [id]);
   const [revision, setRevision] = useState(0);
   const [page, setPage] = useState(1);
   const state = useLoad(
@@ -513,6 +543,26 @@ export function CommunityDetailPage() {
   return (
     <>
       <Link to="/communities">← Communities</Link>
+      {reviewIndex >= 0 && (
+        <div className="actions" aria-label="Community quality review">
+          <span>
+            {reviewFeedback.data?.filter(Boolean).length ?? 0} /{" "}
+            {reviewIds.length} communities reviewed
+          </span>
+          {reviewIds.length > 1 && (
+            <Link
+              to={`/communities/${reviewIds[(reviewIndex + 1) % reviewIds.length]}?${new URLSearchParams(
+                {
+                  ...(gridId ? { grid: gridId } : {}),
+                  review: reviewIds.join(","),
+                },
+              )}`}
+            >
+              Next community
+            </Link>
+          )}
+        </div>
+      )}
       <section className="photo-lab-header">
         <div>
           <small>PHOTO LAB</small>
@@ -1057,6 +1107,7 @@ export function CommunityDetailPage() {
                           rating,
                         },
                       });
+                      setFeedbackRevision((value) => value + 1);
                       setMessage(
                         "Оценка сохранена. Она пока не влияет на подбор.",
                       );

@@ -61,4 +61,14 @@ def car_model(text: str | None) -> str | None:
                 return "BMW E" + model
     if "w201" in words:
         return "Mercedes W201"
+    match = re.search(
+        r"(?:ваз|vaz|lada|лада)[ _-]*(2107|2109|2110|2111|2112|2114|2115)", (text or "").casefold()
+    )
+    if match:
+        return "VAZ " + match[1]
     return None
+
+
+def retrieval_hint(content_hint: str | None, name: str | None, comment: str | None) -> str | None:
+    """Explicit hint wins; only recognized comment concepts enter public searches."""
+    return content_hint or car_model(name) or next(iter(concept_queries(comment)), None)

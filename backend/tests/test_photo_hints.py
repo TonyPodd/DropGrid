@@ -84,3 +84,14 @@ async def test_clip_cpu_concurrency_remains_one(tmp_path, monkeypatch):
     monkeypatch.setattr(embedder, "_embed", embed)
     await asyncio.gather(*(embedder.embed_image(b"fixture") for _ in range(6)))
     assert peak == 1
+
+
+def test_real_grid_comment_and_vaz_model_queries():
+    from dropgrid.photos.concepts import retrieval_hint
+
+    hint = retrieval_hint(None, "Ижевск", "девушка  с машиной")
+    assert hint == "woman car"
+    assert "woman car" in [q.query for q in PhotoQueryBuilder().build("МУЗЫКА", hint).variants]
+    assert retrieval_hint(None, "Ижевск", "ДС") is None
+    assert retrieval_hint("cat", "BMW E60", "девушка с машиной") == "cat"
+    assert PhotoQueryBuilder().build("ВАЗ 2114 2115").variants[0].query == "vaz 2114"

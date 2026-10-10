@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from dropgrid.db.models import Community, CommunityContentProfile, GridCommunity, MediaAsset, utcnow
 from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
 from dropgrid.photos.category_archive import CategoryLibraryStats, VKCategoryArchivePhotoProvider
-from dropgrid.photos.concepts import car_model
+from dropgrid.photos.concepts import retrieval_hint
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.discovery import discover
 from dropgrid.photos.domain import normalize_category
@@ -82,7 +82,7 @@ async def _photo_preview(
                 raise ConflictError("Community is not in supplied grid")
             category = relation.category
             comment, content_hint = relation.comment, relation.content_hint
-    effective_hint = content_hint or car_model(community.name)
+    effective_hint = retrieval_hint(content_hint, community.name, comment)
     plan = planner.builder.build(
         category, effective_hint, profile.desired_content if profile else None
     )

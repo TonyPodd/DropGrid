@@ -408,7 +408,7 @@ class CampaignMediaPlanner:
             )
         async with self.sessions() as session:
             hints = {
-                r.community_id: r.content_hint
+                r.community_id: (r.content_hint, r.comment)
                 for r in (
                     await session.scalars(
                         select(GridCommunity).where(GridCommunity.grid_id == campaign.grid_id)
@@ -427,11 +427,11 @@ class CampaignMediaPlanner:
                     )
                 ).all()
             }
-        from dropgrid.photos.concepts import car_model
+        from dropgrid.photos.concepts import retrieval_hint
 
         async with self.sessions() as session:
             name_hints = {
-                c.id: car_model(c.name)
+                c.id: c.name
                 for c in (
                     await session.scalars(
                         select(Community).where(Community.id.in_([s.community_id for s, _ in rows]))
@@ -461,8 +461,11 @@ class CampaignMediaPlanner:
                 groups[
                     (
                         key,
-                        hints.get(submission.community_id)
-                        or name_hints.get(submission.community_id),
+                        retrieval_hint(
+                            hints.get(submission.community_id, (None, None))[0],
+                            name_hints.get(submission.community_id),
+                            hints.get(submission.community_id, (None, None))[1],
+                        ),
                         desired.get(submission.community_id),
                     )
                 ].append(submission.id)
@@ -833,7 +836,7 @@ class CampaignMediaPlanner:
             ):
                 raise ConflictError("Grid categories changed during planning")
             current_hints = {
-                r.community_id: r.content_hint
+                r.community_id: (r.content_hint, r.comment)
                 for r in (
                     await session.scalars(
                         select(GridCommunity).where(GridCommunity.grid_id == campaign.grid_id)

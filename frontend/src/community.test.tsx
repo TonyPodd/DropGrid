@@ -314,3 +314,20 @@ it("shows source contributions, publication boundary and stores feedback", async
     }),
   );
 });
+
+it("navigates review communities and counts only persisted manual feedback", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url) => ({
+      ok: true,
+      json: async () =>
+        String(url).includes("/c1/photo-feedback") ? [{ rating: "like" }] : [],
+    })),
+  );
+  open("/communities/c1?grid=g1&review=c1,c2,c3");
+  await screen.findByText("1 / 3 communities reviewed");
+  expect(screen.getByRole("link", { name: "Next community" })).toHaveAttribute(
+    "href",
+    "/communities/c2?grid=g1&review=c1%2Cc2%2Cc3",
+  );
+});
