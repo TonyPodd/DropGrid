@@ -34,7 +34,9 @@ let rank = 1;
   const browser = await chromium.launch({ headless: true });
   for (const [mode, width, height] of [
     ["desktop", 1366, 900],
+    ["laptop", 1366, 768],
     ["mobile", 390, 844],
+    ["mobile-short", 390, 667],
   ]) {
     const page = await browser.newPage({ viewport: { width, height } });
     await page.route("**/api/v1/**", async (route) => {
@@ -98,6 +100,7 @@ let rank = 1;
       await page
         .locator(".validation-photo img")
         .evaluate((img) => img.decode());
+      await page.evaluate(() => window.scrollTo(0, 0));
       const geometry = await page
         .locator(".validation-photo img")
         .evaluate((img) => {
@@ -112,6 +115,14 @@ let rank = 1;
             naturalWidth: img.naturalWidth,
             naturalHeight: img.naturalHeight,
             fit: c.objectFit,
+            bottom: r.bottom,
+            actionsTop: document
+              .querySelector(".validation-actions")
+              .getBoundingClientRect().top,
+            actionsBottom: document
+              .querySelector(".validation-actions")
+              .getBoundingClientRect().bottom,
+            viewportHeight: innerHeight,
           };
         });
       assert(
@@ -126,6 +137,14 @@ let rank = 1;
         JSON.stringify(geometry),
       );
       assert.equal(geometry.fit, "contain");
+      assert(
+        geometry.bottom <= geometry.actionsTop + 1,
+        "Actions must not cover the image",
+      );
+      assert(
+        geometry.actionsBottom <= geometry.viewportHeight + 1,
+        "Actions must fit the viewport",
+      );
       assert(
         await page
           .locator(".validation-alternatives img")

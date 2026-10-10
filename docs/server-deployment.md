@@ -128,6 +128,8 @@ The clipping bug was a CSS grid minimum-content overflow: a square image rendere
 704 px tall inside a 476 px canvas despite object-fit:contain. Fixed zero-minimum
 grid tracks and bounded intrinsic image dimensions preserve every frame; storage
 normalization/content endpoints do not crop. Alternatives/fullscreen also contain.
+The photo canvas also reserves the measured header/action space: fixed mobile
+actions cannot cover the frame, and laptop actions fit the initial viewport.
 
 Run reusable five-shape browser regression against local Vite using a disposable
 Playwright install (API and images are intercepted fixtures; no real decisions):
@@ -138,5 +140,6 @@ NODE_PATH=/tmp/dropgrid-browser-qa/node_modules node frontend/qa/review-images.c
 ```
 
 Screenshots default to `/tmp/dropgrid-image-qa`. QA checks portrait, landscape,
-square, very wide and very tall on desktop/mobile, including fullscreen and overflow.
+square, very wide and very tall on desktop/laptop/mobile/short mobile screens,
+including fullscreen, overflow, action reachability and image/action overlap.
 Real batch QA never confirms; action-flow QA uses a clearly marked sacrificial batch.

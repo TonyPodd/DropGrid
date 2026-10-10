@@ -59,6 +59,7 @@ export function imageUrl(path: string | null) {
     : "";
 }
 export function PhotoValidationPage() {
+  const shell = useRef<HTMLElement>(null);
   const operation = useRef<string | null>(null);
   const keyboardChoice = useRef(false);
   const [queuedConfirm, setQueuedConfirm] = useState<string | null>(null);
@@ -74,6 +75,37 @@ export function PhotoValidationPage() {
     [seen, setSeen] = useState<number[]>([]),
     [revision, setRevision] = useState(0),
     [newName, setNewName] = useState("");
+  useEffect(() => {
+    const root = shell.current;
+    const photo = root?.querySelector<HTMLElement>(".validation-photo");
+    const actions = root?.querySelector<HTMLElement>(".validation-actions");
+    if (!root || !photo || !actions) return;
+    const badge = root.querySelector<HTMLElement>(".source-badge");
+    const fit = () => {
+      const fixed = getComputedStyle(actions).position === "fixed";
+      const reserve =
+        actions.getBoundingClientRect().height +
+        (fixed ? 16 : (badge?.getBoundingClientRect().height ?? 0) + 40);
+      const top = photo.getBoundingClientRect().top + window.scrollY;
+      photo.style.setProperty(
+        "--review-photo-height",
+        `${Math.max(120, window.innerHeight - top - reserve)}px`,
+      );
+    };
+    fit();
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    root
+      .querySelectorAll(
+        ".validation-top,.validation-filters,.validation-counts,.validation-context,.validation-actions,.source-badge",
+      )
+      .forEach((element) => observer?.observe(element));
+    window.addEventListener("resize", fit);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [item?.selection_id, alternatives]);
   useEffect(() => {
     const c = new AbortController();
     setBatch(null);
@@ -366,7 +398,7 @@ export function PhotoValidationPage() {
   const finish =
     batch && batch.remaining === 0 && batch.current_filter === "pending";
   return (
-    <main className="validation-shell">
+    <main className="validation-shell" ref={shell}>
       <header className="validation-top">
         {(!batch?.trusted_reviewer || batch.owner) && (
           <Link to="/campaigns">DropGrid</Link>

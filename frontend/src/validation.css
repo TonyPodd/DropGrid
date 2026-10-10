@@ -86,7 +86,7 @@
   min-width: 0;
 }
 .validation-photo {
-  height: clamp(360px, 62vh, 760px);
+  height: min(clamp(160px, 62vh, 760px), var(--review-photo-height, 760px));
   width: 100%;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -217,7 +217,7 @@
     margin-top: 20px;
   }
   .validation-photo {
-    height: 55vh;
+    height: min(55vh, var(--review-photo-height, 55vh));
   }
   .validation-context {
     align-items: flex-start;
