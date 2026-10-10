@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { AccountsPage, CommunitiesPage, DashboardPage } from "./catalog";
+import { CategoryGendersPage } from "./category-genders";
 import { GridDetailPage, GridImportPage, GridsPage } from "./grids";
 import { MediaPage } from "./media";
 import { ActivityProvider, ActivityIndicator, ActivityPage } from "./activity";
@@ -36,6 +37,7 @@ export function App() {
             </NavLink>
             <NavLink to="/campaigns">Campaigns</NavLink>
             <NavLink to="/grids">Grids</NavLink>
+            <NavLink to="/categories">Categories</NavLink>
             <NavLink to="/communities">Communities</NavLink>
             <NavLink to="/accounts">Accounts</NavLink>
             <NavLink to="/media">Media</NavLink>
@@ -69,6 +71,7 @@ export function App() {
             <Route path="/grids" element={<GridsPage />} />
             <Route path="/grids/new" element={<GridImportPage />} />
             <Route path="/grids/:id" element={<GridDetailPage />} />
+            <Route path="/categories" element={<CategoryGendersPage />} />
             <Route path="/campaigns" element={<CampaignsPage />} />
             <Route path="/campaigns/new" element={<CampaignNewPage />} />
             <Route path="/campaigns/:id" element={<CampaignDetailPage />} />

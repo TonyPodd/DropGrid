@@ -49,6 +49,17 @@ export type Grid = {
   community_count: number;
   category_count: number;
 };
+export type CategoryGender = "male" | "female" | "unisex";
+export type CategoryGenderRow = CategoryCount & {
+  gender: CategoryGender | null;
+  suggested_gender: CategoryGender | null;
+};
+export type GridCategoryGenders = {
+  grid_id: string;
+  categories: CategoryGenderRow[];
+  complete: boolean;
+  updated_at: string | null;
+};
 export type GridDetail = Omit<Grid, "category_count"> & {
   categories: CategoryCount[];
   communities: Community[];
@@ -158,6 +169,8 @@ export type CampaignPreflight = {
   accounts_ready?: number;
   total_send_capacity?: number;
   capacity_unassigned?: number;
+  category_unassigned?: number;
+  unassigned_categories?: (string | null)[];
   review_pending?: number;
   total: number;
   resolved_sendable: number;

@@ -8,7 +8,7 @@ import {
 } from "./api/client";
 import { accountsApi } from "./api/accounts";
 import type { Campaign } from "./api/types";
-import { useLoad, State, Pager } from "./shared";
+import { genderLabel, useLoad, State, Pager } from "./shared";
 type Job = {
   state: string;
   stage: string;
@@ -123,6 +123,7 @@ export function CampaignWorkflow({
         scope: number;
         real_capacity: number;
         capacity_shortfall: number;
+        category_unassigned?: number;
       }>(`/campaigns/${campaign.id}/readiness-report`, { signal }),
     [campaign.id, revision],
   );
@@ -247,6 +248,15 @@ export function CampaignWorkflow({
           {readiness.data.capacity_shortfall > 0 && (
             <p>Подключите дополнительные аккаунты или уменьшите scope.</p>
           )}
+          {!!readiness.data.category_unassigned && (
+            <p role="alert">
+              {readiness.data.category_unassigned} сообществ в нераспределённых
+              категориях.{" "}
+              <a href={`/categories?grid=${campaign.grid_id}`}>
+                Распределить категории сетки
+              </a>
+            </p>
+          )}
         </div>
       )}
       {ranking.data && (
@@ -292,10 +302,12 @@ export function CampaignWorkflow({
                         )
                       }
                     />
-                    {a.name} · квота{" "}
+                    {a.name} · {genderLabel(a.gender_tag)} · квота{" "}
                     {pool.data?.find((row) => row.account_id === a.id)?.quota ??
                       a.campaign_send_quota ??
                       100}
+                    {selected.includes(a.id) &&
+                      ` · №${selected.indexOf(a.id) + 1} в очереди`}
                   </label>
                 ))}
             </State>

@@ -110,9 +110,9 @@ it("selects multiple accounts, prepares once on click and shows per-account quot
       onChanged={vi.fn()}
     />,
   );
-  await screen.findByLabelText(/Anton · квота/);
-  expect(screen.getByLabelText(/Anton · квота/)).toBeChecked();
-  expect(screen.getByLabelText(/Second · квота/)).toBeChecked();
+  await screen.findByLabelText(/Anton · без пола · квота/);
+  expect(screen.getByLabelText(/Anton · без пола · квота/)).toBeChecked();
+  expect(screen.getByLabelText(/Second · без пола · квота/)).toBeChecked();
   expect(screen.queryByText("Disabled")).not.toBeInTheDocument();
   expect(screen.getByText("1 / 100")).toBeInTheDocument();
   expect(

@@ -1,6 +1,8 @@
 import { request } from "./client";
 import type {
+  CategoryGender,
   Grid,
+  GridCategoryGenders,
   GridDetail,
   GridPreview,
   GridCommunity,
@@ -21,6 +23,18 @@ export const gridsApi = {
     }),
   list: (page: number, signal?: AbortSignal) =>
     request<Grid[]>(`/grids?limit=25&offset=${(page - 1) * 25}`, { signal }),
+  latest: (signal?: AbortSignal) =>
+    request<Grid[]>("/grids?limit=200", { signal }),
+  categoryGenders: (id: string, signal?: AbortSignal) =>
+    request<GridCategoryGenders>(`/grids/${id}/category-genders`, { signal }),
+  saveCategoryGenders: (
+    id: string,
+    items: { category: string | null; gender: CategoryGender }[],
+  ) =>
+    request<GridCategoryGenders>(`/grids/${id}/category-genders`, {
+      method: "PUT",
+      body: { items },
+    }),
   detail: (id: string, signal?: AbortSignal) =>
     request<GridDetail>(`/grids/${id}?limit=1`, { signal }),
   members: (id: string, page: number, signal?: AbortSignal) =>

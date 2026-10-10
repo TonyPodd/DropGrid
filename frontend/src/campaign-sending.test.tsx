@@ -70,7 +70,7 @@ it("uses persisted account pool and confirmation, starts a pilot scope only on c
     changed = vi.fn();
   render(<CampaignSendControls campaign={campaign} onChanged={changed} />);
   expect(screen.getByRole("button", { name: "Start campaign" })).toBeDisabled();
-  await screen.findByText(/Выбранный пул: Usable/);
+  await screen.findByText(/Очередь аккаунтов .*1\. Usable/);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Start campaign" }),
@@ -94,15 +94,32 @@ it("blocks missing media preflight", async () => {
     media_missing: 1,
   });
   render(<CampaignSendControls campaign={campaign} onChanged={vi.fn()} />);
-  await screen.findByText(/Выбранный пул: Usable/);
+  await screen.findByText(/Очередь аккаунтов .*1\. Usable/);
   await screen.findByText(/Без фото: 1/);
+  expect(screen.getByRole("button", { name: "Start campaign" })).toBeDisabled();
+});
+it("asks to distribute grid categories before sending", async () => {
+  mock();
+  vi.mocked(campaignsApi.preflight).mockResolvedValue({
+    ...report,
+    ready: false,
+    category_unassigned: 3,
+    unassigned_categories: ["АВТО", null],
+  });
+  render(<CampaignSendControls campaign={campaign} onChanged={vi.fn()} />);
+  expect(
+    await screen.findByText(/Не распределены категории сетки: АВТО, Без категории/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "Распределить категории" }),
+  ).toHaveAttribute("href", "/categories?grid=g");
   expect(screen.getByRole("button", { name: "Start campaign" })).toBeDisabled();
 });
 it("supports full scope explicitly and surfaces fixed start errors", async () => {
   const start = mock();
   start.mockRejectedValue(new Error("Temporary failure"));
   render(<CampaignSendControls campaign={campaign} onChanged={vi.fn()} />);
-  await screen.findByText(/Выбранный пул: Usable/);
+  await screen.findByText(/Очередь аккаунтов .*1\. Usable/);
   await userEvent.click(screen.getByRole("checkbox"));
   await waitFor(() =>
     expect(

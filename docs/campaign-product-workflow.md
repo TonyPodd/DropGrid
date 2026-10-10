@@ -19,16 +19,34 @@ Community Photo Lab **Подобрать фото** warms references and discove
 its feedback is separate from campaign assignment.
 
 Quota is an operational setting, not a guarantee from VK:
-`ACCOUNT_CAMPAIGN_SEND_QUOTA=100`, with Account overrides. Allocation processes constrained
-genders first, then balances least assigned / priority / UUID within quotas. 250 jobs with
-three quota-100 accounts fit; 314 leave 14 unassigned and block start. Changing the pool is
-unavailable after sending starts. Submission.account_id remains bound through receipts,
-unknown write outcomes and publication monitoring. Existing global sender serialization,
-per-account pacing, VK write flag and allowlist remain unchanged.
+`ACCOUNT_CAMPAIGN_SEND_QUOTA=100`, with Account overrides. Allocation follows the grid's
+category distribution (below) and fills accounts one at a time in pool order. 250 jobs
+with three quota-100 accounts fit (100/100/50); 314 leave 14 unassigned and block start.
+Changing the pool is unavailable after sending starts. Submission.account_id remains bound
+through receipts, unknown write outcomes and publication monitoring. Existing global sender
+serialization, per-account pacing, VK write flag and allowlist remain unchanged.
 
 Activity reports preparation and account progress. Campaign results show category/source/
 Account breakdowns and published/sent acceptance rate (pending moderation is in the sent
 denominator). Results do not feed ranking.
+
+## Category gender distribution
+
+The **Categories** tab lists the categories detected in an imported grid and places each
+one into one of three columns: male, female or unisex
+(`GET/PUT /api/v1/grids/{id}/category-genders`). A save must place every current grid
+category exactly once; the UI asks for a column for each category left unplaced.
+Categories with the same name in other grids are offered as suggestions
+(case-insensitive) but are never saved implicitly.
+
+Allocation takes accounts in pool order (the selection order in the campaign). Each account
+first receives its own gender's categories, then unisex ones, up to its quota; only then does
+the next account receive what is left. Accounts without a gender receive unisex categories
+only. Insertion order is the send order and is stored as `Submission.send_order` at start.
+A grid category without a saved column blocks preflight (`category_unassigned`,
+`unassigned_categories`) until it is distributed; the readiness report counts it too.
+Changing a distribution affects campaigns at their next preparation/start; started
+campaigns keep their persisted assignment.
 
 ## Learning from explicit review
 

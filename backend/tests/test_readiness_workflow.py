@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import func, select
 from test_archive_integration import cached_reference
 from test_photo_integration import make_planner, prepared
-from test_product_workflow import account, rows
+from test_product_workflow import account, rows, unisex
 
 from dropgrid.config import Settings
 from dropgrid.db.models import (
@@ -45,7 +45,10 @@ from dropgrid.services.sending import start_campaign
     "n,assigned,missing", [(1, 100, 414), (3, 300, 214), (5, 500, 14), (6, 514, 0)]
 )
 def test_514_capacity(n, assigned, missing):
-    result, errors = distribute(rows(514), [(account(i + 1), 100, i) for i in range(n)])
+    targets = rows(514)
+    result, errors = distribute(
+        targets, [(account(i + 1), 100, i) for i in range(n)], unisex(targets)
+    )
     assert len(result) == assigned and len(errors) == missing
     assert max(Counter(result.values()).values()) <= 100
     assert set(errors.values()) <= {"account_capacity_exhausted"}
@@ -383,14 +386,11 @@ def test_514_gender_constrained_pool():
     from dropgrid.domain.enums import GenderTag
 
     male = rows(300, GenderTag.male)
-    female = rows(214, GenderTag.female)
-    for i, (row, community) in enumerate(female):
-        row.id = UUID(int=10000 + i)
-        community.domain = f"female{i:04}"
+    female = rows(214, GenderTag.female, offset=10_000)
     pool = [
         (account(i + 1, GenderTag.male if i < 3 else GenderTag.female), 100, i) for i in range(6)
     ]
-    assigned, errors = distribute(male + female, pool)
+    assigned, errors = distribute(male + female, pool, {})
     assert len(assigned) == 514 and not errors
     by_id = {a.id: a for a, _, _ in pool}
     assert all(

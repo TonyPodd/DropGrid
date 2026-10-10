@@ -19,11 +19,19 @@ from dropgrid.db.models import (
     Community,
     CommunityMediaUsage,
     Grid,
+    GridCategoryGender,
+    GridCommunity,
     MediaAsset,
     Submission,
     utcnow,
 )
-from dropgrid.domain.enums import AccountStatus, CampaignStatus, GenderTag, SubmissionStatus
+from dropgrid.domain.enums import (
+    AccountStatus,
+    CampaignStatus,
+    CategoryGender,
+    GenderTag,
+    SubmissionStatus,
+)
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.photos.images import LocalMediaStorage
@@ -87,6 +95,7 @@ async def seed(sessions, tmp_path, count=1):
             caption="test caption",
         )
         s.add(campaign)
+        s.add(GridCategoryGender(grid_id=grid.id, category="ОБЩЕЕ", gender=CategoryGender.unisex))
         await s.flush()
         ids = []
         for i in range(count):
@@ -95,6 +104,7 @@ async def seed(sessions, tmp_path, count=1):
             )
             s.add(community)
             await s.flush()
+            s.add(GridCommunity(grid_id=grid.id, community_id=community.id, category="ОБЩЕЕ"))
             row = Submission(
                 campaign_id=campaign.id, community_id=community.id, media_asset_id=asset.id
             )
