@@ -19,7 +19,13 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.photos.review import choose, confirm, latest_selection
-from dropgrid.photos.validation import advance, batch_summary, create_batch, item_detail
+from dropgrid.photos.validation import (
+    advance,
+    batch_summary,
+    create_batch,
+    item_detail,
+    next_alternative,
+)
 from dropgrid.services.catalog import ConflictError, get_entity
 
 router = APIRouter(prefix="/api/v1")
@@ -143,6 +149,7 @@ async def action(
     batch_id: UUID, position: int, data: ActionInput, request: Request
 ) -> dict[str, object]:
     planner = request.app.state.photo_engine.planner
+    next_rank = None
     async with planner.sessions() as session, session.begin():
         # Same lifecycle lock order as the shared confirmation path.
         batch = await get_entity(session, PhotoReviewBatch, batch_id)
@@ -184,6 +191,8 @@ async def action(
                 data.shown_ranks,
                 allow_confirmed=True,
             )
+            if data.action == "dislike":
+                next_rank = await next_alternative(session, selection, data.rank)
     if data.action == "confirm":
         await confirm(
             planner,
@@ -196,7 +205,10 @@ async def action(
             expected_confirmed_at=data.expected_confirmed_at,
         )
     async with planner.sessions() as session:
-        return await batch_summary(session, await get_entity(session, PhotoReviewBatch, batch_id))
+        result = await batch_summary(session, await get_entity(session, PhotoReviewBatch, batch_id))
+        if data.action == "dislike":
+            result["next_rank"] = next_rank
+        return result
 
 
 class BatchMetadata(Input):

@@ -126,6 +126,21 @@
   background: #206f61;
   color: white;
 }
+.validation-feedback {
+  flex-basis: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff1e9;
+  color: #793a25;
+  font-size: 13px;
+}
+.validation-feedback p {
+  margin: 0 0 4px;
+}
+.validation-alternatives button.is-disliked {
+  border-color: #b35443;
+  background: #fff1e9;
+}
 .validation-alternatives {
   width: min(42vw, 600px);
   display: grid;

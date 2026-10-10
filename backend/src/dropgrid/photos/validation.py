@@ -280,6 +280,33 @@ def image_path(candidate: PhotoSelectionCandidate, community_id: UUID) -> str | 
     return None
 
 
+async def next_alternative(
+    session: AsyncSession, selection: PhotoSelectionSession, rejected_rank: int
+) -> int | None:
+    """Advance within the snapshot without labelling unseen alternatives."""
+    options = (
+        await session.scalars(
+            select(PhotoSelectionCandidate)
+            .where(PhotoSelectionCandidate.selection_session_id == selection.id)
+            .order_by(PhotoSelectionCandidate.rank)
+        )
+    ).all()
+    available = [
+        c.rank
+        for c in options
+        if c.rank != rejected_rank
+        and c.operator_rating != "dislike"
+        and image_path(c, selection.community_id)
+    ]
+    rank = next(
+        (rank for rank in available if rank > rejected_rank),
+        available[0] if available else None,
+    )
+    if rank is not None:
+        selection.proposed_rank = rank
+    return rank
+
+
 async def item_detail(
     session: AsyncSession, batch: PhotoReviewBatch, position: int
 ) -> dict[str, object]:

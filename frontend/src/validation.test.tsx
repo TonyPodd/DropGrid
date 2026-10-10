@@ -9,6 +9,7 @@ function fixture() {
     mode = "pending";
   const states = ["pending", "pending", "pending"];
   const ranks = [1, 1, 1];
+  const ratings: (string | null)[][] = states.map(() => [null, null, null]);
   const summary = () => ({
     id: "b",
     name: "Validation",
@@ -46,13 +47,26 @@ function fixture() {
         const d = JSON.parse(String(init?.body));
         const p = Number(u.match(/items\/(\d+)/)?.[1]);
         ranks[p] = d.rank;
+        let nextRank: number | null = null;
+        if (d.action === "dislike") {
+          ratings[p][d.rank - 1] = "dislike";
+          const available = [1, 2, 3].filter(
+            (rank) => ratings[p][rank - 1] !== "dislike",
+          );
+          nextRank =
+            available.find((rank) => rank > d.rank) ?? available[0] ?? null;
+          if (nextRank !== null) ranks[p] = nextRank;
+        }
         if (d.action === "confirm" || d.action === "skip") {
           states[p] = d.action === "confirm" ? "confirmed" : "skipped";
           position = states.findIndex((s) => s === "pending");
           if (position < 0) position = p;
           mode = "pending";
         }
-        data = summary();
+        data = {
+          ...summary(),
+          ...(d.action === "dislike" ? { next_rank: nextRank } : {}),
+        };
       } else if (/items\/\d+$/.test(u)) {
         const p = Number(u.match(/items\/(\d+)/)?.[1]);
         data = {
@@ -70,7 +84,7 @@ function fixture() {
             rank,
             provider: rank === 2 ? "pinterest" : "vk_category_archive",
             image: `/api/v1/media-assets/${p}-${rank}/content`,
-            rating: null,
+            rating: ratings[p][rank - 1],
             diagnostics: { final_score: 0.9 },
           })),
         };
@@ -88,6 +102,103 @@ function mount() {
     </MemoryRouter>,
   );
 }
+it("saves dislike, shows the next alternative in the same community, and restores both on reload", async () => {
+  const fetch = fixture();
+  const view = mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  await userEvent.click(screen.getByRole("button", { name: "Не нравится" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("img", { name: "Выбрано: Community 0" }),
+    ).toHaveAttribute("src", expect.stringContaining("/0-2/content")),
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Отметка сохранена. Показан следующий вариант",
+  );
+  expect(screen.getByText("Отклонено вариантов: 1")).toBeInTheDocument();
+  expect(screen.getByText("0 / 3")).toBeInTheDocument();
+  const actions = fetch.mock.calls.filter(([u]) =>
+    String(u).endsWith("/action"),
+  );
+  expect(actions).toHaveLength(1);
+  expect(JSON.parse(String(actions[0][1]?.body))).toMatchObject({
+    action: "dislike",
+    rank: 1,
+    shown_ranks: [1],
+  });
+  view.unmount();
+  mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  expect(
+    screen.getByRole("img", { name: "Выбрано: Community 0" }),
+  ).toHaveAttribute("src", expect.stringContaining("/0-2/content"));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Альтернативы" }),
+  );
+  expect(screen.getByRole("button", { name: /1\..*👎/ })).toHaveClass(
+    "is-disliked",
+  );
+  expect(screen.getByRole("button", { name: /2\. Pinterest/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("keyboard dislike never wraps to a rejected photo and reports exhausted alternatives without confirming", async () => {
+  const fetch = fixture();
+  mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  for (const rank of [2, 3]) {
+    await userEvent.keyboard("d");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("img", { name: "Выбрано: Community 0" }),
+      ).toHaveAttribute("src", expect.stringContaining(`/0-${rank}/content`)),
+    );
+  }
+  await userEvent.keyboard("d");
+  await screen.findByText(/Все доступные варианты отклонены/);
+  expect(screen.getByText("Отклонено вариантов: 3")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Не нравится" })).toBeDisabled();
+  const before = fetch.mock.calls.filter(([u]) =>
+    String(u).endsWith("/action"),
+  ).length;
+  await userEvent.keyboard("d");
+  expect(
+    fetch.mock.calls.filter(([u]) => String(u).endsWith("/action")),
+  ).toHaveLength(before);
+  expect(before).toBe(3);
+  expect(
+    screen.getByRole("heading", { name: "Community 0" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("0 / 3")).toBeInTheDocument();
+});
+
+it("a failed dislike request leaves the photo unchanged and does not claim the mark was saved", async () => {
+  const fetch = fixture();
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    if (
+      String(input).endsWith("/action") &&
+      JSON.parse(String(init?.body)).action === "dislike"
+    )
+      return new Response(JSON.stringify({ detail: "Could not save rating" }), {
+        status: 503,
+      });
+    return original(input, init);
+  });
+  mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  await userEvent.click(screen.getByRole("button", { name: "Не нравится" }));
+  await screen.findByRole("alert");
+  expect(
+    screen.getByRole("img", { name: "Выбрано: Community 0" }),
+  ).toHaveAttribute("src", expect.stringContaining("/0-1/content"));
+  expect(screen.queryByText(/Отметка сохранена/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Отклонено вариантов/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Не нравится" })).toBeEnabled();
+});
+
 it("keeps system selection in one click, records only shown ranks, advances and resumes", async () => {
   const fetch = fixture();
   const view = mount();

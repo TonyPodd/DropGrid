@@ -68,6 +68,7 @@ export function PhotoValidationPage() {
     [item, setItem] = useState<Item | null>(null),
     [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
     [alternatives, setAlternatives] = useState(false),
     [enlarged, setEnlarged] = useState(false),
@@ -89,7 +90,7 @@ export function PhotoValidationPage() {
       const top = photo.getBoundingClientRect().top + window.scrollY;
       photo.style.setProperty(
         "--review-photo-height",
-        `${Math.max(120, window.innerHeight - top - reserve)}px`,
+        `${Math.max(48, window.innerHeight - top - reserve)}px`,
       );
     };
     fit();
@@ -129,6 +130,7 @@ export function PhotoValidationPage() {
     setItem(null);
     setAlternatives(false);
     setEnlarged(false);
+    setNotice("");
     void request<Item>(
       `/review-batches/${batchId}/items/${batch.current_position}`,
       { signal: c.signal },
@@ -194,18 +196,24 @@ export function PhotoValidationPage() {
   const act = useCallback(
     async (action: string, rank = active) => {
       if (!batch || !item || busy) return;
+      if (
+        action === "dislike" &&
+        item.candidates.find((c) => c.rank === rank)?.rating === "dislike"
+      )
+        return;
       if (!batch.reviewer_id) {
         setError("Выберите своё имя перед проверкой.");
         return;
       }
       setBusy(true);
       operation.current = action;
-      if (action === "confirm" || action === "skip")
+      if (action === "confirm" || action === "skip" || action === "dislike")
         keyboardChoice.current = false;
       setError("");
+      setNotice("");
       const shown = [...new Set([...seen, rank])];
       try {
-        const result = await request<Batch>(
+        const result = await request<Batch & { next_rank?: number | null }>(
           `/review-batches/${batch.id}/items/${item.position}/action`,
           {
             method: "POST",
@@ -229,12 +237,21 @@ export function PhotoValidationPage() {
           setActive(rank);
           setSeen((previous) => [...new Set([...previous, ...shown])]);
         } else if (action === "dislike") {
+          const next = result.next_rank ?? rank;
+          setActive(next);
+          setSeen((previous) => [...new Set([...previous, ...shown, next])]);
           setItem({
             ...item,
+            active_rank: next,
             candidates: item.candidates.map((c) =>
               c.rank === rank ? { ...c, rating: "dislike" } : c,
             ),
           });
+          setNotice(
+            result.next_rank != null
+              ? "👎 Отметка сохранена. Показан следующий вариант."
+              : "👎 Отметка сохранена. Все доступные варианты отклонены. Можно выбрать вариант вручную или пропустить сообщество.",
+          );
         } else if (result.current_position === item.position)
           setRevision((n) => n + 1);
       } catch (e) {
@@ -386,6 +403,8 @@ export function PhotoValidationPage() {
     }
   }
   const chosen = item?.candidates.find((c) => c.rank === active);
+  const rejected =
+    item?.candidates.filter((c) => c.rating === "dislike").length ?? 0;
   const matching = batch?.items.filter(
     (i) =>
       batch.current_filter === "all" ||
@@ -563,6 +582,14 @@ export function PhotoValidationPage() {
                     {sourceNames[chosen?.provider ?? ""] ?? chosen?.provider}
                   </span>
                   <div className="validation-actions">
+                    {(notice || rejected > 0) && (
+                      <div className="validation-feedback">
+                        {notice && <p role="status">{notice}</p>}
+                        {rejected > 0 && (
+                          <span>Отклонено вариантов: {rejected}</span>
+                        )}
+                      </div>
+                    )}
                     <button
                       className="primary"
                       disabled={
@@ -590,10 +617,14 @@ export function PhotoValidationPage() {
                     </button>
                     <button
                       aria-label="Не нравится"
-                      disabled={busy}
+                      disabled={busy || chosen?.rating === "dislike"}
                       onClick={() => void act("dislike")}
                     >
-                      Не нравится
+                      {busy && operation.current === "dislike"
+                        ? "Сохраняем…"
+                        : chosen?.rating === "dislike"
+                          ? "Отмечено 👎"
+                          : "Не нравится"}
                     </button>
                   </div>
                 </div>
@@ -605,6 +636,9 @@ export function PhotoValidationPage() {
                     {item.candidates.map((c, i) => (
                       <button
                         key={c.rank}
+                        className={
+                          c.rating === "dislike" ? "is-disliked" : undefined
+                        }
                         aria-pressed={active === c.rank}
                         disabled={busy}
                         onClick={() => void act("select", c.rank)}

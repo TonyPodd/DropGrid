@@ -218,6 +218,112 @@ async def test_skip_weak_evidence_stale_snapshot_and_no_hidden_labels(client, se
 
 
 @pytest.mark.integration
+async def test_dislike_persists_and_advances_alternative_without_confirmation(
+    client, sessions, tmp_path
+):
+    _, sid, selection_id, t, b, _, http = await batch_fixture(client, sessions, tmp_path)
+    try:
+        async with sessions() as db:
+            original_asset = (await db.get(Submission, sid)).media_asset_id
+        path = f"/api/v1/review-batches/{b['id']}/items/0"
+        response = await client.post(
+            path + "/action",
+            json={
+                "selection_id": str(selection_id),
+                "reviewer_id": t,
+                "action": "dislike",
+                "rank": 1,
+                "shown_ranks": [1],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["next_rank"] == 2
+        assert response.json()["current_position"] == 0
+        assert response.json()["confirmed"] == 0
+        restored = (await client.get(path)).json()
+        assert restored["active_rank"] == 2
+        assert restored["candidates"][0]["rating"] == "dislike"
+        assert restored["candidates"][1]["rating"] is None
+        async with sessions() as db:
+            selection = await db.get(PhotoSelectionSession, selection_id)
+            assert selection.confirmed_at is None and selection.chosen_rank is None
+            assert (await db.get(Submission, sid)).media_asset_id == original_asset
+            assert not (await db.get(PhotoSelectionCandidate, (selection_id, 2))).displayed
+            assert not (await db.get(PhotoSelectionCandidate, (selection_id, 3))).displayed
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("unavailable", ["dislike", "no_image"])
+async def test_dislike_wraps_skips_unavailable_and_reports_exhaustion(
+    client, sessions, tmp_path, unavailable
+):
+    _, _, selection_id, t, b, _, http = await batch_fixture(client, sessions, tmp_path)
+    try:
+        async with sessions() as db, db.begin():
+            third = await db.get(PhotoSelectionCandidate, (selection_id, 3))
+            if unavailable == "dislike":
+                third.operator_rating = "dislike"
+            else:
+                third.media_asset_id = None
+        path = f"/api/v1/review-batches/{b['id']}/items/0"
+        data = {
+            "selection_id": str(selection_id),
+            "reviewer_id": t,
+            "action": "dislike",
+            "rank": 2,
+            "shown_ranks": [2],
+        }
+        result = await client.post(path + "/action", json=data)
+        assert result.status_code == 200 and result.json()["next_rank"] == 1
+        data.update(rank=1, shown_ranks=[1, 2])
+        result = await client.post(path + "/action", json=data)
+        assert result.status_code == 200 and result.json()["next_rank"] is None
+        assert result.json()["current_position"] == 0
+        restored = (await client.get(path)).json()
+        assert restored["active_rank"] == 1
+        assert restored["state"] == "pending"
+        assert all(c["rating"] == "dislike" for c in restored["candidates"][:2])
+        async with sessions() as db:
+            assert not (await db.get(PhotoSelectionCandidate, (selection_id, 3))).displayed
+            assert (await db.get(PhotoSelectionSession, selection_id)).confirmed_at is None
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.integration
+async def test_dislike_rejected_when_closed_preserves_rating_and_selection(
+    client, sessions, tmp_path
+):
+    from dropgrid.db.models import PhotoReviewBatch
+
+    _, _, selection_id, t, b, _, http = await batch_fixture(client, sessions, tmp_path)
+    try:
+        async with sessions() as db, db.begin():
+            batch = await db.get(PhotoReviewBatch, UUID(b["id"]))
+            batch.state = "closed"
+        result = await client.post(
+            f"/api/v1/review-batches/{b['id']}/items/0/action",
+            json={
+                "selection_id": str(selection_id),
+                "reviewer_id": t,
+                "action": "dislike",
+                "rank": 1,
+                "shown_ranks": [1],
+            },
+        )
+        assert result.status_code == 409
+        async with sessions() as db:
+            assert (await db.get(PhotoSelectionSession, selection_id)).proposed_rank == 1
+            assert (
+                await db.get(PhotoSelectionCandidate, (selection_id, 1))
+            ).operator_rating is None
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.integration
 async def test_category_cannot_reuse_same_source_target(sessions, tmp_path):
     _, _, _, ref, _, provider, planner, item, http = await archive_fixture(sessions, tmp_path)
     with pytest.raises(PhotoError, match="category_archive_context_changed"):
