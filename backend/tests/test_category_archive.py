@@ -60,8 +60,7 @@ async def test_shortlist_excludes_target_wrong_models_and_uses_embeddings(sessio
     pool, stats = await provider.shortlist(cid, "БМВ", "BMW E60")
     assert [item.reference.vk_photo_id for item in pool] == [2, 3]
     assert all(
-        item.reference.community_id == good_id and not item.photo.publication_eligible
-        for item in pool
+        item.reference.community_id == good_id and item.photo.publication_eligible for item in pool
     )
     assert stats.candidate_rows == stats.compatible_embeddings == 2 and stats.shortlist == 2
     assert stats.source_communities == [good_id] and embedder.calls == 0

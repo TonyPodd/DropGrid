@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -11,8 +12,10 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from dropgrid.db.models import (
+    Community,
     CommunityContentProfile,
     CommunityReferencePhoto,
+    GridCommunity,
     MediaAsset,
     MediaProviderImport,
     utcnow,
@@ -44,6 +47,9 @@ from dropgrid.photos.visual_library import VisualLibrary
 
 if TYPE_CHECKING:
     from dropgrid.photos.planner import CampaignMediaPlanner
+
+
+near_duplicate_exclusions: ContextVar[int] = ContextVar("near_duplicate_exclusions", default=0)
 
 
 @dataclass
@@ -96,6 +102,10 @@ def deduplicate_pool(pool: list[PoolCandidate]) -> list[PoolCandidate]:
             or Deduplicator().near(item.perceptual_hash, old.perceptual_hash)
             for old in result
         ):
+            if any(
+                Deduplicator().near(item.perceptual_hash, old.perceptual_hash) for old in result
+            ):
+                near_duplicate_exclusions.set(near_duplicate_exclusions.get() + 1)
             continue
         result.append(item)
     return result
@@ -278,27 +288,69 @@ async def materialize_archive(
     planner: "CampaignMediaPlanner",
     candidate: PoolCandidate,
     category: str,
+    *,
+    target_id: UUID | None = None,
+    grid_id: UUID | None = None,
 ) -> tuple[MediaAsset, bool]:
     row = candidate.reference
     if row is None:
         raise PhotoError("archive_photo_unavailable")
+    cross = candidate.source == "vk_category_archive"
+    if cross and (not planner.settings.cross_community_reuse_enabled or target_id is None):
+        raise PhotoError("cross_community_reuse_disabled")
+    target_id = target_id or row.community_id
     # Revalidate opt-in and the age window after scoring, including concurrent edits.
     async with provider.collector.sessions() as s:
         p = await s.get(CommunityContentProfile, row.community_id)
         fresh = await s.get(CommunityReferencePhoto, row.id)
+        if cross:
+            from dropgrid.photos.category_archive import context_matches
+
+            source_community = await s.get(Community, row.community_id)
+            target = await s.get(Community, target_id)
+            relation = await s.get(GridCommunity, (grid_id, row.community_id)) if grid_id else None
+            target_relation = await s.get(GridCommunity, (grid_id, target_id)) if grid_id else None
+            from dropgrid.photos.concepts import retrieval_hint
+
+            target_hint = retrieval_hint(
+                target_relation.content_hint if target_relation else None,
+                target.name if target else None,
+                target_relation.comment if target_relation else None,
+            )
+            if (
+                not source_community
+                or not target
+                or not source_community.is_active
+                or not target.is_active
+                or source_community.id == target.id
+                or not context_matches(
+                    category,
+                    target_hint,
+                    target.name or target.domain,
+                    relation.category if relation else source_community.category,
+                    relation.content_hint if relation else None,
+                    source_community.name or source_community.domain,
+                )
+            ):
+                raise PhotoError("category_archive_context_changed")
         from dropgrid.photos.references import eligible_for_archive_reuse
 
         if (
-            not p
-            or not fresh
+            not fresh
             or not fresh.enabled
-            or not eligible_for_archive_reuse(
-                fresh.posted_at,
-                utcnow(),
-                p.archive_reuse_min_age_days,
-                p.archive_reuse_enabled,
-                True,
-                p.archive_reuse_max_age_days,
+            or (
+                not cross
+                and (
+                    not p
+                    or not eligible_for_archive_reuse(
+                        fresh.posted_at,
+                        utcnow(),
+                        p.archive_reuse_min_age_days,
+                        p.archive_reuse_enabled,
+                        True,
+                        p.archive_reuse_max_age_days,
+                    )
+                )
             )
         ):
             raise PhotoError("archive_policy_changed")
@@ -308,30 +360,38 @@ async def materialize_archive(
     if hashlib.sha256(data).hexdigest() != row.sha256:
         raise PhotoError("archive_photo_unavailable")
     image = NormalizedPhoto(data, row.sha256, row.perceptual_hash, row.width, row.height)
-    photo = provider.photo(row, category)
+    photo = candidate.photo if cross else provider.photo(row, category)
+    source = candidate.source
     async with planner.sessions() as s, s.begin():
         await s.execute(text("SELECT pg_advisory_xact_lock(748220102)"))
         p = await s.get(CommunityContentProfile, row.community_id, with_for_update=True)
-        if not p or not eligible_for_archive_reuse(
-            row.posted_at,
-            utcnow(),
-            p.archive_reuse_min_age_days,
-            p.archive_reuse_enabled,
-            True,
-            p.archive_reuse_max_age_days,
+        if not cross and (
+            not p
+            or not eligible_for_archive_reuse(
+                row.posted_at,
+                utcnow(),
+                p.archive_reuse_min_age_days,
+                p.archive_reuse_enabled,
+                True,
+                p.archive_reuse_max_age_days,
+            )
         ):
             raise PhotoError("archive_policy_changed")
-        usage = await community_usage(s, row.community_id, utcnow())
+        usage = await community_usage(s, target_id, utcnow())
         if recently_used(
-            usage, "vk_archive", archive_identity(row), row.sha256, row.perceptual_hash, utcnow()
+            usage, source, archive_identity(row), row.sha256, row.perceptual_hash, utcnow()
         ):
             raise PhotoError("community_media_cooldown")
         asset = await s.scalar(
-            select(MediaAsset).where(
+            select(MediaAsset)
+            .outerjoin(MediaProviderImport, MediaProviderImport.media_asset_id == MediaAsset.id)
+            .where(
                 or_(
                     MediaAsset.sha256 == row.sha256,
-                    (MediaAsset.provider == "vk_archive")
+                    (MediaAsset.provider == source)
                     & (MediaAsset.provider_asset_id == archive_identity(row)),
+                    (MediaProviderImport.provider == source)
+                    & (MediaProviderImport.provider_asset_id == archive_identity(row)),
                 )
             )
         )
@@ -357,7 +417,7 @@ async def materialize_archive(
                 source_url=photo.source_page_url,
                 category=category,
                 tags=list(photo.tags),
-                provider="vk_archive",
+                provider=source,
                 provider_asset_id=archive_identity(row),
                 license_code=photo.license_code,
                 license_name=photo.license_name,
@@ -377,7 +437,7 @@ async def materialize_archive(
         await s.execute(
             insert(MediaProviderImport)
             .values(
-                provider="vk_archive",
+                provider=source,
                 provider_asset_id=archive_identity(row),
                 media_asset_id=asset.id,
                 source_url=photo.source_page_url,
@@ -385,6 +445,14 @@ async def materialize_archive(
                 license_code=photo.license_code,
                 source_community_id=row.community_id,
                 source_post_id=row.vk_post_id,
+                source_photo_owner_id=row.vk_photo_owner_id,
+                source_photo_id=row.vk_photo_id,
+                source_posted_at=row.posted_at,
+                source_sha256=row.sha256,
+                source_perceptual_hash=row.perceptual_hash,
+                source_embedding=row.embedding.hex() if row.embedding else None,
+                source_embedding_model=row.embedding_model,
+                source_embedding_dimensions=row.embedding_dimensions,
             )
             .on_conflict_do_nothing()
         )

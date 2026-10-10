@@ -247,6 +247,14 @@ class MediaProviderImport(Base):
         ForeignKey("communities.id"), index=True
     )
     source_post_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_photo_owner_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_photo_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_sha256: Mapped[str | None] = mapped_column(CHAR(64))
+    source_perceptual_hash: Mapped[str | None] = mapped_column(String(16))
+    source_embedding: Mapped[str | None] = mapped_column(Text)
+    source_embedding_model: Mapped[str | None] = mapped_column(String(100))
+    source_embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
     image_source_url: Mapped[str | None] = mapped_column(Text)
     retrieval_query: Mapped[str | None] = mapped_column(String(100))
 
@@ -315,6 +323,8 @@ class Campaign(Identity, Base):
         Enum(CampaignStatus, name="campaign_status"), default=CampaignStatus.draft
     )
     account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
+    is_dry_run: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    dry_run_scope: Mapped[list[str] | None] = mapped_column(JSONB)
     photo_review_mode: Mapped[str] = mapped_column(
         String(24), default="AUTO", server_default="AUTO"
     )

@@ -78,8 +78,7 @@ async def snapshot(
     viable = [
         item
         for item in items
-        if item.source != "vk_category_archive"
-        and (item.photo.publication_eligible or item.photo.provider == "pinterest")
+        if item.photo.publication_eligible or item.photo.provider == "pinterest"
     ]
     chosen = next(
         (item for item in viable if item.asset and item.asset.id == submission.media_asset_id), None
@@ -124,7 +123,14 @@ async def snapshot(
                 "context_desired_content": plan.desired_content,
                 "baseline_rank": baseline.index(item) + 1 if item in baseline else rank,
             },
-            candidate=item.photo.model_dump(mode="json"),
+            candidate={
+                **item.photo.model_dump(mode="json"),
+                **(
+                    {"source_community_id": str(item.reference.community_id)}
+                    if item.reference
+                    else {}
+                ),
+            },
             operator_rating=feedback.rating if feedback else None,
         )
         session.add(row)
@@ -214,6 +220,7 @@ async def confirm(planner: CampaignMediaPlanner, submission_id: UUID) -> None:
     async with planner.sessions() as session:
         row = await get_entity(session, Submission, submission_id)
         selection = await latest_selection(session, submission_id)
+        review_campaign = await get_entity(session, Campaign, row.campaign_id)
         if selection.confirmed_at:
             return
         candidate = await session.get(
@@ -227,8 +234,10 @@ async def confirm(planner: CampaignMediaPlanner, submission_id: UUID) -> None:
             else None
         )
     if asset is None:
-        photo = PhotoCandidate.model_validate(candidate.candidate)
-        if candidate.provider == "vk_archive":
+        photo = PhotoCandidate.model_validate(
+            {k: v for k, v in candidate.candidate.items() if k != "source_community_id"}
+        )
+        if candidate.provider in {"vk_archive", "vk_category_archive"}:
             from dropgrid.db.models import CommunityReferencePhoto
 
             if not planner.archive or not candidate.reference_id:
@@ -237,9 +246,14 @@ async def confirm(planner: CampaignMediaPlanner, submission_id: UUID) -> None:
                 reference = await session.get(CommunityReferencePhoto, candidate.reference_id)
             if not reference:
                 raise ConflictError("Archive candidate unavailable")
-            item = PoolCandidate(photo, "vk_archive", reference=reference)
+            item = PoolCandidate(photo, candidate.provider, reference=reference)
             asset, _ = await materialize_archive(
-                planner.archive, planner, item, selection.category or ""
+                planner.archive,
+                planner,
+                item,
+                selection.category or "",
+                target_id=row.community_id,
+                grid_id=review_campaign.grid_id,
             )
         else:
             asset, _, error = await planner._import(photo, selection.category or "", False)
@@ -300,19 +314,19 @@ async def confirm(planner: CampaignMediaPlanner, submission_id: UUID) -> None:
             )
             if reused >= planner.settings.photo_max_reuse_per_asset:
                 raise ConflictError("Photo reuse limit reached")
-            from dropgrid.photos.rotation import community_usage, recently_used
+        from dropgrid.photos.rotation import community_usage, recently_used
 
-            usage = await community_usage(session, row.community_id, utcnow())
-            if recently_used(
-                usage,
-                asset.provider or "library",
-                asset.provider_asset_id or str(asset.id),
-                asset.sha256,
-                asset.perceptual_hash,
-                utcnow(),
-                asset.id,
-            ):
-                raise ConflictError("Photo was recently used in this community")
+        usage = await community_usage(session, row.community_id, utcnow())
+        if recently_used(
+            usage,
+            asset.provider or "library",
+            asset.provider_asset_id or str(asset.id),
+            asset.sha256,
+            asset.perceptual_hash,
+            utcnow(),
+            asset.id,
+        ):
+            raise ConflictError("Photo was recently used in this community")
         row.media_asset_id = asset.id
         row.photo_source = candidate.provider
         row.photo_attention = [flag for flag in row.photo_attention if flag != "operator_disliked"]

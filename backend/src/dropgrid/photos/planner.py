@@ -77,7 +77,7 @@ def assign_assets(
             and (allowed_assets is None or a.id in allowed_assets.get(submission, set()))
         ]
         if not available:
-            break
+            continue
         chosen = min(
             available,
             key=lambda a: (
@@ -128,8 +128,7 @@ class CampaignMediaPlanner:
 
     def eligible(self, asset: MediaAsset, sensitive: bool = False) -> bool:
         if (
-            asset.provider == "vk_category_archive"
-            or not asset.enabled
+            not asset.enabled
             or not asset.sha256
             or not asset.license_code
             or not asset.provider
@@ -322,7 +321,9 @@ class CampaignMediaPlanner:
             except OSError:
                 return None, False, "storage_unavailable"
 
-    async def plan(self, campaign_id: UUID, data: MediaPlanInput) -> MediaPlanRead:
+    async def plan(
+        self, campaign_id: UUID, data: MediaPlanInput, *, submission_ids: list[UUID] | None = None
+    ) -> MediaPlanRead:
         token = uuid4()
         async with self.sessions() as session, session.begin():
             campaign = await locked_campaign(session, campaign_id)
@@ -343,9 +344,18 @@ class CampaignMediaPlanner:
                 raise ConflictError("Photo planning is already running for this campaign")
             lease.token, lease.expires_at = token, utcnow() + timedelta(minutes=10)
         logger.info("photo.plan.started", extra={"campaign_id": str(campaign_id)})
+        from dropgrid.integrations.vk.read_only import preparation_read_only
+        from dropgrid.photos.pool import near_duplicate_exclusions
+
+        safety_token = preparation_read_only.set(True)
+        exclusion_token = near_duplicate_exclusions.set(0)
         try:
-            return await self._plan(campaign_id, token, data)
+            result = await self._plan(campaign_id, token, data, submission_ids)
+            result.near_duplicate_exclusions += near_duplicate_exclusions.get()
+            return result
         finally:
+            near_duplicate_exclusions.reset(exclusion_token)
+            preparation_read_only.reset(safety_token)
             async with self.sessions() as session, session.begin():
                 from sqlalchemy import delete
 
@@ -355,7 +365,13 @@ class CampaignMediaPlanner:
                     )
                 )
 
-    async def _plan(self, campaign_id: UUID, token: UUID, data: MediaPlanInput) -> MediaPlanRead:
+    async def _plan(
+        self,
+        campaign_id: UUID,
+        token: UUID,
+        data: MediaPlanInput,
+        submission_ids: list[UUID] | None = None,
+    ) -> MediaPlanRead:
         async with self.sessions() as session, session.begin():
             campaign = await session.get(Campaign, campaign_id)
             assert campaign is not None
@@ -453,8 +469,10 @@ class CampaignMediaPlanner:
         for submission, category in rows:
             key = normalize_category(category)
             all_groups[key].append(submission.id)
-            if submission.status == SubmissionStatus.pending and (
-                data.force or not submission.media_asset_id
+            if (
+                (submission_ids is None or submission.id in submission_ids)
+                and submission.status == SubmissionStatus.pending
+                and (data.force or not submission.media_asset_id)
             ):
                 groups[
                     (
@@ -646,6 +664,7 @@ class CampaignMediaPlanner:
 
         if self.visual:
             communities = {s.id: s.community_id for s, _ in rows}
+            reserved_counts = preserved_counts.copy()
             for context, submission_ids in groups.items():
                 category, hint, wanted = context
                 plan = self.builder.build(category, hint, wanted)
@@ -704,8 +723,27 @@ class CampaignMediaPlanner:
                             # Only the highest-ranked viable archive is materialized.
                             # Lower archive candidates remain reference rows.
                             materialized = []
-                            for item in mixed_ranked:
-                                if item.source == "vk_category_archive":
+                            from dropgrid.photos.rotation import community_usage, recently_used
+
+                            async with self.sessions() as db:
+                                target_usage = await community_usage(db, community_id, utcnow())
+                            for item in sorted(
+                                mixed_ranked,
+                                key=lambda candidate: (
+                                    reserved_counts[candidate.asset.id] if candidate.asset else 0,
+                                    -(candidate.score.final_score if candidate.score else 0),
+                                    candidate.identity,
+                                ),
+                            ):
+                                if recently_used(
+                                    target_usage,
+                                    *item.identity,
+                                    item.sha256,
+                                    item.perceptual_hash,
+                                    utcnow(),
+                                    item.asset.id if item.asset else None,
+                                ):
+                                    report.near_duplicate_exclusions += 1
                                     continue
                                 if item.source == "pinterest":
                                     asset, created, warning = await self._import(
@@ -713,7 +751,7 @@ class CampaignMediaPlanner:
                                     )
                                     if warning:
                                         warnings.append(warning)
-                                    if not asset or preserved_counts[asset.id] >= reuse:
+                                    if not asset or reserved_counts[asset.id] >= reuse:
                                         continue
                                     item.asset = asset
                                     source_of_asset[asset.id] = "pinterest"
@@ -728,7 +766,12 @@ class CampaignMediaPlanner:
                                     assert self.archive
                                     try:
                                         asset, created = await materialize_archive(
-                                            self.archive, self, item, category
+                                            self.archive,
+                                            self,
+                                            item,
+                                            category,
+                                            target_id=community_id,
+                                            grid_id=campaign.grid_id,
                                         )
                                     except (PhotoError, OSError) as exc:
                                         warnings.append(
@@ -737,7 +780,7 @@ class CampaignMediaPlanner:
                                             else "archive_storage_unavailable"
                                         )
                                         continue
-                                    if preserved_counts[asset.id] >= reuse:
+                                    if reserved_counts[asset.id] >= reuse:
                                         continue
                                     if all(a.id != asset.id for a in available[context]):
                                         available[context].append(asset)
@@ -745,20 +788,24 @@ class CampaignMediaPlanner:
                                         imported_ids.add(asset.id)
                                         report.downloaded_assets += 1
                                     item.asset = asset
-                                    source_of_asset[asset.id] = "vk_archive"
-                                    archive_sources[sid] = {asset.id: item.reference.id}
+                                    source_of_asset[asset.id] = item.source
+                                    if item.source == "vk_archive":
+                                        archive_sources[sid] = {asset.id: item.reference.id}
                                     materialized.append(item)
                                     break
+                                if item.asset and reserved_counts[item.asset.id] >= reuse:
+                                    continue
                                 materialized.append(item)
                                 # A better existing/Pixabay candidate requires no archive import.
-                                if item.asset and preserved_counts[item.asset.id] < reuse:
+                                if item.asset and reserved_counts[item.asset.id] < reuse:
                                     break
-                            # Remaining assets are usable fallback, but an archive belonging
-                            # to another community is never admitted via the category pool.
-                            asset_items = [item for item in mixed_ranked if item.asset]
-                            for item in materialized:
-                                if item not in asset_items:
-                                    asset_items.append(item)
+                            # Only selected reference rows have become local assets.
+                            asset_items = [item for item in materialized if item.asset]
+                            if asset_items:
+                                selected_item = asset_items[-1]
+                                assert selected_item.asset
+                                asset_items = [selected_item]
+                                reserved_counts[selected_item.asset.id] += 1
                             allowed_assets[sid] = {
                                 item.asset.id for item in asset_items if item.asset
                             }
@@ -921,9 +968,14 @@ class CampaignMediaPlanner:
                 if submission.id in snapshots and submission.id in assignments:
                     await snapshot(session, submission, *snapshots[submission.id])
                 elif submission.media_asset_id is None:
-                    submission.photo_attention = sorted(
-                        set(submission.photo_attention + ["preparation_error"])
-                    )
+                    flags = ["preparation_error"]
+                    if submission.id in snapshots:
+                        _, failed_pool, _, _, warnings = snapshots[submission.id]
+                        if len(failed_pool) < 5:
+                            flags.append("small_candidate_pool")
+                        if "pinterest_search_unavailable" in warnings:
+                            flags.append("pinterest_unavailable")
+                    submission.photo_attention = sorted(set(submission.photo_attention + flags))
             assigned_ids = {s.media_asset_id for s in current if s.media_asset_id}
             report.unassigned = sum(s.media_asset_id is None for s in current)
             report.unique_assets = len(assigned_ids)

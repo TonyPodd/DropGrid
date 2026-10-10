@@ -1,4 +1,4 @@
-"""Preview-only, embedding-first retrieval from other indexed communities."""
+"""Embedding-first retrieval; selected cross-community photos can be imported."""
 
 import asyncio
 from dataclasses import dataclass, field
@@ -154,9 +154,9 @@ class VKCategoryArchivePhotoProvider:
             photo = self.archive.photo(row, category).model_copy(
                 update={
                     "provider": self.name,
-                    "publication_eligible": False,
-                    "license_code": "cross-community-preview-only",
-                    "license_name": "Cross-community publication not approved",
+                    "publication_eligible": True,
+                    "license_code": "cross-community-reuse",
+                    "license_name": "Configured cross-community archive reuse",
                 }
             )
             pool.append(

@@ -105,6 +105,9 @@ class VKClient:
             await self.http.aclose()
 
     def require_write(self, method: str = "wall.post") -> None:
+        from dropgrid.integrations.vk.read_only import assert_write_allowed
+
+        assert_write_allowed(method)
         if not self.settings.vk_write_enabled:
             raise VKWriteDisabledError(method, "VK writes are disabled")
 
@@ -127,6 +130,9 @@ class VKClient:
         if method not in _READ_METHODS | _WRITE_METHODS:
             raise VKInputError("unsupported", "Unsupported VK method")
         if method in _WRITE_METHODS:
+            from dropgrid.integrations.vk.read_only import assert_write_allowed
+
+            assert_write_allowed(method)
             self.require_write(method)
         token = (
             access_token.get_secret_value() if isinstance(access_token, SecretStr) else access_token

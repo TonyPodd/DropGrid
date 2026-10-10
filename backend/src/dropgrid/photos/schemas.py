@@ -20,6 +20,7 @@ class CategoryPlanRead(Output):
 
 
 class MediaPlanRead(Output):
+    near_duplicate_exclusions: int = 0
     source_contributions: dict[str, dict[str, int]] = Field(default_factory=dict)
     campaign_id: UUID
     total_submissions: int
