@@ -15,6 +15,7 @@ from PIL import Image
 from dropgrid.photos.domain import (
     PhotoCandidate,
     PhotoError,
+    PhotoQueryPlan,
     PhotoRanker,
     PhotoSearch,
     normalize_category,
@@ -190,19 +191,28 @@ class RankedPhoto:
     final_score: float
     best_similarity: float | None
     reference_count: int
+    metadata_score: float = 0
+    quality_score: float = 0
+    normalized_visual_score: float | None = None
 
 
 def rank_photo(
     candidate: PhotoCandidate,
-    search: PhotoSearch,
+    search: PhotoSearch | PhotoQueryPlan,
     visual: VisualScore,
     desired: str | None = None,
     avoid: str | None = None,
     usage: int = 0,
 ) -> RankedPhoto:
-    base = PhotoRanker().score(candidate, search, usage=usage)
+    variants = search.ranking_variants if isinstance(search, PhotoQueryPlan) else (search,)
+    base = max(PhotoRanker().score(candidate, query, usage=usage) for query in variants)
     if visual.top_k_mean is None:
-        return RankedPhoto(base, None, base, None, 0)
+        quality = min(min(candidate.width, candidate.height) / QUALITY_SHORT_SIDE_SCALE, 1.0) / (
+            1 + usage
+        )
+        return RankedPhoto(
+            base, None, base, None, 0, max(0.0, min(1.0, base / BASE_SCORE_SCALE)), quality
+        )
     # Old metadata score's useful range is roughly 0..15; penalties remain explicit.
     metadata = max(0.0, min(1.0, base / BASE_SCORE_SCALE))
     tags = set(normalize_category(" ".join(candidate.tags)).split())
@@ -227,5 +237,12 @@ def rank_photo(
         VISUAL_WEIGHT * normalized_visual + METADATA_WEIGHT * metadata + QUALITY_WEIGHT * quality
     )
     return RankedPhoto(
-        base, visual.top_k_mean, final, visual.best_similarity, visual.reference_count
+        base,
+        visual.top_k_mean,
+        final,
+        visual.best_similarity,
+        visual.reference_count,
+        metadata,
+        quality,
+        normalized_visual,
     )

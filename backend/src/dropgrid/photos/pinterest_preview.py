@@ -162,7 +162,7 @@ class PinterestPreview:
             pins_materialized=len(pool),
             pins_embedded=sum(item.embedding is not None for item in pool),
         )
-        ranked = await rank_pool(self.visual, community_id, pool, plan.category)
+        ranked = await rank_pool(self.visual, community_id, pool, plan)
         self.last_retrieval = result
         self.last_materialized = len(pool)
         self.last_embedded = sum(item.embedding is not None for item in pool)

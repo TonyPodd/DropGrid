@@ -191,7 +191,7 @@ it("shows one ranked grid, filters sources and explains source vs target images"
   );
   const dialog = screen.getByRole("dialog", { name: "Почему это фото" });
   expect(
-    within(dialog).getByText(/Совпадение со стилем: 86%/),
+    within(dialog).getByText(/Итоговое соответствие: 0.800/),
   ).toBeInTheDocument();
   expect(within(dialog).getByAltText("Похожий пост группы")).toHaveAttribute(
     "src",

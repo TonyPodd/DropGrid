@@ -121,6 +121,17 @@ class PhotoQueryPlan:
     content_hint: str | None = None
     desired_content: str | None = None
 
+    @property
+    def ranking_variants(self) -> tuple[PhotoSearch, ...]:
+        # Explicit intent is authoritative; generic retrieval fallback must not
+        # reward category-only piano/violin metadata in a woman/car context.
+        if car_model(
+            " ".join(filter(None, (self.category, self.content_hint, self.desired_content)))
+        ):
+            return self.variants
+        intent = concept_queries(self.content_hint) or concept_queries(self.desired_content)
+        return tuple(PhotoSearch(query=q, lang="en") for q in intent) if intent else self.variants
+
 
 class PhotoQueryBuilder:
     mappings = {

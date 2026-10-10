@@ -68,6 +68,9 @@ type Score = {
   age_days?: number | null;
   age_reuse_score?: number;
   retrieval_queries?: string[];
+  metadata_score?: number;
+  quality_score?: number;
+  normalized_visual_score?: number | null;
   base_score: number;
   visual_score: number | null;
   final_score: number;
@@ -297,9 +300,7 @@ function imageUrl(item: Score, id: string) {
       : mediaContentUrl(item.media_asset_id ?? "");
 }
 function styleScore(item: Score) {
-  return item.visual_score == null
-    ? "Стиль не оценён"
-    : `Совпадение со стилем: ${Math.round(Math.max(0, Math.min(1, item.visual_score)) * 100)}%`;
+  return `Итоговое соответствие: ${item.final_score.toFixed(3)}`;
 }
 const roleReasons: Record<string, string> = {
   duplicate: "Повтор похожего фото",
@@ -1156,9 +1157,12 @@ export function CommunityDetailPage() {
             <details>
               <summary>Диагностика оценки</summary>
               <p>
-                base: {selected.base_score.toFixed(3)} · visual:{" "}
-                {selected.visual_score?.toFixed(3) ?? "—"} · final:{" "}
-                {selected.final_score.toFixed(3)}
+                Стиль: {selected.visual_score?.toFixed(3) ?? "нет референсов"} ·
+                Запрос: {selected.metadata_score?.toFixed(3) ?? "—"} · Качество:{" "}
+                {selected.quality_score?.toFixed(3) ?? "—"} · Итог:{" "}
+                {selected.final_score.toFixed(3)}. Это индекс, а не вероятность.
+                Возраст и повторное использование учитываются в итоговом
+                порядке.
               </p>
             </details>
           </section>

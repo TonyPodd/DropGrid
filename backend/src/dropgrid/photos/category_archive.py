@@ -10,7 +10,13 @@ from dropgrid.db.models import Community, CommunityReferencePhoto, GridCommunity
 from dropgrid.integrations.vk.errors import VKError
 from dropgrid.photos.archive import VKArchivePhotoProvider, archive_identity
 from dropgrid.photos.concepts import car_model
-from dropgrid.photos.domain import PhotoError, PhotoPolicy, normalize_category
+from dropgrid.photos.domain import (
+    PhotoError,
+    PhotoPolicy,
+    PhotoQueryBuilder,
+    PhotoQueryPlan,
+    normalize_category,
+)
 from dropgrid.photos.pool import PoolCandidate, deduplicate_pool, rank_pool
 from dropgrid.photos.progress import emit
 from dropgrid.photos.rotation import community_usage, recently_used
@@ -181,7 +187,13 @@ class VKCategoryArchivePhotoProvider:
         return pool, stats
 
     async def preview(
-        self, target_id: UUID, category: str | None, hint: str | None, grid_id: UUID | None = None
+        self,
+        target_id: UUID,
+        category: str | None,
+        hint: str | None,
+        grid_id: UUID | None = None,
+        *,
+        plan: PhotoQueryPlan | None = None,
     ) -> tuple[list[PoolCandidate], CategoryLibraryStats, list[str]]:
         pool, stats = await self.shortlist(target_id, category, hint, grid_id)
         materialized, warnings = [], []
@@ -223,7 +235,12 @@ class VKCategoryArchivePhotoProvider:
             category_materialized=len(materialized),
         )
         return (
-            await rank_pool(self.visual, target_id, materialized, category),
+            await rank_pool(
+                self.visual,
+                target_id,
+                materialized,
+                plan or PhotoQueryBuilder().build(category, hint),
+            ),
             stats,
             sorted(set(warnings)),
         )

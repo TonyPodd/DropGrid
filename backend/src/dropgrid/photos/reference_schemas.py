@@ -122,6 +122,9 @@ class PhotoPreviewItem(Output):
     original_posted_at: datetime | None = None
     age_days: float | None = None
     age_reuse_score: float = 0
+    metadata_score: float = 0
+    quality_score: float = 0
+    normalized_visual_score: float | None = None
     base_score: float
     visual_score: float | None
     final_score: float

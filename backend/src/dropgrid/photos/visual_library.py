@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from dropgrid.db.models import CommunityContentProfile, CommunityReferencePhoto, MediaAsset, utcnow
 from dropgrid.photos.density import assess_references
-from dropgrid.photos.domain import PhotoError, PhotoQueryBuilder
+from dropgrid.photos.domain import PhotoError, PhotoQueryPlan
 from dropgrid.photos.images import LocalMediaStorage
 from dropgrid.photos.timings import timed
 from dropgrid.photos.visual import (
@@ -109,12 +109,11 @@ class VisualLibrary:
         return list(vectors.values()), list(vectors), profile
 
     async def rank_assets(
-        self, community_id: UUID, assets: list[MediaAsset], category: str | None
+        self, community_id: UUID, assets: list[MediaAsset], plan: PhotoQueryPlan
     ) -> dict[UUID, RankedPhoto]:
         from dropgrid.photos.planner import CampaignMediaPlanner
 
         references, _, profile = await self.references(community_id)
-        search = PhotoQueryBuilder().build(category).variants[0]
         result = {}
         for asset in assets:
             visual = VisualScore(None, None, 0)
@@ -127,7 +126,7 @@ class VisualLibrary:
                     pass
             result[asset.id] = rank_photo(
                 CampaignMediaPlanner._asset_candidate(asset),
-                search,
+                plan,
                 visual,
                 profile.desired_content if profile else None,
                 profile.avoid_content if profile else None,

@@ -649,6 +649,7 @@ class CampaignMediaPlanner:
             communities = {s.id: s.community_id for s, _ in rows}
             for context, submission_ids in groups.items():
                 category, hint, wanted = context
+                plan = self.builder.build(category, hint, wanted)
                 for sid in submission_ids:
                     community_id = communities[sid]
                     warnings = categories[category].warnings
@@ -684,7 +685,7 @@ class CampaignMediaPlanner:
                                 if not usage:
                                     assets = [item.asset for item in pool if item.asset]
                                     scores = await self.visual.rank_assets(
-                                        community_id, assets, category
+                                        community_id, assets, plan
                                     )
                                     allowed_assets[sid] = {a.id for a in assets}
                                     if scores and all(
@@ -707,15 +708,13 @@ class CampaignMediaPlanner:
                                     category_warnings,
                                 ) = await VKCategoryArchivePhotoProvider(
                                     self.archive, self.visual
-                                ).preview(community_id, category, hint, campaign.grid_id)
+                                ).preview(community_id, category, hint, campaign.grid_id, plan=plan)
                                 warnings.extend(category_warnings)
                                 pool += category_pool
                                 report.source_contributions["vk_category_archive"]["retrieved"] += (
                                     len(category_pool)
                                 )
-                            mixed_ranked = await rank_pool(
-                                self.visual, community_id, pool, category
-                            )
+                            mixed_ranked = await rank_pool(self.visual, community_id, pool, plan)
                             for pool_item in mixed_ranked:
                                 report.source_contributions[pool_item.source]["deduplicated"] += 1
                             for pool_item in mixed_ranked[:10]:

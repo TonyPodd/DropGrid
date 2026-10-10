@@ -19,7 +19,7 @@ from dropgrid.db.models import (
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.photos.archive import ArchiveDiscovery, VKArchivePhotoProvider
 from dropgrid.photos.cache import SearchCache
-from dropgrid.photos.domain import FakePhotoProvider, PhotoPolicy
+from dropgrid.photos.domain import FakePhotoProvider, PhotoPolicy, PhotoQueryBuilder
 from dropgrid.photos.download import PhotoDownloader
 from dropgrid.photos.images import LocalMediaStorage, normalize_image
 from dropgrid.photos.planner import CampaignMediaPlanner
@@ -247,7 +247,7 @@ async def test_archive_self_exclusion_in_actual_pool_and_preview_no_import(sessi
         archive = VKArchivePhotoProvider(collector)
         visual = VisualLibrary(sessions, storage, embedder)
         pool = await archive_pool(archive, cid, [])
-        ranked = await rank_pool(visual, cid, pool, "truck", now=NOW)
+        ranked = await rank_pool(visual, cid, pool, PhotoQueryBuilder().build("truck"), now=NOW)
         assert (
             len(ranked) == 1
             and ranked[0].score.visual_score is None

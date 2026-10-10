@@ -2,7 +2,7 @@
 
 import asyncio
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -24,7 +24,7 @@ from dropgrid.photos.domain import (
     PhotoCandidate,
     PhotoError,
     PhotoPolicy,
-    PhotoQueryBuilder,
+    PhotoQueryPlan,
 )
 from dropgrid.photos.images import NormalizedPhoto
 from dropgrid.photos.progress import emit
@@ -106,7 +106,7 @@ async def rank_pool(
     visual: VisualLibrary,
     community_id: UUID,
     pool: list[PoolCandidate],
-    category: str | None,
+    plan: PhotoQueryPlan,
     *,
     now: datetime | None = None,
 ) -> list[PoolCandidate]:
@@ -117,7 +117,6 @@ async def rank_pool(
             usage = await community_usage(s, community_id, now)
     refs, _ = await visual.reference_rows(community_id)
     kept = []
-    search = PhotoQueryBuilder().build(category).variants[0]
     unique_pool = deduplicate_pool(pool)
     for index, item in enumerate(unique_pool):
         await emit("ranking", index, len(unique_pool))
@@ -165,7 +164,7 @@ async def rank_pool(
         )
         item.score = rank_photo(
             item.photo,
-            search,
+            plan,
             score,
             profile.desired_content if profile else None,
             profile.avoid_content if profile else None,
@@ -183,12 +182,8 @@ async def rank_pool(
         assert item.score
         value = item.score
         penalty_scale = BASE_SCORE_SCALE if value.visual_score is None else 1
-        item.score = RankedPhoto(
-            value.base_score,
-            value.visual_score,
-            value.final_score + item.age_reuse_score * penalty_scale,
-            value.best_similarity,
-            value.reference_count,
+        item.score = replace(
+            value, final_score=value.final_score + item.age_reuse_score * penalty_scale
         )
     return sorted(
         kept,

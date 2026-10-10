@@ -60,6 +60,9 @@ def preview_item(item: PoolCandidate) -> PhotoPreviewItem:
         base_score=score.base_score,
         visual_score=score.visual_score,
         final_score=score.final_score,
+        metadata_score=score.metadata_score,
+        quality_score=score.quality_score,
+        normalized_visual_score=score.normalized_visual_score,
         best_similarity=score.best_similarity,
         reference_count=score.reference_count,
     )
@@ -152,7 +155,7 @@ async def _photo_preview(
                     )
                 )
     await emit("ranking", len(imports), len(imports))
-    ranked_pixabay = await rank_pool(visual, community_id, pixabay, category)
+    ranked_pixabay = await rank_pool(visual, community_id, pixabay, plan)
     # Keep each lane independent: mixed-pool scoring cannot mutate source scores.
     pool = [replace(item, score=None, age_reuse_score=0) for item in pixabay]
     async with planner.sessions() as session:
@@ -212,7 +215,7 @@ async def _photo_preview(
             )
             for i in range(ARCHIVE_STRATA)
         ]
-    mixed = await rank_pool(visual, community_id, pool, category)
+    mixed = await rank_pool(visual, community_id, pool, plan)
     _, reference_ids, _ = await visual.references(community_id)
     if not reference_ids:
         warnings.append("visual_references_unavailable")
@@ -250,7 +253,7 @@ async def _photo_preview(
         with stage("category_library"):
             category_pool, library_stats, category_warnings = await VKCategoryArchivePhotoProvider(
                 planner.archive, visual
-            ).preview(community_id, category, effective_hint, data.grid_id)
+            ).preview(community_id, category, effective_hint, data.grid_id, plan=plan)
         warnings.extend(category_warnings)
     elif data.include_category_library:
         warnings.append("category_library_disabled")
@@ -262,7 +265,7 @@ async def _photo_preview(
             replace(item, score=None, reference_matches=[])
             for item in mixed + ranked_pinterest + category_pool
         ],
-        category,
+        plan,
     )
     await emit("finalizing", len(best), len(best), candidates=len(best))
     diagnostic_candidates = mixed + ranked_pinterest + category_pool
