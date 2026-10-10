@@ -344,6 +344,16 @@ async def ranking_status(session: Session, request: Request) -> dict[str, object
         "choices": count,
         "minimum": request.app.state.vk_client.settings.photo_learned_ranker_min_choices,
         "model_version": str(model.id) if model else None,
+        "remaining": max(
+            0, request.app.state.vk_client.settings.photo_learned_ranker_min_choices - count
+        ),
+        "retrain_interval": (
+            request.app.state.vk_client.settings.photo_learned_ranker_retrain_choices
+        ),
+        "latest_model": ("learned:" if pref and pref.mode == "learned" else "shadow:")
+        + str(model.id)
+        if model
+        else "deterministic",
         "metrics": model.metrics if model else None,
         "promotion_ready": bool(
             valid_model(model) and model and model.metrics and model.metrics.get("promotion_ready")

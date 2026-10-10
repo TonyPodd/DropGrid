@@ -347,6 +347,10 @@ async def test_training_threshold_shadow_explicit_enable_and_retrain(sessions, t
         assert model.metrics["baseline_top1"] == 0 and model.metrics["learned_top1"] == 1
         assert model.metrics["promotion_ready"]
         version = model.id
+    dashboard = (await client.get("/api/v1/photo-ranking")).json()
+    assert dashboard["choices"] == 100 and dashboard["remaining"] == 0
+    assert dashboard["latest_model"] == f"shadow:{version}"
+    assert dashboard["metrics"]["train"] == 80 and dashboard["metrics"]["validation"] == 20
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("No HTTP")))
     planner = make_planner(sessions, tmp_path, FakePhotoProvider(), http)
     # Only current bounded score features enter the model, never vectors or outcomes.

@@ -194,3 +194,87 @@ it("recovers durable campaign progress on reload without enqueue", async () => {
     fetch.mock.calls.some(([url]) => String(url).includes("prepare-workflow")),
   ).toBe(false);
 });
+it("shows full-grid capacity and compact learning readiness", async () => {
+  const fetch = mock();
+  const previous = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("readiness-report"))
+      return new Response(
+        JSON.stringify({
+          scope: 514,
+          real_capacity: 100,
+          capacity_shortfall: 414,
+        }),
+      );
+    if (url.endsWith("photo-ranking"))
+      return new Response(
+        JSON.stringify({
+          mode: "deterministic",
+          choices: 24,
+          minimum: 100,
+          latest_model: "deterministic",
+          promotion_ready: false,
+        }),
+      );
+    return previous(input, init);
+  });
+  render(
+    <CampaignWorkflow
+      campaign={{ ...campaign, is_dry_run: true }}
+      onChanged={vi.fn()}
+    />,
+  );
+  expect(await screen.findByText("Нужно отправить: 514")).toBeInTheDocument();
+  expect(screen.getByText("Доступная ёмкость: 100")).toBeInTheDocument();
+  expect(screen.getByText("Не хватает: 414")).toBeInTheDocument();
+  expect(
+    screen.getByText("Подключите дополнительные аккаунты или уменьшите scope."),
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByText(/Manual decisions: 24 \/ 100/),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/DRY RUN · отправка запрещена/)).toBeInTheDocument();
+  expect(
+    screen.queryByText("Создать отдельный dry run"),
+  ).not.toBeInTheDocument();
+});
+it("keeps shadow diagnostics under Advanced and never promotes automatically", async () => {
+  const fetch = mock();
+  const previous = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    if (String(input).endsWith("photo-ranking"))
+      return new Response(
+        JSON.stringify({
+          mode: "deterministic",
+          choices: 100,
+          minimum: 100,
+          latest_model: "shadow:fixture-v1",
+          promotion_ready: true,
+          metrics: {
+            train: 80,
+            validation: 20,
+            baseline_top1: 0.5,
+            learned_top1: 0.65,
+            promotion_ready: true,
+          },
+        }),
+      );
+    return previous(input, init);
+  });
+  render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
+  expect(
+    await screen.findByText(/Latest model: shadow:fixture-v1/),
+  ).toBeInTheDocument();
+  const summary = screen.getByText("Обучение автоподбора / диагностика");
+  expect(summary.closest("details")).not.toHaveAttribute("open");
+  await userEvent.click(summary);
+  expect(screen.getByText("Training decisions")).toBeInTheDocument();
+  expect(screen.getByText("Validation decisions")).toBeInTheDocument();
+  expect(screen.getByText("50.0%")).toBeInTheDocument();
+  expect(screen.getByText("65.0%")).toBeInTheDocument();
+  expect(screen.getByText("yes")).toBeInTheDocument();
+  expect(
+    fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
+  ).toHaveLength(0);
+});

@@ -124,6 +124,8 @@ export function CampaignWorkflow({
         minimum: number;
         promotion_ready: boolean;
         metrics: Record<string, unknown> | null;
+        latest_model?: string;
+        remaining?: number;
       }>("/photo-ranking", { signal }),
     [revision],
   );
@@ -216,6 +218,12 @@ export function CampaignWorkflow({
             <p>Подключите дополнительные аккаунты или уменьшите scope.</p>
           )}
         </div>
+      )}
+      {ranking.data && (
+        <p>
+          Manual decisions: {ranking.data.choices} / {ranking.data.minimum} ·
+          Latest model: {ranking.data.latest_model ?? "deterministic"}
+        </p>
       )}
       {dryRunUrl && (
         <p>
@@ -528,8 +536,27 @@ export function CampaignWorkflow({
               <dl>
                 {Object.entries(ranking.data.metrics).map(([key, value]) => (
                   <div key={key}>
-                    <dt>{key}</dt>
-                    <dd>{String(value)}</dd>
+                    <dt>
+                      {(
+                        {
+                          train: "Training decisions",
+                          validation: "Validation decisions",
+                          baseline_top1: "Baseline top-1 agreement",
+                          learned_top1: "Learned top-1 agreement",
+                          promotion_ready: "Promotion ready",
+                        } as Record<string, string>
+                      )[key] ?? key}
+                    </dt>
+                    <dd>
+                      {key === "promotion_ready"
+                        ? value
+                          ? "yes"
+                          : "no"
+                        : ["baseline_top1", "learned_top1"].includes(key) &&
+                            typeof value === "number"
+                          ? `${(value * 100).toFixed(1)}%`
+                          : String(value)}
+                    </dd>
                   </div>
                 ))}
               </dl>
