@@ -163,10 +163,10 @@ export function CampaignWorkflow({
     previousActive.current = !!active;
   }, [active, onChanged]);
   useEffect(() => {
-    if (!active) return;
+    if (!active && campaign.status !== "ready") return;
     const timer = setInterval(() => setRevision((n) => n + 1), 3000);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [active, campaign.status]);
   async function action(path: string, body?: unknown, method = "POST") {
     setBusy(true);
     setError("");

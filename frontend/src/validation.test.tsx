@@ -190,3 +190,31 @@ it("queues a fast Enter until the selected alternative is saved", async () => {
   expect(confirms).toHaveLength(1);
   expect(JSON.parse(String(confirms[0][1]?.body)).rank).toBe(2);
 });
+
+it("uses authenticated reviewer identity without a second selector", async () => {
+  const fetch = fixture();
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    const response = await original(input, init);
+    const data = await response.json();
+    if (data.id === "b") {
+      data.trusted_reviewer = { id: "t", display_name: "Tima" };
+      data.owner = true;
+    }
+    return new Response(JSON.stringify(data), { status: 200 });
+  });
+  render(
+    <MemoryRouter initialEntries={["/review/b"]}>
+      <Routes>
+        <Route path="/review/:batchId" element={<PhotoValidationPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  await screen.findByText("Tima");
+  expect(
+    screen.queryByRole("combobox", { name: "Reviewer" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("heading", { name: "Проверка фото" }),
+  ).toBeInTheDocument();
+});

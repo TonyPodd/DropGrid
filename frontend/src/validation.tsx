@@ -25,6 +25,8 @@ type Item = {
 };
 type Batch = {
   id: string;
+  trusted_reviewer?: Reviewer;
+  owner?: boolean;
   name: string;
   target_count: number;
   reviewer_id: string | null;
@@ -185,7 +187,12 @@ export function PhotoValidationPage() {
             },
           },
         );
-        setBatch({ ...result, reviewer_id: batch.reviewer_id });
+        setBatch({
+          ...result,
+          reviewer_id: batch.reviewer_id,
+          trusted_reviewer: batch.trusted_reviewer,
+          owner: batch.owner,
+        });
         if (action === "select") {
           setActive(rank);
           setSeen((previous) => [...new Set([...previous, ...shown])]);
@@ -361,32 +368,38 @@ export function PhotoValidationPage() {
   return (
     <main className="validation-shell">
       <header className="validation-top">
-        <Link to="/campaigns">DropGrid</Link>
-        <h1>Photo validation</h1>
+        {(!batch?.trusted_reviewer || batch.owner) && (
+          <Link to="/campaigns">DropGrid</Link>
+        )}
+        <h1>Проверка фото</h1>
         {batch && (
           <>
-            <label className="reviewer-select">
-              Кто проверяет
-              <select
-                aria-label="Reviewer"
-                value={batch.reviewer_id ?? ""}
-                disabled={busy}
-                onChange={(e) =>
-                  void navigate(
-                    batch.current_position,
-                    batch.current_filter,
-                    e.target.value || null,
-                  )
-                }
-              >
-                <option value="">Выберите имя</option>
-                {reviewers.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {batch.trusted_reviewer ? (
+              <strong>{batch.trusted_reviewer.display_name}</strong>
+            ) : (
+              <label className="reviewer-select">
+                Кто проверяет
+                <select
+                  aria-label="Reviewer"
+                  value={batch.reviewer_id ?? ""}
+                  disabled={busy}
+                  onChange={(e) =>
+                    void navigate(
+                      batch.current_position,
+                      batch.current_filter,
+                      e.target.value || null,
+                    )
+                  }
+                >
+                  <option value="">Выберите имя</option>
+                  {reviewers.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <strong>
               {batch.done} / {batch.target_count}
             </strong>
