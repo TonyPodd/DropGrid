@@ -64,8 +64,8 @@ export function AccountTokenImport({
           >
             <h2 id={`token-title-${accountId}`}>Подключить VK account</h2>
             <p>
-              Только для локального single-user DropGrid. Токен вы получаете
-              самостоятельно.
+              Токен вы получаете самостоятельно. В DropGrid он хранится в
+              зашифрованном виде.
             </p>
             <label>
               VK user access token
