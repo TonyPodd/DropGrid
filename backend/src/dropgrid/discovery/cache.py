@@ -17,8 +17,11 @@ def inspect_cache(root: Path) -> dict[str, Any]:
     }
 
 
-def prune(root: Path) -> int:
-    files = sorted(root.glob("*/*.jpg"), key=lambda p: p.stat().st_mtime)
+def prune(root: Path, protected: frozenset[str] = frozenset()) -> int:
+    files = sorted(
+        root.glob("*/*.jpg"),
+        key=lambda p: (p.relative_to(root).as_posix() in protected, p.stat().st_mtime),
+    )
     size = sum(p.stat().st_size for p in files)
     cutoff = (datetime.now(UTC) - timedelta(days=30)).timestamp()
     count = 0

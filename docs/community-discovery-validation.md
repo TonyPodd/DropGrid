@@ -22,7 +22,8 @@ Latest decisions are authoritative; append-only events preserve every revision a
 
 Previews use the existing analysis cache, never a fresh wall scan when opening review. Images use
 `object-fit: contain` and open enlarged. Eviction shows explicit placeholders; the VK link stays usable.
-Discovery cache remains capped at 300 MiB / 30 days. Diagnostics include bytes, entries, oldest and
+Open review batches give their available preview files eviction priority; the hard cap and TTL always
+win if necessary. Discovery cache remains capped at 300 MiB / 30 days. Diagnostics include bytes, entries, oldest and
 cumulative evictions since this migration. Production media/reference namespaces are not pruned.
 
 ## Metrics

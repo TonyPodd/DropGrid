@@ -335,3 +335,26 @@ async def test_unreviewed_cohort_uses_originating_run_and_concurrent_reviewers(s
         await review.decide(db, b, 0, rid, "approved", None, d["version"], 0)
         await review.decide(db, b, 0, other.id, "rejected", "other", peer["version"], 0)
         assert candidate.human_status == "rejected"
+
+
+def test_open_review_previews_have_eviction_priority_but_never_bypass_cap_or_ttl(tmp_path):
+    import os
+    from datetime import timedelta
+
+    from dropgrid.db.models import utcnow
+    from dropgrid.discovery.cache import inspect_cache, prune
+
+    root = tmp_path / "discovery"
+    folder = root / "aa"
+    folder.mkdir(parents=True)
+    pinned = folder / "pinned.jpg"
+    ordinary = folder / "ordinary.jpg"
+    for p in (pinned, ordinary):
+        with p.open("wb") as f:
+            f.truncate(200 * 1024 * 1024)
+    os.utime(pinned, ((utcnow() - timedelta(days=2)).timestamp(),) * 2)
+    protected = frozenset({"aa/pinned.jpg"})
+    assert prune(root, protected) == 1 and pinned.exists() and not ordinary.exists()
+    assert inspect_cache(root)["size"] <= 300 * 1024 * 1024
+    os.utime(pinned, ((utcnow() - timedelta(days=31)).timestamp(),) * 2)
+    assert prune(root, protected) == 1 and not pinned.exists()

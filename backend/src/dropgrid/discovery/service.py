@@ -630,7 +630,31 @@ class Discovery:
             )
             counts["filtered"] += int(candidate.status == "unavailable")
             run.counters, run.stage = counts, "checking_activity"
-        evicted = await asyncio.to_thread(self.trim_cache)
+        from dropgrid.db.models import CommunityReviewBatch, CommunityReviewBatchItem
+
+        async with self.sessions() as db:
+            snapshots = (
+                await db.scalars(
+                    select(Evidence.analysis_snapshot)
+                    .join(
+                        CommunityReviewBatchItem,
+                        (CommunityReviewBatchItem.run_id == Evidence.run_id)
+                        & (CommunityReviewBatchItem.candidate_id == Evidence.candidate_id),
+                    )
+                    .join(
+                        CommunityReviewBatch,
+                        CommunityReviewBatch.id == CommunityReviewBatchItem.batch_id,
+                    )
+                    .where(CommunityReviewBatch.state == "open")
+                )
+            ).all()
+        protected = frozenset(
+            key
+            for snapshot in snapshots
+            if snapshot
+            for key in snapshot.get("preview_cache_keys", [])
+        )
+        evicted = await asyncio.to_thread(self.trim_cache, protected)
         from sqlalchemy.dialects.postgresql import insert
 
         from dropgrid.db.models import DiscoveryCacheState
@@ -698,10 +722,10 @@ class Discovery:
                     )
             run.state, run.stage, run.finished_at = "ready", "ranking_candidates", utcnow()
 
-    def trim_cache(self) -> int:
+    def trim_cache(self, protected: frozenset[str] = frozenset()) -> int:
         from dropgrid.discovery.cache import prune
 
-        return prune(self.storage.root)
+        return prune(self.storage.root, protected)
 
 
 async def approve(
