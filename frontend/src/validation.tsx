@@ -578,6 +578,21 @@ export function PhotoValidationPage() {
                     )}
                     {item.intent && <> · {item.intent}</>}
                   </p>
+                  {item.region_context &&
+                    (!item.region_context.region_known ||
+                      ["unverified", "mismatch"].includes(
+                        String(
+                          chosen?.diagnostics.region_status || "unverified",
+                        ),
+                      )) && (
+                      <p className="validation-region-note">
+                        {!item.region_context.region_known
+                          ? "Код региона неизвестен — нужна проверка"
+                          : chosen?.diagnostics.region_status === "mismatch"
+                            ? "Фото из другого региона — нужна проверка"
+                            : "Регион фото не подтверждён — нужна проверка"}
+                      </p>
+                    )}
                 </div>
                 <span>
                   Фото {item.position + 1} / {batch.target_count}
@@ -718,6 +733,7 @@ export function PhotoValidationPage() {
                       {
                         same_region: "тот же регион",
                         own_community: "своя группа",
+                        verified: "регион подтверждён",
                         unverified: "не подтверждён",
                         mismatch: "другой регион",
                       } as Record<string, string>

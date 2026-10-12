@@ -391,3 +391,35 @@ it("shows regional context and provenance without changing review choices", asyn
   await userEvent.click(screen.getByText("Почему это фото / Диагностика"));
   expect(screen.getByText("Регион: тот же регион")).toBeVisible();
 });
+it("makes unverified regional fallback visible without recording a decision", async () => {
+  const fetch = fixture();
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    const response = await original(input, init);
+    if (!String(input).match(/\/items\/\d+(?:\?|$)/)) return response;
+    const data = await response!.json();
+    return new Response(
+      JSON.stringify({
+        ...data,
+        category: "24 регион",
+        region_context: {
+          display_name: "Красноярский край",
+          region_known: true,
+          region_codes: ["24"],
+        },
+        candidates: data.candidates.map((c: unknown) => ({
+          ...(c as object),
+          diagnostics: { region_status: "unverified" },
+        })),
+      }),
+      { status: 200 },
+    );
+  });
+  mount();
+  expect(
+    await screen.findByText("Регион фото не подтверждён — нужна проверка"),
+  ).toBeVisible();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(
+    false,
+  );
+});
