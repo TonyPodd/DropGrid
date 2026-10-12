@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -113,6 +114,9 @@ class GridCommunity(Base):
     source_reference: Mapped[str | None] = mapped_column(String(64))
     comment: Mapped[str | None] = mapped_column(Text)
     content_hint: Mapped[str | None] = mapped_column(Text)
+    region_key: Mapped[str | None] = mapped_column(String(64))
+    region_codes: Mapped[list[str] | None] = mapped_column(ARRAY(String(3)))
+    discovery_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class GridCategoryGender(Updated, Base):
@@ -630,3 +634,89 @@ class PhotoRankingPreference(Base):
     __tablename__ = "photo_ranking_preferences"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     mode: Mapped[str] = mapped_column(String(20), default="deterministic")
+
+
+class CommunityDiscoveryRun(Identity, Updated, Base):
+    __tablename__ = "community_discovery_runs"
+    grid_id: Mapped[UUID] = mapped_column(ForeignKey("grids.id"))
+    account_id: Mapped[UUID] = mapped_column(ForeignKey("accounts.id"))
+    scope_type: Mapped[str] = mapped_column(String(24))
+    scope_value: Mapped[str | None] = mapped_column(String(200))
+    state: Mapped[str] = mapped_column(String(24), default="queued", server_default="queued")
+    stage: Mapped[str] = mapped_column(String(32), default="searching", server_default="searching")
+    queries: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
+    query_cursor: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    counters: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(100))
+    lease_token: Mapped[UUID | None] = mapped_column()
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CommunityDiscoveryCandidate(Identity, Updated, Base):
+    __tablename__ = "community_discovery_candidates"
+    __table_args__ = (
+        UniqueConstraint("grid_id", "vk_group_id", name="uq_discovery_grid_vk_id"),
+        UniqueConstraint("grid_id", "domain", name="uq_discovery_grid_domain"),
+    )
+    grid_id: Mapped[UUID] = mapped_column(ForeignKey("grids.id"))
+    vk_group_id: Mapped[int] = mapped_column(BigInteger)
+    domain: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200))
+    suggested_category: Mapped[str | None] = mapped_column(String(200))
+    suggested_region_key: Mapped[str | None] = mapped_column(String(64))
+    found_by_queries: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    seed_community_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    topic_score: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    visual_score: Mapped[float | None] = mapped_column(Float)
+    region_score: Mapped[float | None] = mapped_column(Float)
+    activity_score: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    graph_score: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    final_score: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    status: Mapped[str] = mapped_column(String(24), default="new", server_default="new")
+    classification: Mapped[str] = mapped_column(String(24), default="new", server_default="new")
+    analysis_state: Mapped[str] = mapped_column(
+        String(24), default="pending", server_default="pending"
+    )
+    reason: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    previews: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    visual_centroid: Mapped[bytes | None] = mapped_column(LargeBinary)
+    visual_model: Mapped[str | None] = mapped_column(String(200))
+    visual_dimensions: Mapped[int | None] = mapped_column(Integer)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
+    approved_community_id: Mapped[UUID | None] = mapped_column(ForeignKey("communities.id"))
+
+
+class CommunityDiscoveryEvidence(Base):
+    __tablename__ = "community_discovery_evidence"
+    run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("community_discovery_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    candidate_id: Mapped[UUID] = mapped_column(
+        ForeignKey("community_discovery_candidates.id", ondelete="CASCADE"), primary_key=True
+    )
+    queries: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    seed_community_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+
+
+def _grid_region_context(mapper, connection, row: GridCommunity) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy import inspect
+
+    from dropgrid.photos.regions import parse_region
+
+    state = inspect(row)
+    if (
+        state.attrs.category.history.has_changes()
+        and not state.attrs.region_key.history.has_changes()
+    ):
+        region = parse_region(row.category)
+        row.region_key = region.region_key if region else None
+        row.region_codes = list(region.region_codes) if region else None
+
+
+from sqlalchemy import event  # noqa: E402
+
+event.listen(GridCommunity, "before_insert", _grid_region_context)
+event.listen(GridCommunity, "before_update", _grid_region_context)

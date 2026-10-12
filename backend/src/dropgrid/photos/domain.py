@@ -12,6 +12,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from dropgrid.photos.concepts import car_model, concept_queries
+from dropgrid.photos.regions import RegionContext, parse_region
 
 MAX_RETRIEVAL_QUERIES = 4
 MAX_CANDIDATES_PER_QUERY = 24
@@ -120,6 +121,7 @@ class PhotoQueryPlan:
     sensitive: bool = False
     content_hint: str | None = None
     desired_content: str | None = None
+    region_context: RegionContext | None = None
 
     @property
     def ranking_variants(self) -> tuple[PhotoSearch, ...]:
@@ -165,6 +167,36 @@ class PhotoQueryBuilder:
     }
 
     def build(
+        self,
+        category: str | None,
+        content_hint: str | None = None,
+        desired_content: str | None = None,
+        *,
+        region_context: RegionContext | None = None,
+    ) -> PhotoQueryPlan:
+        from dataclasses import replace
+
+        region = region_context or parse_region(category)
+        plan = self._build(category, content_hint, desired_content)
+        if region and region.region_known:
+            topic = car_model(" ".join(filter(None, (category, content_hint, desired_content))))
+            topic = topic or ("cars" if parse_region(category) else plan.variants[0].query)
+            english = region.search_places[-1]
+            queries = (
+                f"{topic} {english}",
+                f"{region.search_places[0]} {'машины' if parse_region(category) else topic}",
+                f"{topic} {region.search_places[1]}",
+            )
+            return replace(
+                plan,
+                variants=tuple(
+                    PhotoSearch(query=q[:100], per_page=MAX_CANDIDATES_PER_QUERY) for q in queries
+                ),
+                region_context=region,
+            )
+        return replace(plan, region_context=region)
+
+    def _build(
         self,
         category: str | None,
         content_hint: str | None = None,

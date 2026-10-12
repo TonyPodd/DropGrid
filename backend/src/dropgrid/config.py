@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     photo_primary_min_candidates: int = Field(default=16, ge=1, le=32)
     photo_primary_target_candidates: int = Field(default=32, ge=16, le=40)
     photo_fallback_diversity_candidates: int = Field(default=0, ge=0, le=8)
+    regional_own_archive_min_age_days: int = Field(default=365, ge=1, le=3650)
+    community_discovery_schedule_enabled: bool = False
+    community_discovery_max_queries: int = Field(default=12, ge=1, le=24)
+    community_discovery_max_candidates: int = Field(default=30, ge=1, le=60)
+    community_discovery_visual_candidates: int = Field(default=20, ge=0, le=30)
+    community_discovery_photos_per_candidate: int = Field(default=8, ge=8, le=24)
     cross_community_reuse_enabled: bool = False
     apify_api_token: SecretStr | None = None
     pinterest_apify_actor: str = ""

@@ -1,0 +1,546 @@
+{
+  "categories": [
+    {
+      "category": "BRABUS",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "JDM",
+      "communities": 19,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "LANCER",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "АКЦЕНТ",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "АНДЕГРАУНД",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "АУДИ А8",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "БИГЛЬ",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "БМВ",
+      "communities": 7,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "БМВ Е34",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "БПАН",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ВАЗ 2107",
+      "communities": 11,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ВАЗ 2109",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ВАЗ 2110 2111 2112",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ВАЗ 2114 2115",
+      "communities": 45,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ВОЕННЫЕ",
+      "communities": 13,
+      "hints": 0,
+      "comments": 1
+    },
+    {
+      "category": "ГРУППЫ СОНИ",
+      "communities": 12,
+      "hints": 0,
+      "comments": 3
+    },
+    {
+      "category": "ДЖЕК РАССЕЛ ТЕРЬЕР",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ДОБЕРМАН",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ДОБРОЕ УТРО",
+      "communities": 103,
+      "hints": 0,
+      "comments": 99
+    },
+    {
+      "category": "ЕДА",
+      "communities": 2,
+      "hints": 0,
+      "comments": 1
+    },
+    {
+      "category": "ЗАКАТ",
+      "communities": 5,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЗНАКОМСТВА",
+      "communities": 74,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "КОТИКИ",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "КРУЗАК 200",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЛАДА ВЕСТА",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЛАДА КАЛИНА",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЛАЗАРЕВСКОЕ",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЛОШАДИ",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЛЮБАЯ СОБАЧКА",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "МАЗДА",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "МАНИКЮР",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "МЕРСЕДЕС",
+      "communities": 4,
+      "hints": 0,
+      "comments": 2
+    },
+    {
+      "category": "МОПС",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "МУЗЫКА",
+      "communities": 24,
+      "hints": 0,
+      "comments": 4
+    },
+    {
+      "category": "НИВА",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ОВЧАРКА",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПАНЕЛЬКА",
+      "communities": 6,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПАРОЧКИ",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПИТБАЙК",
+      "communities": 19,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПИТБУЛЬ/АМСТАФФ",
+      "communities": 6,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПЛАНЕТА ЗЕМЛЯ",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПРИОРА",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ПРОДАМ МАШИНУ/ОТДАМ КОТЕНКА",
+      "communities": 5,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 03",
+      "communities": 6,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 11",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 12",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 17",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 28",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 30",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 31",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 34",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 35",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 37",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 42",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 44",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 46",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 48",
+      "communities": 5,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 56",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 58",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 61",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 62",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 64",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 68",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 73",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЕГИОН 93",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "РЖД",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "САМОЕД",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "СЕЛФИ ТЕЛА",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "СУБАРУ",
+      "communities": 10,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "СФИНКС",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ТАКСА",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ТОЙОТА РАВ 4",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ТРАКТОР",
+      "communities": 4,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "УАЗ",
+      "communities": 2,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "УЛИЧНЫЕ КОТЫ",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ФРАНЦУСКИЙ БУЛЬДОГ",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ФУРА",
+      "communities": 6,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ХОНДА АККОРД",
+      "communities": 3,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЦИТАТА",
+      "communities": 12,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЦИТАТЫ ПРО ЛЮБОВЬ",
+      "communities": 8,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЧИХУАХУА",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    },
+    {
+      "category": "ЯВА МОТО",
+      "communities": 1,
+      "hints": 0,
+      "comments": 0
+    }
+  ],
+  "thematic_seeds": [
+    {
+      "id": "729b3225-77e1-42aa-aae4-b93975df35a0",
+      "domain": "avtotorg02",
+      "name": "Сельхоз/Авто/Спец/Трактора/Грузовики/Торги",
+      "category": "ТРАКТОР",
+      "content_hint": null,
+      "comment": null
+    },
+    {
+      "id": "34666cfa-2daa-4509-8f40-842963219e95",
+      "domain": "pilot_3022",
+      "name": "ПРОДАЖА СЕЛЬХОЗТЕХНИКИ,И ДОП ОБОРУДОВАНИЯ #",
+      "category": "ТРАКТОР",
+      "content_hint": null,
+      "comment": null
+    },
+    {
+      "id": "d15958f0-a677-420f-b70c-39143a9e5860",
+      "domain": "bmwe6060",
+      "name": "BMW 5 Series E60",
+      "category": "ГРУППЫ СОНИ",
+      "content_hint": null,
+      "comment": "БМВ Е60"
+    },
+    {
+      "id": "12dbec38-0be9-445d-8ffd-256fe2586cb6",
+      "domain": "club85547527",
+      "name": "Кировец к-700 рулит",
+      "category": "ТРАКТОР",
+      "content_hint": null,
+      "comment": null
+    },
+    {
+      "id": "ee5f8225-cdb5-4993-b26f-f80f2c03154c",
+      "domain": "publicbmwbm1",
+      "name": "BMW Е60",
+      "category": "ГРУППЫ СОНИ",
+      "content_hint": null,
+      "comment": "БМВ Е60"
+    },
+    {
+      "id": "f6649c13-484d-4968-a900-32a430909c1c",
+      "domain": "tractor_kirovets",
+      "name": "✯ТОЛЬКО КИРОВЕЦ✯",
+      "category": "ТРАКТОР",
+      "content_hint": null,
+      "comment": null
+    }
+  ]
+}

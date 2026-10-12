@@ -16,6 +16,8 @@ from dropgrid.db.models import (
     Account,
     Campaign,
     Community,
+    CommunityDiscoveryCandidate,
+    CommunityDiscoveryRun,
     Grid,
     GridCommunity,
     MediaAsset,
@@ -36,6 +38,8 @@ type CatalogModel = (
     | PhotoReviewer
     | PhotoReviewBatch
     | PhotoSelectionSession
+    | CommunityDiscoveryRun
+    | CommunityDiscoveryCandidate
 )
 
 
@@ -141,7 +145,16 @@ async def import_grid(session: AsyncSession, data: GridImport) -> tuple[Grid, Pa
             community_id = await session.scalar(
                 select(Community.id).where(Community.domain == item.community)
             )
-        values = dict(category=item.category, comment=item.comment, source_reference=item.community)
+        from dropgrid.photos.regions import parse_region
+
+        region = parse_region(item.category)
+        values = dict(
+            category=item.category,
+            comment=item.comment,
+            source_reference=item.community,
+            region_key=region.region_key if region else None,
+            region_codes=list(region.region_codes) if region else None,
+        )
         await session.execute(
             insert(GridCommunity)
             .values(grid_id=grid.id, community_id=community_id, **values)
