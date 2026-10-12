@@ -14,6 +14,7 @@ from dropgrid.api.schemas import (
 )
 from dropgrid.db.models import (
     Account,
+    Base,
     Campaign,
     Community,
     CommunityDiscoveryCandidate,
@@ -55,8 +56,8 @@ class InvalidGridError(Exception):
     pass
 
 
-async def get_entity[Model: CatalogModel](
-    session: AsyncSession, model: type[Model], entity_id: UUID
+async def get_entity[Model: Base](
+    session: AsyncSession, model: type[Model], entity_id: UUID | tuple[UUID, int]
 ) -> Model:
     entity = await session.get(model, entity_id)
     if entity is None:

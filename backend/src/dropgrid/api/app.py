@@ -92,6 +92,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from dropgrid.discovery.routes import router as discovery_router
 
     app.include_router(discovery_router)
+    from dropgrid.discovery.review_routes import router as discovery_review_router
+
+    app.include_router(discovery_review_router)
     app.include_router(router)
     app.include_router(activity_router)
     app.include_router(photo_router)

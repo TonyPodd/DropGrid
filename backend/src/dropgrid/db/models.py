@@ -11,6 +11,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,
@@ -684,6 +685,9 @@ class CommunityDiscoveryCandidate(Identity, Updated, Base):
     visual_centroid: Mapped[bytes | None] = mapped_column(LargeBinary)
     visual_model: Mapped[str | None] = mapped_column(String(200))
     visual_dimensions: Mapped[int | None] = mapped_column(Integer)
+    human_status: Mapped[str | None] = mapped_column(String(20))
+    human_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    human_reviewer_id: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approved_by: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
     approved_community_id: Mapped[UUID | None] = mapped_column(ForeignKey("communities.id"))
@@ -699,6 +703,7 @@ class CommunityDiscoveryEvidence(Base):
     )
     queries: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
     seed_community_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, server_default="[]")
+    analysis_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 def _grid_region_context(mapper, connection, row: GridCommunity) -> None:  # type: ignore[no-untyped-def]
@@ -720,3 +725,77 @@ from sqlalchemy import event  # noqa: E402
 
 event.listen(GridCommunity, "before_insert", _grid_region_context)
 event.listen(GridCommunity, "before_update", _grid_region_context)
+
+
+class CommunityReviewBatch(Identity, Updated, Base):
+    __tablename__ = "community_review_batches"
+    grid_id: Mapped[UUID] = mapped_column(ForeignKey("grids.id"))
+    name: Mapped[str] = mapped_column(String(200))
+    state: Mapped[str] = mapped_column(String(20), default="open", server_default="open")
+    created_by: Mapped[UUID | None] = mapped_column(ForeignKey("photo_reviewers.id"))
+
+
+class CommunityReviewBatchItem(Base):
+    __tablename__ = "community_review_batch_items"
+    __table_args__ = (UniqueConstraint("batch_id", "candidate_id"),)
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("community_review_batches.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_id: Mapped[UUID] = mapped_column(ForeignKey("community_discovery_candidates.id"))
+    run_id: Mapped[UUID | None] = mapped_column(ForeignKey("community_discovery_runs.id"))
+
+
+class CommunityReviewCursor(Base):
+    __tablename__ = "community_review_cursors"
+    batch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("community_review_batches.id", ondelete="CASCADE"), primary_key=True
+    )
+    reviewer_id: Mapped[UUID] = mapped_column(ForeignKey("photo_reviewers.id"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    mode: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+
+
+class CommunityReviewDecision(Base):
+    __tablename__ = "community_review_decisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["batch_id", "position"],
+            ["community_review_batch_items.batch_id", "community_review_batch_items.position"],
+            ondelete="CASCADE",
+        ),
+    )
+    batch_id: Mapped[UUID] = mapped_column(primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    reviewer_id: Mapped[UUID] = mapped_column(ForeignKey("photo_reviewers.id"), primary_key=True)
+    decision: Mapped[str] = mapped_column(String(20))
+    reason: Mapped[str | None] = mapped_column(String(64))
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+
+
+class CommunityReviewEvent(Identity, Base):
+    __tablename__ = "community_review_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["batch_id", "position"],
+            ["community_review_batch_items.batch_id", "community_review_batch_items.position"],
+            ondelete="CASCADE",
+        ),
+    )
+    batch_id: Mapped[UUID] = mapped_column()
+    position: Mapped[int] = mapped_column(Integer)
+    reviewer_id: Mapped[UUID] = mapped_column(ForeignKey("photo_reviewers.id"))
+    decision: Mapped[str] = mapped_column(String(20))
+    reason: Mapped[str | None] = mapped_column(String(64))
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    revision: Mapped[int] = mapped_column(Integer)
+
+
+class DiscoveryCacheState(Base):
+    __tablename__ = "discovery_cache_state"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    evicted_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    cleaned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

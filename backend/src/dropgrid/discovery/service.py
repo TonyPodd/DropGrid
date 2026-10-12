@@ -1,6 +1,7 @@
 """Leased PostgreSQL discovery, bounded official reads, isolated image analysis."""
 
 import asyncio
+import json
 from datetime import timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -91,6 +92,9 @@ def candidate_read(row: Candidate) -> dict[str, Any]:
         "final_score": row.final_score,
         "confidence": row.reason.get("confidence", "needs_review"),
         "status": row.status,
+        "human_status": row.human_status,
+        "human_reviewed_at": row.human_reviewed_at,
+        "human_reviewer_id": row.human_reviewer_id,
         "classification": row.classification,
         "analysis_state": row.analysis_state,
         "reason": row.reason,
@@ -626,7 +630,24 @@ class Discovery:
             )
             counts["filtered"] += int(candidate.status == "unavailable")
             run.counters, run.stage = counts, "checking_activity"
-        self.trim_cache()
+        evicted = await asyncio.to_thread(self.trim_cache)
+        from sqlalchemy.dialects.postgresql import insert
+
+        from dropgrid.db.models import DiscoveryCacheState
+
+        async with self.sessions() as db, db.begin():
+            stmt = insert(DiscoveryCacheState).values(
+                id=1, evicted_count=evicted, cleaned_at=utcnow()
+            )
+            await db.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "evicted_count": DiscoveryCacheState.evicted_count + evicted,
+                        "cleaned_at": utcnow(),
+                    },
+                )
+            )
 
     async def progress(self, id: UUID, lease: UUID, stage: str) -> None:
         async with self.sessions() as db, db.begin():
@@ -663,20 +684,24 @@ class Discovery:
                 "dead": sum(c.reason.get("activity", {}).get("state") == "dead" for c in rows),
                 "multi_seed": sum(len(c.found_by_queries) > 1 for c in rows),
             }
+            for candidate in rows:
+                evidence = await db.get(Evidence, (id, candidate.id))
+                if evidence and evidence.analysis_snapshot is None:
+                    evidence.analysis_snapshot = json.loads(
+                        json.dumps(
+                            {
+                                **candidate_read(candidate),
+                                "preview_cache_keys": list(candidate.previews),
+                            },
+                            default=str,
+                        )
+                    )
             run.state, run.stage, run.finished_at = "ready", "ranking_candidates", utcnow()
 
-    def trim_cache(self) -> None:
-        # Only discovery's namespace; production media and references are never touched.
-        files = sorted(self.storage.root.glob("*/*.jpg"), key=lambda p: p.stat().st_mtime)
-        size = sum(p.stat().st_size for p in files)
-        for path in files:
-            if (
-                size <= 300 * 1024 * 1024
-                and path.stat().st_mtime >= (utcnow() - timedelta(days=30)).timestamp()
-            ):
-                continue
-            size -= path.stat().st_size
-            path.unlink()
+    def trim_cache(self) -> int:
+        from dropgrid.discovery.cache import prune
+
+        return prune(self.storage.root)
 
 
 async def approve(
@@ -694,6 +719,23 @@ async def approve(
     locked = await db.get(Candidate, candidate_id, with_for_update=True, populate_existing=True)
     assert locked
     row = locked
+    if row.human_status != "approved":
+        raise ConflictError("A real human approval is required before adding to Grid")
+    from dropgrid.db.models import CommunityReviewBatchItem, CommunityReviewDecision
+
+    human_label = await db.scalar(
+        select(CommunityReviewDecision)
+        .join(
+            CommunityReviewBatchItem,
+            (CommunityReviewBatchItem.batch_id == CommunityReviewDecision.batch_id)
+            & (CommunityReviewBatchItem.position == CommunityReviewDecision.position),
+        )
+        .where(CommunityReviewBatchItem.candidate_id == row.id)
+        .order_by(CommunityReviewDecision.reviewed_at.desc())
+        .limit(1)
+    )
+    if not human_label or human_label.decision != "approved":
+        raise ConflictError("Latest human decision must approve this candidate")
     if row.status not in {"new", "reviewing"} or row.analysis_state != "ready":
         raise ConflictError("Only an analyzed inbox candidate can be explicitly approved")
     if region_key and region_key not in BY_KEY:
@@ -739,6 +781,17 @@ async def approve(
         "approved_by": str(reviewer_id),
         "seed_evidence": row.seed_community_ids,
         "queries": row.found_by_queries,
+        "discovery_run_id": human_label.snapshot.get("run_id") or (str(run_id) if run_id else None),
+        "add_context_run_id": str(run_id) if run_id else None,
+        "human_reviewer": str(human_label.reviewer_id),
+        "human_decision_at": human_label.reviewed_at.isoformat(),
+        "human_review_batch_id": str(human_label.batch_id),
+        "human_review_revision": human_label.revision,
+        "added_at": utcnow().isoformat(),
+        "suggested_category": human_label.snapshot["candidate"].get("suggested_category"),
+        "final_category": category,
+        "suggested_region": human_label.snapshot["candidate"].get("suggested_region_key"),
+        "final_region": region_key,
     }
     context = grid_region(category, region_key)
     if context and row.suggested_region_key and context.region_key != row.suggested_region_key:

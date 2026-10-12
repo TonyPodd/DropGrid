@@ -93,14 +93,22 @@ async def runs(session: Session, grid_id: UUID | None = None) -> list[dict[str, 
     if grid_id:
         query = query.where(Run.grid_id == grid_id)
     return [
-        run_read(row)
+        {**run_read(row), "human_outcomes": await run_outcomes(session, row.id)}
         for row in (await session.scalars(query.order_by(Run.created_at.desc()).limit(50))).all()
     ]
 
 
 @router.get("/runs/{run_id}")
 async def run_detail(run_id: UUID, session: Session) -> dict[str, Any]:
-    return run_read(await get_entity(session, Run, run_id))
+    run = await get_entity(session, Run, run_id)
+    from dropgrid.discovery.metrics import quality
+
+    outcomes = await quality(session, run.grid_id)
+    return {
+        **run_read(run),
+        "precision_at_k": outcomes["precision_at_k"].get(str(run_id)),
+        "human_outcomes": await run_outcomes(session, run_id),
+    }
 
 
 @router.get("/candidates")
@@ -124,7 +132,14 @@ async def candidates(
             Evidence.run_id == run_id
         )
     totals = (await session.scalars(select(Candidate).where(Candidate.grid_id == grid_id))).all()
-    if status != "all":
+    if status in {"human_approved", "uncertain"}:
+        query = query.where(
+            Candidate.status == "new",
+            Candidate.human_status == ("approved" if status == "human_approved" else "uncertain"),
+        )
+    elif status == "new":
+        query = query.where(Candidate.status == "new", Candidate.human_status.is_(None))
+    elif status != "all":
         query = query.where(Candidate.status == status)
     if category:
         query = query.where(Candidate.suggested_category == category)
@@ -149,7 +164,11 @@ async def candidates(
         "items": [candidate_read(c) for c in rows],
         "total": total,
         "counters": {
-            "new": sum(c.status == "new" for c in totals),
+            "new": sum(c.status == "new" and c.human_status is None for c in totals),
+            "human_approved": sum(
+                c.status == "new" and c.human_status == "approved" for c in totals
+            ),
+            "uncertain": sum(c.status == "new" and c.human_status == "uncertain" for c in totals),
             "recommended": sum(
                 c.status == "new" and c.reason.get("confidence") == "high" for c in totals
             ),
@@ -194,6 +213,7 @@ async def decision(
         if row.status != "rejected":
             raise ConflictError("Only rejected candidates can be restored")
         row.status, row.classification = "new", "new"
+        row.human_status = None
     else:
         if row.status not in {"new", "reviewing"}:
             raise ConflictError("Only inbox candidates can be rejected")
@@ -214,3 +234,33 @@ async def photo(candidate_id: UUID, index: int, session: Session, request: Reque
     return FileResponse(
         path, media_type="image/jpeg", headers={"Cache-Control": "private,max-age=3600"}
     )
+
+
+async def run_outcomes(session: Session, run_id: UUID) -> dict[str, int]:
+    rows = (
+        await session.scalars(
+            select(Candidate)
+            .join(Evidence, Evidence.candidate_id == Candidate.id)
+            .where(Evidence.run_id == run_id)
+        )
+    ).all()
+    return {
+        s: sum(c.human_status == s for c in rows) for s in ("approved", "rejected", "uncertain")
+    }
+
+
+@router.get("/cache")
+async def cache_state(session: Session, request: Request) -> dict[str, Any]:
+    import asyncio
+
+    from dropgrid.db.models import DiscoveryCacheState
+    from dropgrid.discovery.cache import inspect_cache
+
+    stats = await asyncio.to_thread(inspect_cache, request.app.state.discovery.storage.root)
+    state = await session.get(DiscoveryCacheState, 1)
+    return {
+        **stats,
+        "evicted_count": state.evicted_count if state else 0,
+        "evictions_since": "community review migration",
+        "cleaned_at": state.cleaned_at if state else None,
+    }

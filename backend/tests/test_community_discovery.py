@@ -268,6 +268,11 @@ async def test_durable_restart_dedup_sticky_rejection_region_filter_and_manual_a
             assert good.status == "rejected"
             good.status = "new"  # explicit operator restoration, not an automatic retry
             before = await db.scalar(select(func.count()).select_from(Submission))
+            from dropgrid.discovery import review
+
+            batch = await review.create_batch(db, gid, "Human approval", rid)
+            shown = await review.detail(db, batch, 0, rid)
+            await review.decide(db, batch, 0, rid, "approved", None, shown["version"], 0)
             with pytest.raises(ConflictError):
                 await approve(
                     db,
