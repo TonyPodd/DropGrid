@@ -33,6 +33,7 @@ class VisualLibrary:
         embedder: VisualEmbedder | None,
     ) -> None:
         self.sessions, self.storage, self.embedder = sessions, storage, embedder
+        self.regional_own_archive_min_age_days = 365
         self.lock = asyncio.Lock()
 
     async def asset_embedding(self, asset: MediaAsset) -> VisualEmbedding | None:

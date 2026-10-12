@@ -27,6 +27,7 @@ from dropgrid.photos.reference_schemas import (
     ReferenceMatch,
     VisualEngineRead,
 )
+from dropgrid.photos.regions import grid_region
 from dropgrid.photos.retrieval import RetrievedPhoto
 from dropgrid.photos.timings import collect_timings, stage
 from dropgrid.photos.visual_library import VisualLibrary
@@ -37,6 +38,8 @@ def preview_item(item: PoolCandidate) -> PhotoPreviewItem:
     assert item.score
     score = item.score
     return PhotoPreviewItem(
+        region_status=item.region_status,
+        region_key=item.region_key,
         preview_id=item.preview_id,
         publication_eligible=item.photo.publication_eligible,
         pin_url=item.photo.source_page_url if item.photo.provider == "pinterest" else None,
@@ -80,16 +83,21 @@ async def _photo_preview(
         community = await get_entity(session, Community, community_id)
         category = community.category
         comment = content_hint = None
+        region_key = None
         profile = await session.get(CommunityContentProfile, community_id)
         if data.grid_id:
             relation = await session.get(GridCommunity, (data.grid_id, community_id))
             if relation is None:
                 raise ConflictError("Community is not in supplied grid")
             category = relation.category
+            region_key = relation.region_key
             comment, content_hint = relation.comment, relation.content_hint
     effective_hint = retrieval_hint(content_hint, community.name, comment)
     plan = planner.builder.build(
-        category, effective_hint, profile.desired_content if profile else None
+        category,
+        effective_hint,
+        profile.desired_content if profile else None,
+        region_context=grid_region(category, region_key),
     )
     pixabay: list[PoolCandidate] = []
     warnings: list[str] = []
@@ -157,7 +165,7 @@ async def _photo_preview(
                     )
                 )
     await emit("ranking", len(imports), len(imports))
-    ranked_pixabay = await rank_pool(visual, community_id, pixabay, plan)
+    ranked_pixabay = await rank_pool(visual, community_id, pixabay, plan, grid_id=data.grid_id)
     # Keep each lane independent: mixed-pool scoring cannot mutate source scores.
     pool = [replace(item, score=None, age_reuse_score=0) for item in pixabay]
     async with planner.sessions() as session:
@@ -189,7 +197,7 @@ async def _photo_preview(
     archive = []
     if data.include_archive:
         await emit("own_archive")
-        archive = await archive_pool(planner.archive, community_id, warnings, category)
+        archive = await archive_pool(planner.archive, community_id, warnings, category, plan=plan)
         pool += archive
     strata = []
     shortlist = []
@@ -217,7 +225,7 @@ async def _photo_preview(
             )
             for i in range(ARCHIVE_STRATA)
         ]
-    mixed = await rank_pool(visual, community_id, pool, plan)
+    mixed = await rank_pool(visual, community_id, pool, plan, grid_id=data.grid_id)
     _, reference_ids, _ = await visual.references(community_id)
     if not reference_ids:
         warnings.append("visual_references_unavailable")
@@ -268,6 +276,7 @@ async def _photo_preview(
             for item in mixed + ranked_pinterest + category_pool
         ],
         plan,
+        grid_id=data.grid_id,
     )
     if capture is not None:
         capture.extend(best)
@@ -323,6 +332,14 @@ async def _photo_preview(
             "selected": 0,
         }
     return PhotoPreviewRead(
+        region_context=plan.region_context.as_dict() if plan.region_context else None,
+        regional_diagnostics={
+            "own_archive_candidates": len(archive),
+            "same_region_candidates": sum(i.region_status == "same_region" for i in category_pool),
+            "external_candidates": len(ranked_pinterest) + len(pixabay),
+            "selected_source": best[0].source if best else None,
+            "selected_region_status": best[0].region_status if best else None,
+        },
         source_contributions=contribution,
         pixabay_requests=retrieval.requests,
         pixabay_cache_hits=retrieval.cache_hits,

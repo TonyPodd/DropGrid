@@ -269,12 +269,16 @@ class VKArchivePhotoProvider:
         limit: int = ARCHIVE_CANDIDATE_LIMIT,
         *,
         now: datetime | None = None,
+        minimum_age_days: int | None = None,
     ) -> list[CommunityReferencePhoto]:
         now = now or utcnow()
         async with self.collector.sessions() as s:
             c = await get_entity(s, Community, community_id)
             p = await s.get(CommunityContentProfile, community_id)
             if not c.is_active or not p or not p.archive_reuse_enabled:
+                return []
+            min_age = max(p.archive_reuse_min_age_days, minimum_age_days or 0)
+            if min_age > p.archive_reuse_max_age_days:
                 return []
             limit = min(max(limit, 1), ARCHIVE_CANDIDATE_LIMIT)
             query = select(CommunityReferencePhoto).where(
@@ -283,8 +287,7 @@ class VKArchivePhotoProvider:
                 CommunityReferencePhoto.enabled.is_(True),
                 CommunityReferencePhoto.posted_at
                 >= now - timedelta(days=p.archive_reuse_max_age_days),
-                CommunityReferencePhoto.posted_at
-                <= now - timedelta(days=p.archive_reuse_min_age_days),
+                CommunityReferencePhoto.posted_at <= now - timedelta(days=min_age),
                 CommunityReferencePhoto.vk_photo_owner_id != 0,
                 CommunityReferencePhoto.vk_photo_id > 0,
                 CommunityReferencePhoto.width >= PhotoPolicy().min_short_side,
@@ -295,10 +298,10 @@ class VKArchivePhotoProvider:
                 <= CommunityReferencePhoto.width * PhotoPolicy().max_aspect_ratio,
             )
             rows: list[CommunityReferencePhoto] = []
-            width = (p.archive_reuse_max_age_days - p.archive_reuse_min_age_days) / 4
+            width = (p.archive_reuse_max_age_days - min_age) / 4
             for band in range(4):
-                young = now - timedelta(days=p.archive_reuse_min_age_days + band * width)
-                old = now - timedelta(days=p.archive_reuse_min_age_days + (band + 1) * width)
+                young = now - timedelta(days=min_age + band * width)
+                old = now - timedelta(days=min_age + (band + 1) * width)
                 boundary = (
                     CommunityReferencePhoto.posted_at >= old
                     if band == 3
@@ -329,7 +332,7 @@ class VKArchivePhotoProvider:
             return stratified_sample(
                 rows,
                 community_id,
-                p.archive_reuse_min_age_days,
+                min_age,
                 p.archive_reuse_max_age_days,
                 now,
                 limit,

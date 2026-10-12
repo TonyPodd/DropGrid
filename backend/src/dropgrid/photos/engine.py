@@ -41,6 +41,7 @@ class PhotoEngine:
             else None
         )
         self.visual = VisualLibrary(db.sessions, self.storage, self.embedder)
+        self.visual.regional_own_archive_min_age_days = settings.regional_own_archive_min_age_days
         reference_policy = VKReferencePolicy(
             timeout_seconds=settings.photo_download_timeout_seconds
         )

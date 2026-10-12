@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dropgrid.db.models import (
     Campaign,
     Community,
+    CommunityReferencePhoto,
+    GridCommunity,
     PhotoReviewBatch,
     PhotoReviewBatchItem,
     PhotoReviewer,
@@ -335,7 +337,71 @@ async def item_detail(
                 url = image_path(c, s.community_id)
                 if url:
                     neighbors.append(url)
+    from dropgrid.photos.regions import grid_region
+
+    campaign = await session.get(Campaign, batch.campaign_id)
+    relation = (
+        await session.get(GridCommunity, (campaign.grid_id, selection.community_id))
+        if campaign
+        else None
+    )
+    region = (
+        grid_region(relation.category, relation.region_key)
+        if relation
+        else grid_region(selection.category)
+    )
+    regional_features = {}
+    if region:
+        refs = {
+            r.id: r
+            for r in (
+                await session.scalars(
+                    select(CommunityReferencePhoto).where(
+                        CommunityReferencePhoto.id.in_(
+                            [c.reference_id for c in options if c.reference_id]
+                        )
+                    )
+                )
+            ).all()
+        }
+        source_regions = {
+            r.community_id: grid_region(r.category, r.region_key)
+            for r in (
+                await session.scalars(
+                    select(GridCommunity).where(
+                        GridCommunity.grid_id == (campaign.grid_id if campaign else None),
+                        GridCommunity.community_id.in_([r.community_id for r in refs.values()]),
+                    )
+                )
+            ).all()
+        }
+        for c in options:
+            ref = refs.get(c.reference_id) if c.reference_id else None
+            source_region = source_regions.get(ref.community_id) if ref else None
+            status = (
+                "own_community"
+                if ref and ref.community_id == selection.community_id
+                else (
+                    "same_region"
+                    if region.region_key
+                    and source_region
+                    and source_region.region_key == region.region_key
+                    else "mismatch"
+                    if source_region and source_region.region_key and region.region_key
+                    else "unverified"
+                )
+            )
+            regional_features[c.rank] = {
+                **c.features,
+                "region_status": status,
+                "region_key": source_region.region_key
+                if source_region
+                else region.region_key
+                if status == "own_community"
+                else None,
+            }
     return dict(
+        region_context=region.as_dict() if region else None,
         position=position,
         selection_id=selection.id,
         confirmed_at=selection.confirmed_at,
@@ -363,7 +429,7 @@ async def item_detail(
                 provider=c.provider,
                 image=image_path(c, community.id),
                 rating=c.operator_rating,
-                diagnostics=c.features,
+                diagnostics=regional_features.get(c.rank, c.features),
             )
             for c in options
         ],

@@ -66,6 +66,8 @@ class PoolCandidate:
     preview_id: UUID | None = None
     reference_matches: list[tuple[UUID, float]] = field(default_factory=list)
     embedding_error: str | None = None
+    region_status: str = "unverified"
+    region_key: str | None = None
 
     @property
     def identity(self) -> tuple[str, str]:
@@ -74,6 +76,19 @@ class PoolCandidate:
     @property
     def posted_at(self) -> datetime | None:
         return self.reference.posted_at if self.reference else None
+
+
+def regional_priority(item: PoolCandidate, plan: PhotoQueryPlan) -> int:
+    if not plan.region_context:
+        return 0
+    return {
+        "same_region": 0,
+        "own_community": 1,
+        "verified": 2,
+        "evidence": 3,
+        "unverified": 4,
+        "mismatch": 5,
+    }.get(item.region_status, 4)
 
 
 def exclude_self_reference(candidate: PoolCandidate, reference: CommunityReferencePhoto) -> bool:
@@ -87,10 +102,14 @@ def exclude_self_reference(candidate: PoolCandidate, reference: CommunityReferen
     )
 
 
-def deduplicate_pool(pool: list[PoolCandidate]) -> list[PoolCandidate]:
+def deduplicate_pool(
+    pool: list[PoolCandidate], plan: PhotoQueryPlan | None = None
+) -> list[PoolCandidate]:
     # Stable identity, never provider append order, settles duplicates.
     result: list[PoolCandidate] = []
-    for item in sorted(pool, key=lambda c: (c.asset is None, c.identity)):
+    for item in sorted(
+        pool, key=lambda c: (regional_priority(c, plan) if plan else 0, c.asset is None, c.identity)
+    ):
         if any(
             item.identity == old.identity
             or item.reference
@@ -119,16 +138,86 @@ async def rank_pool(
     plan: PhotoQueryPlan,
     *,
     now: datetime | None = None,
+    grid_id: UUID | None = None,
 ) -> list[PoolCandidate]:
     now = now or utcnow()
     with stage("reference_loading"):
         async with visual.sessions() as s:
             profile = await s.get(CommunityContentProfile, community_id)
             usage = await community_usage(s, community_id, now)
+            if plan.region_context:
+                imports = (
+                    await s.scalars(
+                        select(MediaProviderImport).where(
+                            MediaProviderImport.media_asset_id.in_(
+                                [i.asset.id for i in pool if i.asset and i.source == "library"]
+                            ),
+                            MediaProviderImport.source_community_id.is_not(None),
+                        )
+                    )
+                ).all()
+                relations_query = select(GridCommunity).where(
+                    GridCommunity.community_id.in_([r.source_community_id for r in imports])
+                )
+                if grid_id:
+                    relations_query = relations_query.where(GridCommunity.grid_id == grid_id)
+                from dropgrid.photos.regions import grid_region
+
+                source_keys: dict[UUID, set[str]] = {}
+                for relation in (await s.scalars(relations_query)).all():
+                    region = grid_region(relation.category, relation.region_key)
+                    if region and region.region_key:
+                        source_keys.setdefault(relation.community_id, set()).add(region.region_key)
+                for item in pool:
+                    if not item.asset or item.source != "library":
+                        continue
+                    provenance = [r for r in imports if r.media_asset_id == item.asset.id]
+                    if any(r.source_community_id == community_id for r in provenance):
+                        # Own imports must re-enter through the opt-in, age-filtered archive pool.
+                        item.region_status = "own_import_requires_archive_policy"
+                        continue
+                    keys = set().union(
+                        *(
+                            source_keys.get(r.source_community_id, set())
+                            for r in provenance
+                            if r.source_community_id
+                        )
+                    )
+                    if len(keys) == 1:
+                        item.region_key = next(iter(keys))
+                        item.region_status = (
+                            "verified"
+                            if item.region_key == plan.region_context.region_key
+                            else "mismatch"
+                        )
     refs, _ = await visual.reference_rows(community_id)
     kept = []
-    unique_pool = deduplicate_pool(pool)
+    unique_pool = deduplicate_pool(pool, plan)
     for index, item in enumerate(unique_pool):
+        if plan.region_context:
+            if item.region_status == "own_import_requires_archive_policy":
+                continue
+            if (
+                item.source == "vk_archive"
+                and item.reference
+                and item.reference.community_id == community_id
+            ):
+                item.region_status = "own_community"
+                item.region_key = plan.region_context.region_key
+                min_age = max(
+                    profile.archive_reuse_min_age_days if profile else 180,
+                    visual.regional_own_archive_min_age_days,
+                )
+                if item.posted_at and (now - item.posted_at).days < min_age:
+                    continue
+            if (
+                item.region_key
+                and plan.region_context.region_key
+                and item.region_key != plan.region_context.region_key
+            ):
+                item.region_status = "mismatch"
+            if item.region_status == "mismatch":
+                continue
         await emit("ranking", index, len(unique_pool))
         item.reference_matches = []
         if recently_used(
@@ -198,6 +287,7 @@ async def rank_pool(
     return sorted(
         kept,
         key=lambda c: (
+            regional_priority(c, plan),
             c.score is None or c.score.visual_score is None,
             -(c.score.final_score if c.score else 0),
             c.identity,
@@ -211,6 +301,8 @@ async def archive_pool(
     community_id: UUID,
     warnings: list[str],
     category: str | None = None,
+    *,
+    plan: PhotoQueryPlan | None = None,
 ) -> list[PoolCandidate]:
     if provider is None:
         return []
@@ -262,7 +354,16 @@ async def archive_pool(
         except VKError:
             return None, "archive_vk_read_failed"
 
-    rows = await provider.candidates(community_id)
+    regional_age = (
+        provider.collector.client.settings.regional_own_archive_min_age_days
+        if plan and plan.region_context
+        else None
+    )
+    rows = (
+        await provider.candidates(community_id, minimum_age_days=regional_age)
+        if regional_age
+        else await provider.candidates(community_id)
+    )
     width = min(3, provider.collector.client.settings.photo_download_concurrency)
     consecutive_failures = 0
     for start in range(0, len(rows), width):
@@ -319,20 +420,41 @@ async def materialize_archive(
                 target.name if target else None,
                 target_relation.comment if target_relation else None,
             )
+            from dropgrid.photos.regions import grid_region
+
+            target_region = grid_region(
+                category, target_relation.region_key if target_relation else None
+            )
+            source_region = (
+                grid_region(relation.category, relation.region_key) if relation else None
+            )
+            context_ok = (
+                bool(
+                    target_region.region_known
+                    and source_region
+                    and source_region.region_key == target_region.region_key
+                )
+                if target_region
+                else context_matches(
+                    category,
+                    target_hint,
+                    target.name or target.domain if target else "",
+                    relation.category
+                    if relation
+                    else source_community.category
+                    if source_community
+                    else None,
+                    relation.content_hint if relation else None,
+                    source_community.name or source_community.domain if source_community else "",
+                )
+            )
             if (
                 not source_community
                 or not target
                 or not source_community.is_active
                 or not target.is_active
                 or source_community.id == target.id
-                or not context_matches(
-                    category,
-                    target_hint,
-                    target.name or target.domain,
-                    relation.category if relation else source_community.category,
-                    relation.content_hint if relation else None,
-                    source_community.name or source_community.domain,
-                )
+                or not context_ok
             ):
                 raise PhotoError("category_archive_context_changed")
         from dropgrid.photos.references import eligible_for_archive_reuse
@@ -347,7 +469,12 @@ async def materialize_archive(
                     or not eligible_for_archive_reuse(
                         fresh.posted_at,
                         utcnow(),
-                        p.archive_reuse_min_age_days,
+                        max(
+                            p.archive_reuse_min_age_days,
+                            planner.settings.regional_own_archive_min_age_days,
+                        )
+                        if candidate.region_status == "own_community"
+                        else p.archive_reuse_min_age_days,
                         p.archive_reuse_enabled,
                         True,
                         p.archive_reuse_max_age_days,
@@ -372,7 +499,11 @@ async def materialize_archive(
             or not eligible_for_archive_reuse(
                 row.posted_at,
                 utcnow(),
-                p.archive_reuse_min_age_days,
+                max(
+                    p.archive_reuse_min_age_days, planner.settings.regional_own_archive_min_age_days
+                )
+                if candidate.region_status == "own_community"
+                else p.archive_reuse_min_age_days,
                 p.archive_reuse_enabled,
                 True,
                 p.archive_reuse_max_age_days,

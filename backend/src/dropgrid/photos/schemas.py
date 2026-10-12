@@ -20,6 +20,8 @@ class CategoryPlanRead(Output):
 
 
 class MediaPlanRead(Output):
+    regional_assignments: dict[str, int] = Field(default_factory=dict)
+    regional_communities: dict[str, dict[str, int | str | None]] = Field(default_factory=dict)
     near_duplicate_exclusions: int = 0
     source_contributions: dict[str, dict[str, int]] = Field(default_factory=dict)
     campaign_id: UUID

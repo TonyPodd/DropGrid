@@ -104,6 +104,8 @@ class ReferenceMatch(Output):
 
 
 class PhotoPreviewItem(Output):
+    region_status: str = "unverified"
+    region_key: str | None = None
     preview_id: UUID | None = None
     publication_eligible: bool = True
     pin_url: str | None = None
@@ -144,6 +146,8 @@ class ArchiveShortlistItem(Output):
 
 
 class PhotoPreviewRead(Output):
+    region_context: dict[str, object] | None = None
+    regional_diagnostics: dict[str, object] = Field(default_factory=dict)
     source_contributions: dict[str, dict[str, int]] = Field(default_factory=dict)
     pixabay_requests: int = 0
     pixabay_cache_hits: int = 0

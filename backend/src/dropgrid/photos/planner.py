@@ -46,6 +46,7 @@ from dropgrid.photos.domain import (
 from dropgrid.photos.download import PhotoDownloader
 from dropgrid.photos.images import MediaStorage, NormalizedPhoto, normalize_image
 from dropgrid.photos.pool import PoolCandidate
+from dropgrid.photos.regions import grid_region
 from dropgrid.photos.schemas import CategoryPlanRead, MediaPlanInput, MediaPlanRead
 from dropgrid.photos.timings import stage
 from dropgrid.photos.visual import serialize_embedding
@@ -421,6 +422,15 @@ class CampaignMediaPlanner:
                 }
             )
         async with self.sessions() as session:
+            regions = {
+                r.community_id: grid_region(r.category, r.region_key)
+                for r in (
+                    await session.scalars(
+                        select(GridCommunity).where(GridCommunity.grid_id == campaign.grid_id)
+                    )
+                ).all()
+            }
+            regions = {key: value for key, value in regions.items() if value is not None}
             hints = {
                 r.community_id: (r.content_hint, r.comment)
                 for r in (
@@ -464,9 +474,10 @@ class CampaignMediaPlanner:
             )
             for source in ("pinterest", "pixabay", "library", "vk_archive", "vk_category_archive")
         }
-        groups: dict[tuple[str, str | None, str | None], list[UUID]] = defaultdict(list)
+        groups: dict[tuple[str, str | None, str | None, str | None], list[UUID]] = defaultdict(list)
         all_groups: dict[str, list[UUID]] = defaultdict(list)
         for submission, category in rows:
+            region = regions.get(submission.community_id)
             key = normalize_category(category)
             all_groups[key].append(submission.id)
             if (
@@ -483,9 +494,10 @@ class CampaignMediaPlanner:
                             hints.get(submission.community_id, (None, None))[1],
                         ),
                         desired.get(submission.community_id),
+                        (region.region_key or "/".join(region.region_codes)) if region else None,
                     )
                 ].append(submission.id)
-        available: dict[tuple[str, str | None, str | None], list[MediaAsset]] = {}
+        available: dict[tuple[str, str | None, str | None, str | None], list[MediaAsset]] = {}
         categories: dict[str, CategoryPlanRead] = {
             key: CategoryPlanRead(name=key or "Без категории", submission_count=len(ids))
             for key, ids in sorted(all_groups.items())
@@ -498,14 +510,18 @@ class CampaignMediaPlanner:
             if s.media_asset_id and not (data.force and s.status == SubmissionStatus.pending)
         )
         stop_provider: str | None = None
-        discovered_pins: dict[tuple[str, str | None, str | None], list[PoolCandidate]] = {}
+        discovered_pins: dict[
+            tuple[str, str | None, str | None, str | None], list[PoolCandidate]
+        ] = {}
         try:
             async with asyncio.timeout(self.policy.plan_timeout_seconds):
                 for context, submission_ids in sorted(
                     groups.items(), key=lambda item: str(item[0])
                 ):
-                    category, hint, wanted = context
-                    plan = self.builder.build(category, hint, wanted)
+                    category, hint, wanted, region_key = context
+                    plan = self.builder.build(
+                        category, hint, wanted, region_context=grid_region(category, region_key)
+                    )
                     from dropgrid.photos.concepts import concept_queries
 
                     hinted = bool(concept_queries(hint) or concept_queries(wanted))
@@ -660,7 +676,12 @@ class CampaignMediaPlanner:
         snapshots: dict[
             UUID, tuple[PhotoQueryPlan, list[PoolCandidate], list[PoolCandidate], str, list[str]]
         ] = {}
-        from dropgrid.photos.pool import archive_pool, materialize_archive, rank_pool
+        from dropgrid.photos.pool import (
+            archive_pool,
+            materialize_archive,
+            rank_pool,
+            regional_priority,
+        )
 
         exhaustion: dict[UUID, Counter[str]] = defaultdict(Counter)
 
@@ -668,8 +689,10 @@ class CampaignMediaPlanner:
             communities = {s.id: s.community_id for s, _ in rows}
             reserved_counts = preserved_counts.copy()
             for context, submission_ids in groups.items():
-                category, hint, wanted = context
-                plan = self.builder.build(category, hint, wanted)
+                category, hint, wanted, region_key = context
+                plan = self.builder.build(
+                    category, hint, wanted, region_context=grid_region(category, region_key)
+                )
                 for sid in submission_ids:
                     community_id = communities[sid]
                     warnings = categories[category].warnings
@@ -687,7 +710,7 @@ class CampaignMediaPlanner:
                     try:
                         async with asyncio.timeout(self.policy.plan_timeout_seconds):
                             archives = await archive_pool(
-                                self.archive, community_id, warnings, category
+                                self.archive, community_id, warnings, category, plan=plan
                             )
                             pins = [
                                 replace(i, score=None, reference_matches=[])
@@ -712,12 +735,28 @@ class CampaignMediaPlanner:
                                 report.source_contributions["vk_category_archive"]["retrieved"] += (
                                     len(category_pool)
                                 )
-                            mixed_ranked = await rank_pool(self.visual, community_id, pool, plan)
+                            mixed_ranked = await rank_pool(
+                                self.visual, community_id, pool, plan, grid_id=campaign.grid_id
+                            )
                             from dropgrid.photos.review import rerank
 
                             baseline = list(mixed_ranked)
                             mixed_ranked, version = await rerank(self, mixed_ranked, plan)
                             snapshots[sid] = (plan, mixed_ranked, baseline, version, list(warnings))
+                            if plan.region_context:
+                                report.regional_communities[str(community_id)] = {
+                                    "own_archive_candidates": sum(
+                                        i.source == "vk_archive" for i in mixed_ranked
+                                    ),
+                                    "same_region_candidates": sum(
+                                        i.region_status == "same_region" for i in mixed_ranked
+                                    ),
+                                    "external_candidates": sum(
+                                        i.source in {"pinterest", "pixabay", "library"}
+                                        for i in mixed_ranked
+                                    ),
+                                    "selected_source": None,
+                                }
                             for pool_item in mixed_ranked:
                                 report.source_contributions[pool_item.source]["deduplicated"] += 1
                             for pool_item in mixed_ranked[:10]:
@@ -732,6 +771,7 @@ class CampaignMediaPlanner:
                             for item in sorted(
                                 mixed_ranked,
                                 key=lambda candidate: (
+                                    regional_priority(candidate, plan),
                                     reserved_counts[candidate.asset.id] if candidate.asset else 0,
                                     -(candidate.score.final_score if candidate.score else 0),
                                     candidate.identity,
@@ -889,8 +929,17 @@ class CampaignMediaPlanner:
                     )
                 ).all()
             }
+            current_regions = {
+                r.community_id: grid_region(r.category, r.region_key)
+                for r in (
+                    await session.scalars(
+                        select(GridCommunity).where(GridCommunity.grid_id == campaign.grid_id)
+                    )
+                ).all()
+            }
             if any(
-                current_hints.get(s.community_id) != hints.get(s.community_id)
+                current_regions.get(s.community_id) != regions.get(s.community_id)
+                or current_hints.get(s.community_id) != hints.get(s.community_id)
                 or current_desired.get(s.community_id) != desired.get(s.community_id)
                 for s, _ in rows
             ):
@@ -903,12 +952,15 @@ class CampaignMediaPlanner:
             reuse = data.max_reuse_per_asset or self.settings.photo_max_reuse_per_asset
             assignments: dict[UUID, UUID] = {}
             for context, submission_ids in sorted(groups.items(), key=lambda item: str(item[0])):
-                category, hint, wanted = context
+                category, hint, wanted, region_key = context
                 valid = []
                 for asset in available.get(context, []):
                     fresh = await session.get(MediaAsset, asset.id)
                     if fresh and self.eligible(
-                        fresh, self.builder.build(category, hint, wanted).sensitive
+                        fresh,
+                        self.builder.build(
+                            category, hint, wanted, region_context=grid_region(category, region_key)
+                        ).sensitive,
                     ):
                         valid.append(fresh)
                 eligible_ids = {s.id for s in current if s.status == SubmissionStatus.pending}
@@ -943,7 +995,12 @@ class CampaignMediaPlanner:
                                     or not eligible_for_archive_reuse(
                                         ref.posted_at,
                                         utcnow(),
-                                        profile.archive_reuse_min_age_days,
+                                        max(
+                                            profile.archive_reuse_min_age_days,
+                                            self.settings.regional_own_archive_min_age_days,
+                                        )
+                                        if grid_region(category, region_key)
+                                        else profile.archive_reuse_min_age_days,
                                         profile.archive_reuse_enabled,
                                         ref.enabled,
                                         profile.archive_reuse_max_age_days,
@@ -963,6 +1020,36 @@ class CampaignMediaPlanner:
                 )
             for submission in current:
                 if submission.id in assignments:
+                    region = regions.get(submission.community_id)
+                    if region:
+                        source = source_of_asset.get(assignments[submission.id], "library")
+                        if str(submission.community_id) in report.regional_communities:
+                            report.regional_communities[str(submission.community_id)][
+                                "selected_source"
+                            ] = source
+                        chosen_region_status = (
+                            next(
+                                (
+                                    i.region_status
+                                    for i in snapshots[submission.id][1]
+                                    if i.asset and i.asset.id == assignments[submission.id]
+                                ),
+                                "unverified",
+                            )
+                            if submission.id in snapshots
+                            else "unverified"
+                        )
+                        key = {
+                            "own_community": "own_archive",
+                            "same_region": "same_region_cross",
+                            "verified": "other_region_verified",
+                        }.get(chosen_region_status, "unverified_fallback")
+                        report.regional_assignments["total"] = (
+                            report.regional_assignments.get("total", 0) + 1
+                        )
+                        report.regional_assignments[key] = (
+                            report.regional_assignments.get(key, 0) + 1
+                        )
                     report.newly_assigned += int(originals[submission.id] is None)
                     submission.media_asset_id = assignments[submission.id]
                     report.source_contributions[

@@ -19,6 +19,7 @@ from dropgrid.photos.domain import (
 )
 from dropgrid.photos.pool import PoolCandidate, deduplicate_pool, rank_pool
 from dropgrid.photos.progress import emit
+from dropgrid.photos.regions import RegionContext, grid_region
 from dropgrid.photos.rotation import community_usage, recently_used
 from dropgrid.photos.visual import CommunityVisualRanker, deserialize_embedding
 from dropgrid.photos.visual_library import VisualLibrary
@@ -63,7 +64,13 @@ class VKCategoryArchivePhotoProvider:
         self.archive, self.visual, self.sessions = archive, visual, visual.sessions
 
     async def shortlist(
-        self, target_id: UUID, category: str | None, hint: str | None, grid_id: UUID | None = None
+        self,
+        target_id: UUID,
+        category: str | None,
+        hint: str | None,
+        grid_id: UUID | None = None,
+        *,
+        region_context: RegionContext | None = None,
     ) -> tuple[list[PoolCandidate], CategoryLibraryStats]:
         stats = CategoryLibraryStats(
             category=car_model(hint) or car_model(category) or normalize_category(category)
@@ -89,16 +96,40 @@ class VKCategoryArchivePhotoProvider:
                 .limit(600)
             )
             sources = list((await session.execute(query)).all())
+            target_relation = (
+                await session.get(GridCommunity, (grid_id, target_id)) if grid_id else None
+            )
+            region = region_context or grid_region(
+                category, target_relation.region_key if target_relation else None
+            )
             ids = {
                 community.id
                 for community, relation in sources
-                if context_matches(
-                    category,
-                    hint,
-                    target.name or target.domain,
-                    relation.category if relation else community.category,
-                    relation.content_hint if relation else None,
-                    community.name or community.domain,
+                if (
+                    region
+                    and region.region_known
+                    and (
+                        source_region := grid_region(relation.category, relation.region_key)
+                        if relation
+                        else None
+                    )
+                    and source_region.region_key == region.region_key
+                    and (
+                        not car_model(hint)
+                        or car_model(relation.content_hint) == car_model(hint)
+                        or car_model(community.name) == car_model(hint)
+                    )
+                )
+                or (
+                    not region
+                    and context_matches(
+                        category,
+                        hint,
+                        target.name or target.domain,
+                        relation.category if relation else community.category,
+                        relation.content_hint if relation else None,
+                        community.name or community.domain,
+                    )
                 )
             }
             if not ids:
@@ -167,6 +198,8 @@ class VKCategoryArchivePhotoProvider:
                     embedding=vector,
                     sha256=row.sha256,
                     perceptual_hash=row.perceptual_hash,
+                    region_status="same_region" if region else "unverified",
+                    region_key=region.region_key if region else None,
                 )
             )
         stats.candidate_rows = len(pool)
@@ -195,7 +228,9 @@ class VKCategoryArchivePhotoProvider:
         *,
         plan: PhotoQueryPlan | None = None,
     ) -> tuple[list[PoolCandidate], CategoryLibraryStats, list[str]]:
-        pool, stats = await self.shortlist(target_id, category, hint, grid_id)
+        pool, stats = await self.shortlist(
+            target_id, category, hint, grid_id, region_context=plan.region_context if plan else None
+        )
         materialized, warnings = [], []
         selected = pool[:MAX_MATERIALIZED]
         await emit(

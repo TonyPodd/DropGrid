@@ -24,7 +24,7 @@ from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoQueryPlan
 from dropgrid.photos.learning import latest_model, predict, queue_training, valid_model
 from dropgrid.photos.planner import CampaignMediaPlanner
-from dropgrid.photos.pool import PoolCandidate, materialize_archive
+from dropgrid.photos.pool import PoolCandidate, materialize_archive, regional_priority
 from dropgrid.services.catalog import ConflictError, get_entity
 
 
@@ -60,7 +60,9 @@ async def rerank(
         learned_score = sum(w * x for w, x in zip(model.coefficients, vector, strict=True))
         scored.append((learned_score, item))
     ranked = []
-    for score, item in sorted(scored, key=lambda pair: (-pair[0], pair[1].identity)):
+    for score, item in sorted(
+        scored, key=lambda pair: (regional_priority(pair[1], plan), -pair[0], pair[1].identity)
+    ):
         assert item.score
         item.score = replace(item.score, final_score=score)
         ranked.append(item)
@@ -119,6 +121,8 @@ async def snapshot(
             features={
                 **asdict(item.score),
                 "age_reuse_score": item.age_reuse_score,
+                "region_status": item.region_status,
+                "region_key": item.region_key,
                 "context_desired_content": plan.desired_content,
                 "baseline_rank": baseline.index(item) + 1 if item in baseline else rank,
             },
@@ -149,6 +153,11 @@ async def snapshot(
         attention.append("fallback_only")
     if "pinterest_search_unavailable" in warnings:
         attention.append("pinterest_unavailable")
+    if plan.region_context:
+        if not plan.region_context.region_known:
+            attention.append("unknown_region_code")
+        if chosen.region_status == "unverified":
+            attention.append("region_unverified_fallback")
     if rows[chosen_rank - 1].operator_rating == "dislike":
         attention.append("operator_disliked")
     submission.photo_attention = attention

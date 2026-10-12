@@ -19,6 +19,11 @@ type Item = {
   community: string;
   community_domain: string | null;
   community_url: string | null;
+  region_context?: {
+    display_name: string | null;
+    region_known: boolean;
+    region_codes: string[];
+  } | null;
   category: string | null;
   intent: string | null;
   attention: string[];
@@ -568,6 +573,9 @@ export function PhotoValidationPage() {
                   </div>
                   <p>
                     {item.category}
+                    {item.region_context?.display_name && (
+                      <> · {item.region_context.display_name}</>
+                    )}
                     {item.intent && <> · {item.intent}</>}
                   </p>
                 </div>
@@ -703,6 +711,21 @@ export function PhotoValidationPage() {
                   ) + 1}
                 </p>
                 <p>{item.attention.join(", ") || "Нет предупреждений"}</p>
+                {item.region_context && (
+                  <p>
+                    Регион:{" "}
+                    {(
+                      {
+                        same_region: "тот же регион",
+                        own_community: "своя группа",
+                        unverified: "не подтверждён",
+                        mismatch: "другой регион",
+                      } as Record<string, string>
+                    )[
+                      String(chosen?.diagnostics.region_status || "unverified")
+                    ] || "не подтверждён"}
+                  </p>
+                )}
                 <pre>{JSON.stringify(chosen?.diagnostics ?? {}, null, 2)}</pre>
               </details>
             </>

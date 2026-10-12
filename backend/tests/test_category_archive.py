@@ -100,7 +100,7 @@ async def test_category_preview_degrades_safely_on_read_failure(sessions, tmp_pa
 
     provider = VKCategoryArchivePhotoProvider(SimpleNamespace(prepare=prepare), visual)
 
-    async def shortlist(*args):
+    async def shortlist(*args, **kwargs):
         return [
             PoolCandidate(candidate("x"), "vk_category_archive", reference=SimpleNamespace())
         ], CategoryLibraryStats(candidate_rows=1, shortlist=1)
