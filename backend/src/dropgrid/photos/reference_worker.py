@@ -42,6 +42,9 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
         )
     )
     engine.planner.archive = VKArchivePhotoProvider(service.collector)
+    from dropgrid.discovery.service import Discovery
+
+    discovery = Discovery(db.sessions, client, service.collector.tokens, engine)
     operations = PhotoJobs(engine, service.collector)
     workflow = CampaignPreparation(engine, MediaPreparation(service.collector))
     try:
@@ -52,6 +55,8 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                     processed = await operations.tick()
                 if not processed:
                     processed = await workflow.tick()
+                if not processed:
+                    processed = await discovery.tick()
                 if not processed:
                     processed = int(await train_one(db.sessions, settings))
             except (SQLAlchemyError, PostgresError, OSError, TimeoutError):

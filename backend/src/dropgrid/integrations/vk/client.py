@@ -30,6 +30,7 @@ from dropgrid.integrations.vk.models import (
     CommunityResolution,
     ResolutionStatus,
     VKCommunity,
+    VKCommunitySearch,
     VKNotifications,
     VKUser,
     WallPostReceipt,
@@ -39,7 +40,14 @@ from dropgrid.integrations.vk.models import (
 from dropgrid.photos.timings import timed
 
 _READ_METHODS = frozenset(
-    {"users.get", "groups.getById", "wall.get", "wall.getById", "notifications.get"}
+    {
+        "users.get",
+        "groups.getById",
+        "groups.search",
+        "wall.get",
+        "wall.getById",
+        "notifications.get",
+    }
 )
 _WRITE_METHODS = frozenset({"wall.post", "photos.getWallUploadServer", "photos.saveWallPhoto"})
 logger = logging.getLogger(__name__)
@@ -253,6 +261,47 @@ class VKClient:
         if len(users) != 1:
             raise VKProtocolError("users.get", "Expected a single current user")
         return users[0]
+
+    async def describe_community(
+        self, group_id: int, *, access_token: str | SecretStr, account_id: UUID
+    ) -> VKCommunity:
+        if type(group_id) is not int or group_id <= 0:
+            raise VKInputError("groups.getById", "Invalid community identity")
+        groups = await self._groups(
+            {"group_ids": str(group_id), "fields": ["description", "city", "members_count"]},
+            access_token=access_token,
+            account_id=account_id,
+        )
+        if len(groups) != 1 or groups[0].id != group_id:
+            raise VKProtocolError("groups.getById", "Unexpected community identity")
+        return groups[0]
+
+    async def search_communities(
+        self,
+        query: str,
+        *,
+        access_token: str | SecretStr,
+        account_id: UUID,
+        count: int = 30,
+        offset: int = 0,
+    ) -> VKCommunitySearch:
+        if (
+            not isinstance(query, str)
+            or not query.strip()
+            or len(query) > 100
+            or type(count) is not int
+            or not 1 <= count <= 100
+            or type(offset) is not int
+            or not 0 <= offset <= 1000
+        ):
+            raise VKInputError("groups.search", "Invalid search bounds")
+        data = await self.call(
+            "groups.search",
+            access_token=access_token,
+            account_id=account_id,
+            params={"q": query, "count": count, "offset": offset},
+        )
+        return parse_response(TypeAdapter(VKCommunitySearch), data["response"], "groups.search")
 
     async def get_notifications(
         self,

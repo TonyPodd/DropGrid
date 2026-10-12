@@ -55,6 +55,15 @@ class VKCommunity(ResponseModel):
     deactivated: str | None = None
     is_member: int | None = None
     is_admin: int | None = None
+    type: str = "group"
+    description: str = ""
+    city: dict[str, Any] | None = None
+    members_count: int | None = None
+
+
+class VKCommunitySearch(ResponseModel):
+    count: int = Field(ge=0)
+    items: list[VKCommunity]
 
 
 class WallPosts(ResponseModel):

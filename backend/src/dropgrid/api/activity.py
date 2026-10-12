@@ -14,6 +14,7 @@ from dropgrid.db.models import (
     Campaign,
     CampaignPreparationJob,
     Community,
+    CommunityDiscoveryRun,
     MediaPreparationJob,
     PhotoOperationJob,
     ReferenceSyncJob,
@@ -204,6 +205,48 @@ async def list_activity(session: AsyncSession) -> list[ActivityRead]:
                 updated_at=job.updated_at,
                 elapsed_seconds=max(0, int((job.updated_at - job.created_at).total_seconds())),
                 target_url=f"/campaigns/{job.campaign_id}",
+            )
+        )
+    for run in (
+        await session.scalars(
+            select(CommunityDiscoveryRun)
+            .order_by(CommunityDiscoveryRun.updated_at.desc())
+            .limit(50)
+        )
+    ).all():
+        result.append(
+            ActivityRead(
+                id=f"discovery:{run.id}",
+                kind="discovery",
+                label="Community Discovery",
+                state="success"
+                if run.state == "ready"
+                else "failed"
+                if run.state == "failed"
+                else "queued"
+                if run.state == "queued"
+                else "running",
+                stage={
+                    "searching": "Searching communities",
+                    "checking_activity": "Checking activity",
+                    "analyzing_photos": "Analyzing photos",
+                    "ranking_candidates": "Ranking candidates",
+                }.get(run.stage, run.stage),
+                current=int(run.counters.get("analyzed", run.query_cursor)),
+                total=len(run.queries) if run.stage == "searching" else None,
+                started_at=run.started_at or run.created_at,
+                updated_at=run.updated_at,
+                elapsed_seconds=max(
+                    0,
+                    int(
+                        (
+                            (run.finished_at or utcnow()) - (run.started_at or run.created_at)
+                        ).total_seconds()
+                    ),
+                ),
+                target_url=f"/discovery?grid={run.grid_id}&run={run.id}",
+                counters={k: v for k, v in run.counters.items() if isinstance(v, int)},
+                message=run.error_code,
             )
         )
     campaigns = (

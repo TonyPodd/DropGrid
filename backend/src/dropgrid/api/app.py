@@ -62,6 +62,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             photo_engine.embedder,
         )
         app.state.media_preparation = MediaPreparation(app.state.reference_collector)
+        from dropgrid.discovery.service import Discovery
+
+        app.state.discovery = Discovery(
+            app.state.database.sessions, app.state.vk_client, app.state.token_provider, photo_engine
+        )
         photo_engine.planner.archive = VKArchivePhotoProvider(app.state.reference_collector)
         try:
             yield
@@ -84,6 +89,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from dropgrid.photos.validation_routes import router as validation_router
 
     app.include_router(validation_router)
+    from dropgrid.discovery.routes import router as discovery_router
+
+    app.include_router(discovery_router)
     app.include_router(router)
     app.include_router(activity_router)
     app.include_router(photo_router)
