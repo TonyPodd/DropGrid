@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { request, errorMessage } from "./api/client";
 import { imageUrl } from "./validation";
+import { DiscoveryQuality, type Quality } from "./discovery-quality";
 import "./discovery.css";
 
 type Region = { key: string; name: string; codes: string[] };
@@ -25,6 +26,7 @@ export type DiscoveryCandidate = {
   suggested_category: string | null;
   suggested_region_key: string | null;
   status: string;
+  human_status?: string | null;
   analysis_state: string;
   final_score: number;
   topic_score: number;
@@ -53,6 +55,7 @@ type Inbox = {
   counters: Record<string, number>;
 };
 type Run = {
+  human_outcomes?: { approved: number; rejected: number; uncertain: number };
   id: string;
   state: string;
   stage: string;
@@ -78,6 +81,23 @@ const percent = (value: number | null) =>
 
 export function DiscoveryPage() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [batches, setBatches] = useState<
+    {
+      id: string;
+      name: string;
+      total: number;
+      reviewed_by_you: number;
+      reviewers: { name: string; reviewed: number }[];
+    }[]
+  >([]);
+  const [quality, setQuality] = useState<Quality>();
+  const [cache, setCache] = useState<{
+    size: number;
+    entries: number;
+    oldest: string | null;
+    evicted_count: number;
+  }>();
   const grid = params.get("grid") || "";
   const runId = params.get("run") || "";
   const [options, setOptions] = useState<Options>();
@@ -89,7 +109,7 @@ export function DiscoveryPage() {
   const [scopeValue, setScopeValue] = useState("");
   const [category, setCategory] = useState("");
   const [region, setRegion] = useState("");
-  const [status, setStatus] = useState("new");
+  const [status, setStatus] = useState(params.get("status") || "new");
   const [minimum, setMinimum] = useState("0");
   const [page, setPage] = useState(1);
   const [error, setError] = useState("");
@@ -129,12 +149,20 @@ export function DiscoveryPage() {
       if (runId) query.set("run_id", runId);
       if (category) query.set("category", category);
       if (region) query.set("region_key", region);
-      const [data, jobs] = await Promise.all([
+      const [data, jobs, reviews, metrics, cacheStats] = await Promise.all([
         request<Inbox>(`/discovery/candidates?${query}`, { signal }),
         request<Run[]>(`/discovery/runs?grid_id=${grid}`, { signal }),
+        request<typeof batches>(`/discovery/review-batches?grid_id=${grid}`, {
+          signal,
+        }),
+        request<Quality>(`/discovery/quality?grid_id=${grid}`, { signal }),
+        request<typeof cache>(`/discovery/cache`, { signal }),
       ]);
       setInbox(data);
       setRuns(jobs);
+      setBatches(reviews);
+      setQuality(metrics);
+      setCache(cacheStats);
     },
     [grid, status, minimum, page, runId, category, region],
   );
@@ -219,6 +247,29 @@ export function DiscoveryPage() {
       setBusy(false);
     }
   }
+  async function startReview() {
+    setBusy(true);
+    setError("");
+    try {
+      if (batches[0]) {
+        navigate(`/discovery/review/${batches[0].id}`);
+        return;
+      }
+      const batch = await request<{ id: string }>("/discovery/review-batches", {
+        method: "POST",
+        body: {
+          grid_id: grid,
+          name: "Discovery validation",
+          reviewer_id: reviewer || null,
+        },
+      });
+      navigate(`/discovery/review/${batch.id}`);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   const categories = [
     ...new Set(
       options?.seeds.map((s) => s.category).filter((v): v is string => !!v),
@@ -236,6 +287,42 @@ export function DiscoveryPage() {
           <p>Поиск новых сообществ · только чтение VK · добавление вручную.</p>
         </div>
       </div>
+      <p>
+        Автоматический поиск: <strong>выключен</strong>. Кандидаты не
+        добавляются и не получают отправки автоматически.
+      </p>
+      {grid && (
+        <section className="discovery-progress">
+          <button
+            disabled={
+              busy || !reviewer || (!batches.length && !inbox?.counters.new)
+            }
+            onClick={() => void startReview()}
+          >
+            {batches.length
+              ? "Продолжить проверку"
+              : `Начать проверку ${inbox?.counters.new || 0}`}
+          </button>
+          {batches.map((b) => (
+            <p key={b.id}>
+              <Link to={`/discovery/review/${b.id}`}>{b.name}</Link> ·{" "}
+              {b.reviewed_by_you} / {b.total} проверено вами ·{" "}
+              {b.reviewers?.map((r) => `${r.name}: ${r.reviewed}`).join(" · ")}
+            </p>
+          ))}
+        </section>
+      )}
+      <DiscoveryQuality data={quality} />
+      {cache && typeof cache.size === "number" && (
+        <details>
+          <summary>Discovery cache</summary>
+          <p>
+            {(cache.size / 1048576).toFixed(1)} MiB / 300 MiB · файлов{" "}
+            {cache.entries} · oldest {cache.oldest || "N/A"} · удалено с начала
+            учёта: {cache.evicted_count}
+          </p>
+        </details>
+      )}
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
       <section className="discovery-controls" aria-label="Настройки поиска">
@@ -344,6 +431,12 @@ export function DiscoveryPage() {
             Найдено: {selectedRun.counters.raw_candidates || 0} · Фотоанализ:{" "}
             {selectedRun.counters.visually_analyzed || 0}
           </p>
+          <p>
+            Человеческие решения: подходят{" "}
+            {selectedRun.human_outcomes?.approved || 0} · не подходят{" "}
+            {selectedRun.human_outcomes?.rejected || 0} · не уверен{" "}
+            {selectedRun.human_outcomes?.uncertain || 0}
+          </p>
           {selectedRun.error_code && (
             <p>Диагностика: {selectedRun.error_code}</p>
           )}
@@ -359,6 +452,8 @@ export function DiscoveryPage() {
           ["new", "Новые"],
           ["recommended", "Высокая уверенность"],
           ["needs_review", "Нужно ревью"],
+          ["human_approved", "Подтверждены людьми"],
+          ["uncertain", "Не уверен"],
           ["added", "Добавлены"],
           ["rejected", "Отклонены"],
         ].map(([key, label]) => (
@@ -411,7 +506,8 @@ export function DiscoveryPage() {
           >
             {[
               ["new", "Новые"],
-              ["reviewing", "На рассмотрении"],
+              ["human_approved", "Подтверждены людьми"],
+              ["uncertain", "Не уверен"],
               ["approved", "Добавлены"],
               ["rejected", "Отклонены"],
               ["duplicate", "Уже в сетке"],
@@ -553,7 +649,12 @@ export function DiscoveryPage() {
               {["new", "reviewing"].includes(c.status) && (
                 <>
                   <button
-                    disabled={busy || !reviewer || c.analysis_state !== "ready"}
+                    disabled={
+                      busy ||
+                      !reviewer ||
+                      c.analysis_state !== "ready" ||
+                      c.human_status !== "approved"
+                    }
                     onClick={() => {
                       setConfirm(c);
                       setApprovalCategory(c.suggested_category || "");
@@ -563,12 +664,11 @@ export function DiscoveryPage() {
                   >
                     Добавить в сетку
                   </button>
-                  <button
-                    disabled={busy || !reviewer}
-                    onClick={() => void decide(c, "reject")}
-                  >
-                    Не подходит
-                  </button>
+                  <span>
+                    {c.human_status !== "approved"
+                      ? "Сначала подтвердите в проверке сообществ."
+                      : "Подтверждено человеком."}
+                  </span>
                 </>
               )}
               {c.status === "rejected" && (

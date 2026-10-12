@@ -114,3 +114,15 @@
     padding: 16px;
   }
 }
+
+.discovery-progress table {
+  width: 100%;
+  table-layout: fixed;
+}
+.discovery-progress td,
+.discovery-progress th {
+  overflow-wrap: anywhere;
+  text-align: left;
+  padding: 8px;
+  font-size: 0.85rem;
+}

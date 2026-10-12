@@ -4,8 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import { DiscoveryPage } from "./discovery";
 afterEach(() => vi.restoreAllMocks());
-function fixture() {
-  let status = "new";
+function fixture(human_status: string | null = null, initialStatus = "new") {
+  let status = initialStatus;
   const candidate = {
     id: "c",
     name: "Авто Красноярск",
@@ -13,6 +13,7 @@ function fixture() {
     suggested_category: "24 регион",
     suggested_region_key: "krasnoyarsk_krai",
     status: "new",
+    human_status,
     analysis_state: "ready",
     final_score: 0.8,
     topic_score: 1,
@@ -59,6 +60,17 @@ function fixture() {
           reviewer: { id: "r", name: "Tima" },
           reviewers: [],
         };
+      else if (url.includes("/review-batches")) data = [];
+      else if (url.includes("/quality"))
+        data = {
+          overall: { reviewed: 0, precision: null },
+          by: {},
+          agreement: { rate: null, overlapping_candidates: 0 },
+          precision_at_k: {},
+          thresholds: [],
+        };
+      else if (url.includes("/cache"))
+        data = { size: 0, entries: 0, oldest: null, evicted_count: 0 };
       else if (url.includes("/decision")) {
         const action = JSON.parse(String(init?.body)).action;
         status =
@@ -128,7 +140,7 @@ it("shows bounded progress, region, VK links and filters", async () => {
   expect(screen.getByText("Поиск завершён")).toBeVisible();
 });
 it("requires explicit add confirmation with category/region and never creates sending", async () => {
-  const { fetch, user } = fixture();
+  const { fetch, user } = fixture("approved");
   await user.click(
     await screen.findByRole("button", { name: "Добавить в сетку" }),
   );
@@ -155,21 +167,24 @@ it("requires explicit add confirmation with category/region and never creates se
     ),
   ).toBe(false);
 });
-it("saves rejection, removes card and allows explicit restore from rejected", async () => {
-  const { fetch, user } = fixture();
-  await user.click(await screen.findByRole("button", { name: "Не подходит" }));
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("link", { name: "Авто Красноярск ↗" }),
-    ).not.toBeInTheDocument(),
-  );
+it("restores a rejected candidate explicitly while keeping new additions gated", async () => {
+  const { fetch, user } = fixture("rejected", "rejected");
+  await screen.findByText("Поиск завершён");
   await user.selectOptions(screen.getByLabelText("Статус"), "rejected");
   await user.click(await screen.findByRole("button", { name: "Восстановить" }));
   await waitFor(() =>
     expect(
       fetch.mock.calls.filter(([u]) => String(u).includes("/decision")),
-    ).toHaveLength(2),
+    ).toHaveLength(1),
   );
+});
+it("requires human approval before add and exposes focused review entry", async () => {
+  fixture();
+  expect(
+    await screen.findByRole("button", { name: "Добавить в сетку" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/Сначала подтвердите/)).toBeVisible();
+  expect(screen.getByText(/Автоматический поиск:/)).toBeVisible();
 });
 it("starts one explicit read-only run using structured scope", async () => {
   const { fetch, user } = fixture();

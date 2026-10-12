@@ -1,0 +1,184 @@
+.community-review {
+  max-width: 1160px;
+  margin: auto;
+  padding: 24px;
+  color: #263746;
+}
+.community-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.community-review h1 {
+  font-size: 1.65rem;
+}
+.community-review h2 {
+  font-size: 1.5rem;
+  overflow-wrap: anywhere;
+}
+.community-review h2 a {
+  display: inline-block;
+  font-size: 0.95rem;
+  font-weight: normal;
+  margin-left: 12px;
+}
+.community-review progress {
+  width: 100%;
+  height: 10px;
+  accent-color: #3b7866;
+}
+.community-review nav,
+.community-review-actions,
+.community-review footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+.community-review nav button[aria-pressed="true"] {
+  background: #e4eee9;
+}
+.community-review a {
+  color: #375f7c;
+}
+.community-review-photos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.community-review-photos > div {
+  min-width: 0;
+  background: #edf1f3;
+  border-radius: 10px;
+}
+.community-review-photos button {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+.community-review-photos img {
+  width: 100%;
+  height: 240px;
+  display: block;
+  object-fit: contain;
+}
+.community-review-evidence {
+  margin: 20px 0;
+  padding: 16px;
+  background: #f5f7f8;
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+.community-review-evidence dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.community-review-evidence dd {
+  margin: 4px 0;
+  font-weight: bold;
+}
+.community-review-actions {
+  position: sticky;
+  bottom: 0;
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #d9e0e5;
+  border-radius: 12px;
+  z-index: 2;
+}
+.community-review-actions button:first-child {
+  background: #2f6f5b;
+  color: white;
+}
+.community-review-actions button {
+  flex: 1;
+  padding: 14px;
+}
+.community-reasons {
+  padding: 16px;
+  border: 1px solid #b7c8d2;
+  border-radius: 10px;
+  background: #fff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.community-reasons p {
+  width: 100%;
+}
+.community-region-warning,
+.community-review [role="alert"] {
+  color: #a33838;
+  font-weight: bold;
+}
+.community-review [role="status"] {
+  color: #28694d;
+}
+.community-review-hints {
+  font-size: 0.85rem;
+  color: #647582;
+  line-height: 1.6;
+}
+.community-review-lightbox {
+  position: fixed;
+  inset: 0;
+  background: #15232ce8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 20px;
+}
+.community-review-lightbox img {
+  max-width: 100%;
+  max-height: 90vh;
+  object-fit: contain;
+}
+.community-review-lightbox button {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+}
+@media (max-width: 650px) {
+  .community-review {
+    padding: 14px;
+  }
+  .community-review-photos {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .community-review-photos img {
+    height: 180px;
+  }
+  .community-review-actions {
+    gap: 6px;
+    padding: 8px;
+  }
+  .community-review-actions button {
+    font-size: 0.85rem;
+    padding: 12px 6px;
+  }
+  .community-review-header {
+    align-items: flex-start;
+  }
+  .community-review h2 a {
+    margin: 8px 0;
+    display: block;
+  }
+}
+
+.community-reasons {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, calc(100vw - 28px));
+  max-height: 85vh;
+  overflow-y: auto;
+  z-index: 12;
+  box-shadow: 0 12px 70px #182a3a55;
+}

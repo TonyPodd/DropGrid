@@ -15,10 +15,20 @@ const VkAuthHelper =
   import.meta.env.VITE_ENABLE_VK_AUTH_HELPER === "true"
     ? lazy(() => import("./dev/VkAuthHelper"))
     : null;
+import { CommunityReviewPage } from "./discovery-review";
 import { DiscoveryPage } from "./discovery";
 import { PhotoValidationPage } from "./validation";
 export function App() {
   const location = useLocation();
+  if (location.pathname.startsWith("/discovery/review/"))
+    return (
+      <Routes>
+        <Route
+          path="/discovery/review/:batchId"
+          element={<CommunityReviewPage />}
+        />
+      </Routes>
+    );
   if (location.pathname.startsWith("/review/"))
     return (
       <Routes>
