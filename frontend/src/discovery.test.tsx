@@ -4,7 +4,11 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import { DiscoveryPage } from "./discovery";
 afterEach(() => vi.restoreAllMocks());
-function fixture(human_status: string | null = null, initialStatus = "new") {
+function fixture(
+  human_status: string | null = null,
+  initialStatus = "new",
+  reviewBatches: unknown[] = [],
+) {
   let status = initialStatus;
   const candidate = {
     id: "c",
@@ -60,7 +64,7 @@ function fixture(human_status: string | null = null, initialStatus = "new") {
           reviewer: { id: "r", name: "Tima" },
           reviewers: [],
         };
-      else if (url.includes("/review-batches")) data = [];
+      else if (url.includes("/review-batches")) data = reviewBatches;
       else if (url.includes("/quality"))
         data = {
           overall: { reviewed: 0, precision: null },
@@ -211,4 +215,26 @@ it("hides an evicted cache thumbnail instead of displaying a broken image", asyn
   const image = await screen.findByRole("img", { name: "Фото сообщества 1" });
   fireEvent.error(image);
   expect(image).not.toBeVisible();
+});
+
+it("keeps the original 66-candidate cohort as the primary review entry", async () => {
+  fixture(null, "new", [
+    {
+      id: "later",
+      name: "Discovery validation v1 — expansion",
+      total: 100,
+      reviewed_by_you: 0,
+      reviewers: [],
+    },
+    {
+      id: "original",
+      name: "Discovery validation v1",
+      total: 66,
+      reviewed_by_you: 0,
+      reviewers: [],
+    },
+  ]);
+  expect(
+    await screen.findByRole("button", { name: "Начать проверку 66" }),
+  ).toBeEnabled();
 });

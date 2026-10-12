@@ -247,12 +247,19 @@ export function DiscoveryPage() {
       setBusy(false);
     }
   }
+  const reviewBatch =
+    batches.find(
+      (b) =>
+        b.name === "Discovery validation v1" && b.reviewed_by_you < b.total,
+    ) ||
+    batches.find((b) => b.reviewed_by_you < b.total) ||
+    batches[0];
   async function startReview() {
     setBusy(true);
     setError("");
     try {
-      if (batches[0]) {
-        navigate(`/discovery/review/${batches[0].id}`);
+      if (reviewBatch) {
+        navigate(`/discovery/review/${reviewBatch.id}`);
         return;
       }
       const batch = await request<{ id: string }>("/discovery/review-batches", {
@@ -299,9 +306,9 @@ export function DiscoveryPage() {
             }
             onClick={() => void startReview()}
           >
-            {batches.length
-              ? "Продолжить проверку"
-              : `Начать проверку ${inbox?.counters.new || 0}`}
+            {reviewBatch?.reviewed_by_you
+              ? `Продолжить проверку ${reviewBatch.reviewed_by_you} / ${reviewBatch.total}`
+              : `Начать проверку ${reviewBatch?.total || inbox?.counters.new || 0}`}
           </button>
           {batches.map((b) => (
             <p key={b.id}>

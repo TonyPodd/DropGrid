@@ -172,6 +172,12 @@ it("resumes the server cursor and saves filters and previous position", async ()
       ),
     ).toBe(true),
   );
+  await user.keyboard("{ArrowRight}");
+  await screen.findByRole("heading", { name: /Следующее сообщество/ });
+  expect(screen.getByRole("button", { name: "Непроверенные" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });
 it("opens G safely only without modifiers or a typing focus", async () => {
   const { user } = fixture();

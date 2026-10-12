@@ -358,3 +358,69 @@ def test_open_review_previews_have_eviction_priority_but_never_bypass_cap_or_ttl
     assert inspect_cache(root)["size"] <= 300 * 1024 * 1024
     os.utime(pinned, ((utcnow() - timedelta(days=31)).timestamp(),) * 2)
     assert prune(root, protected) == 1 and not pinned.exists()
+
+
+@pytest.mark.integration
+async def test_restore_requeues_without_erasing_human_run_outcome(client, sessions, tmp_path):
+    service, gid, rid, bid, cid, _ = await boot(sessions, tmp_path)
+    client._transport.app.state.discovery = service
+    prefix = f"/api/v1/discovery/review-batches/{bid}"
+    shown = (await client.get(f"{prefix}/items/0?reviewer_id={rid}")).json()
+    response = await client.post(
+        f"{prefix}/items/0/decision",
+        json={
+            "reviewer_id": str(rid),
+            "decision": "rejected",
+            "reason": "wrong_topic",
+            "seen_version": shown["version"],
+            "expected_revision": 0,
+        },
+    )
+    assert response.status_code == 200
+    restored = await client.post(
+        f"/api/v1/discovery/candidates/{cid}/decision",
+        json={"action": "restore", "reviewer_id": str(rid)},
+    )
+    assert restored.status_code == 200 and restored.json()["human_status"] is None
+    run = (await client.get(f"/api/v1/discovery/runs/{shown['run_id']}")).json()
+    assert run["human_outcomes"]["rejected"] == 1
+    quality = (await client.get(f"/api/v1/discovery/quality?grid_id={gid}")).json()
+    assert quality["training"]["negative"] == 1 and quality["training"]["positive"] == 0
+
+
+@pytest.mark.integration
+async def test_preview_serves_originating_analysis_after_candidate_changes(
+    client, sessions, tmp_path
+):
+    service, _, rid, bid, cid, _ = await boot(sessions, tmp_path)
+    client._transport.app.state.discovery = service
+    original = "aa/" + "a" * 64 + ".jpg"
+    newer = "bb/" + "b" * 64 + ".jpg"
+    for key, content in [(original, b"original-image"), (newer, b"newer-image")]:
+        path = service.storage.path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    async with sessions() as db, db.begin():
+        item = await db.get(Item, (bid, 0))
+        evidence = await db.get(Evidence, (item.run_id, cid))
+        snapshot = deepcopy(evidence.analysis_snapshot)
+        snapshot["preview_cache_keys"] = [original]
+        evidence.analysis_snapshot = snapshot
+        candidate = await db.get(Candidate, cid)
+        candidate.previews = [newer]
+    prefix = f"/api/v1/discovery/review-batches/{bid}/items/0"
+    shown = (await client.get(f"{prefix}?reviewer_id={rid}")).json()
+    photo = await client.get(shown["candidate"]["previews"][0])
+    assert photo.status_code == 200 and photo.content == b"original-image"
+    saved = await client.post(
+        f"{prefix}/decision",
+        json={
+            "reviewer_id": str(rid),
+            "decision": "approved",
+            "seen_version": shown["version"],
+            "expected_revision": 0,
+        },
+    )
+    assert saved.status_code == 200
+    photo = await client.get(shown["candidate"]["previews"][0])
+    assert photo.status_code == 200 and photo.content == b"original-image"

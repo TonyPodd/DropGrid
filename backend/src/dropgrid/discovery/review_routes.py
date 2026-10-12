@@ -160,7 +160,8 @@ async def photo(
     from dropgrid.db.models import CommunityDiscoveryCandidate as Candidate
 
     candidate = await get_entity(session, Candidate, item.candidate_id)
-    keys = label.snapshot.get("preview_cache_keys", []) if label else candidate.previews
+    snapshot = label.snapshot if label else await review.analysis(session, item, candidate)
+    keys = snapshot.get("preview_cache_keys", [])
     if not 0 <= index < min(12, len(keys)):
         raise NotFoundError("Discovery preview unavailable")
     path = request.app.state.discovery.storage.path(keys[index])

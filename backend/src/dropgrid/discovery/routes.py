@@ -237,15 +237,25 @@ async def photo(candidate_id: UUID, index: int, session: Session, request: Reque
 
 
 async def run_outcomes(session: Session, run_id: UUID) -> dict[str, int]:
-    rows = (
-        await session.scalars(
-            select(Candidate)
-            .join(Evidence, Evidence.candidate_id == Candidate.id)
+    from dropgrid.db.models import CommunityReviewBatchItem, CommunityReviewDecision
+
+    votes = (
+        await session.execute(
+            select(CommunityReviewDecision, CommunityReviewBatchItem.candidate_id)
+            .join(
+                CommunityReviewBatchItem,
+                (CommunityReviewBatchItem.batch_id == CommunityReviewDecision.batch_id)
+                & (CommunityReviewBatchItem.position == CommunityReviewDecision.position),
+            )
+            .join(Evidence, Evidence.candidate_id == CommunityReviewBatchItem.candidate_id)
             .where(Evidence.run_id == run_id)
+            .order_by(CommunityReviewDecision.reviewed_at, CommunityReviewDecision.reviewer_id)
         )
     ).all()
+    latest = {str(candidate_id): decision.decision for decision, candidate_id in votes}
     return {
-        s: sum(c.human_status == s for c in rows) for s in ("approved", "rejected", "uncertain")
+        s: sum(value == s for value in latest.values())
+        for s in ("approved", "rejected", "uncertain")
     }
 
 

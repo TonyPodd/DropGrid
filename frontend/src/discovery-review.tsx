@@ -173,7 +173,7 @@ export function CommunityReviewPage() {
         data.positions.find((p) => p > (item?.position ?? -1)) ??
         data.positions[0] ??
         batch.total;
-      await cursor(next);
+      await cursor(next, "pending");
     } catch (e) {
       setError(errorMessage(e));
     }
