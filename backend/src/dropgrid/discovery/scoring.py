@@ -32,6 +32,20 @@ def topic_match(topic: str, text: str) -> float:
         "bmw": {"bmw", "бмв"},
     }
     words = set(re.findall(r"[\w]+", text))
+    if topic == "тракторы":
+        agriculture = any(
+            w.startswith(("сельхоз", "сельскохозяй", "мтз", "юмз", "комбайн", "кировец"))
+            for w in words
+        )
+        entertainment = (
+            "хк" in words
+            or any(w.startswith(("хокке", "мультф", "мультик")) for w in words)
+            or "синий трактор" in text
+            or "бар" in words
+            or " bar" in text
+        )
+        if entertainment and not agriculture:
+            return 0.0
     if topic in aliases:
         return 1.0 if words & aliases[topic] else 0.0
     tokens = set(re.findall(r"[\w]+", topic)) - {"клуб", "club", "россия"}

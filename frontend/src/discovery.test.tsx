@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
@@ -189,4 +189,11 @@ it("starts one explicit read-only run using structured scope", async () => {
     scope_value: null,
     category: null,
   });
+});
+
+it("hides an evicted cache thumbnail instead of displaying a broken image", async () => {
+  fixture();
+  const image = await screen.findByRole("img", { name: "Фото сообщества 1" });
+  fireEvent.error(image);
+  expect(image).not.toBeVisible();
 });

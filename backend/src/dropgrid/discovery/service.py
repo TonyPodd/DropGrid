@@ -32,7 +32,7 @@ from dropgrid.photos.domain import PhotoError, normalize_category
 from dropgrid.photos.engine import PhotoEngine
 from dropgrid.photos.images import LocalMediaStorage, normalize_image
 from dropgrid.photos.references import VKReferencePolicy, representative_photo
-from dropgrid.photos.regions import BY_KEY, grid_region, region_evidence
+from dropgrid.photos.regions import BY_KEY, grid_region, parse_region, region_evidence
 from dropgrid.photos.visual import VisualEmbedding, serialize_embedding
 from dropgrid.services.catalog import ConflictError, get_entity
 
@@ -689,6 +689,14 @@ async def approve(
         raise ConflictError("Only an analyzed inbox candidate can be explicitly approved")
     if region_key and region_key not in BY_KEY:
         raise ConflictError("Unknown canonical region")
+    parsed_category = parse_region(category)
+    if (
+        parsed_category
+        and parsed_category.region_known
+        and region_key
+        and parsed_category.region_key != region_key
+    ):
+        raise ConflictError("Category and confirmed region disagree")
     if row.reason.get("region_status") == "mismatch":
         raise ConflictError("Candidate conflicts with the regional discovery scope")
     community = await db.scalar(

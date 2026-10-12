@@ -1,0 +1,595 @@
+{
+  "grid_id": "325b7475-0c97-442e-aaee-125d70a73e50",
+  "sample": 25,
+  "mode": "diagnostic_cached_sources_only_no_campaign_preparation",
+  "regional_communities": 44,
+  "unknown_codes": [],
+  "before": {
+    "same_region": 13,
+    "unverified": 10,
+    "mismatch": 2
+  },
+  "after": {
+    "same_region": 15,
+    "unverified": 10
+  },
+  "communities": [
+    {
+      "domain": "avtoamurka28",
+      "community_id": "8b945500-067f-4186-9530-ce09057f62fe",
+      "category": "РЕГИОН 28",
+      "region_key": "amur_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "182abe66-5c02-4786-aef2-409deab90fb1"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-220726439_457244356"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 12,
+      "external_cached_candidates": 80,
+      "ranked": 81
+    },
+    {
+      "domain": "clubastrakhanclassic",
+      "community_id": "fe987aff-10c9-4b1e-901b-9a894d9713a7",
+      "category": "РЕГИОН 30",
+      "region_key": "astrakhan_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "7ced5895-26cb-47ab-9a5a-c42fef1e6f57"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-198505112_457255288"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "gubsueta",
+      "community_id": "d41410eb-764e-4770-b18a-50fe0ea64de1",
+      "category": "РЕГИОН 31",
+      "region_key": "belgorod_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "58cd1aa4-78de-4f26-abbd-c558af32d1d6"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-225853964_457243842"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 11,
+      "external_cached_candidates": 80,
+      "ranked": 80
+    },
+    {
+      "domain": "03buryatia_avto",
+      "community_id": "180063ba-8309-49a0-ac2f-c84765ec5e4e",
+      "category": "РЕГИОН 03",
+      "region_key": "buryatia",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "3518af19-1cbb-4f49-8048-9b45bfb46bfe"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-208872471_457245248"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 36,
+      "external_cached_candidates": 80,
+      "ranked": 105
+    },
+    {
+      "domain": "ark_ivn",
+      "community_id": "2e3cb272-108b-44fb-873d-09aa594ab8a7",
+      "category": "РЕГИОН 37",
+      "region_key": "ivanovo_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "b55a1ae3-29d4-4653-b6cc-ffc8aa068aef"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-219712581_457246407"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 12,
+      "external_cached_candidates": 80,
+      "ranked": 81
+    },
+    {
+      "domain": "operskie_kuzbass",
+      "community_id": "49b715af-df0a-41f1-9e81-f8b4495f4340",
+      "category": "РЕГИОН 42",
+      "region_key": "kemerovo_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "43b6cdab-417b-43e7-b1fc-34199122659c"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-162254683_457266413"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "11pagorady",
+      "community_id": "c3cd4bde-93f0-4e73-af2c-9af3fa3c0206",
+      "category": "РЕГИОН 11",
+      "region_key": "komi",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "6c2851a8-0907-4f75-a3db-09c781338470"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-217030696_457242887"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 24,
+      "external_cached_candidates": 80,
+      "ranked": 93
+    },
+    {
+      "domain": "autosh44",
+      "community_id": "0f046b77-96be-45a4-b6b1-f90d096140e5",
+      "category": "РЕГИОН 44",
+      "region_key": "kostroma_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "96c30697-ea83-484a-8ce0-66975a772f6e"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-161719998_457259943"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "sueta.tuapse323",
+      "community_id": "67dd4de7-f9af-47c7-8e7d-f554ab027785",
+      "category": "РЕГИОН 93",
+      "region_key": "krasnodar_krai",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "46eb4d2f-9267-41b9-97aa-46a150bf4f63"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-33663413_457248848"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "zamecheno46",
+      "community_id": "b470f5ea-8537-4011-8239-253dec907243",
+      "category": "РЕГИОН 46",
+      "region_key": "kursk_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "6a65ebc6-c035-49b3-b901-4fde98d07675"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-161719998_457259943"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "car_lip48",
+      "community_id": "6de7d5ad-b1c6-422b-9539-a4f8d8d71b47",
+      "category": "РЕГИОН 48",
+      "region_key": "lipetsk_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "6d9afd9e-baff-4a36-b7cf-7f0e7afdbc28"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-186057948_457250040"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 41,
+      "external_cached_candidates": 80,
+      "ranked": 108
+    },
+    {
+      "domain": "baraholka_12region",
+      "community_id": "40664489-8f98-4908-9b92-fbca05b24529",
+      "category": "РЕГИОН 12",
+      "region_key": "mari_el",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "37d3df60-da9d-44ea-88e8-6909777afbdf"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-214750783_457244019"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "ministerstvotobolskix",
+      "community_id": "d528215e-4cc7-4fd1-84c9-7f06560b9751",
+      "category": "РЕГИОН 56",
+      "region_key": "orenburg_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "24e9d103-61fc-4339-b8b8-6ccc0e75d9bf"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-85246575_457257095"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 12,
+      "external_cached_candidates": 80,
+      "ranked": 80
+    },
+    {
+      "domain": "illegaltrafficpnz",
+      "community_id": "91fb0dea-53c4-4274-b3ed-16f84283e7b4",
+      "category": "РЕГИОН 58",
+      "region_key": "penza_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "mismatch",
+        "media_asset_id": "ee385132-8b5c-4b60-b70b-b49728561187"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-214477081_457243102"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 11,
+      "external_cached_candidates": 80,
+      "ranked": 79
+    },
+    {
+      "domain": "avtokylturamzk61",
+      "community_id": "9dbb246f-6c95-4e4d-8a52-72fbdc053c68",
+      "category": "РЕГИОН 61",
+      "region_key": "rostov_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "5eecdca1-edec-435c-bc50-5068c4f6379a"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-215676681_457244392"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 22,
+      "external_cached_candidates": 80,
+      "ranked": 91
+    },
+    {
+      "domain": "sasovskie_taksisty",
+      "community_id": "534fe2e6-b542-4a33-a1db-e263c70a35ed",
+      "category": "РЕГИОН 62",
+      "region_key": "ryazan_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "061115db-999e-4dae-b645-cd82f333f7d8"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-33663413_457248848"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "avtosaratovengels064",
+      "community_id": "f41f3d82-ffa3-4645-92ef-9bc92567cae4",
+      "category": "РЕГИОН 64",
+      "region_key": "saratov_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "d5b5f994-28a0-4607-8c88-871b3186c7d9"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-218000072_457245381"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 18,
+      "external_cached_candidates": 80,
+      "ranked": 86
+    },
+    {
+      "domain": "nastile168",
+      "community_id": "e485b272-860c-410f-a8d4-b8d450f33968",
+      "category": "РЕГИОН 68",
+      "region_key": "tambov_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "b0dd7b21-ca7d-4cf8-9fa4-c3a7bf9f6bde"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-161719998_457259943"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "avto_market_kyzyl",
+      "community_id": "a5cbd70b-2626-49b7-be75-0eb1e806248b",
+      "category": "РЕГИОН 17",
+      "region_key": "tuva",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "e646ea18-25ae-4fba-931a-48a3333d5557"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-100491191_457310914"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 11,
+      "external_cached_candidates": 80,
+      "ranked": 79
+    },
+    {
+      "domain": "avto_dimitrovgrad_73",
+      "community_id": "40315160-eb75-4894-a474-9c15659bc480",
+      "category": "РЕГИОН 73",
+      "region_key": "ulyanovsk_oblast",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "d534981c-a415-4c3d-88d9-f0ce8df3b260"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-176981212_457247286"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 12,
+      "external_cached_candidates": 80,
+      "ranked": 81
+    },
+    {
+      "domain": "opera34",
+      "community_id": "265612e5-ec94-4a54-9fdb-eaf0eea4034e",
+      "category": "РЕГИОН 34",
+      "region_key": "volgograd_oblast",
+      "before": {
+        "source": "pixabay",
+        "region_status": "unverified",
+        "media_asset_id": "9598e0dc-1d8a-4fa7-a0b8-a659ff03bcaa"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "vk_category_archive",
+          "-188315499_457250137"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "club188663617",
+      "community_id": "604bb84f-0cee-4c3b-b75e-081f584273b9",
+      "category": "РЕГИОН 35",
+      "region_key": "vologda_oblast",
+      "before": {
+        "source": "pinterest",
+        "region_status": "unverified",
+        "media_asset_id": "9c6ee2c5-0311-41fc-b331-59bc98734029"
+      },
+      "after": {
+        "source": "library",
+        "region_status": "unverified",
+        "identity": [
+          "pinterest",
+          "634585403725156439"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 0,
+      "external_cached_candidates": 80,
+      "ranked": 69
+    },
+    {
+      "domain": "auto_lybiteli_03",
+      "community_id": "85814994-adbf-46fd-928c-f1f8ff44b478",
+      "category": "РЕГИОН 03",
+      "region_key": "buryatia",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "mismatch",
+        "media_asset_id": "bee2d99a-2453-478f-b957-c850c696ee71"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-208872471_457245248"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 43,
+      "external_cached_candidates": 80,
+      "ranked": 112
+    },
+    {
+      "domain": "club215442640",
+      "community_id": "fbe30995-e70a-4e78-94ed-3eb9259c3857",
+      "category": "РЕГИОН 03",
+      "region_key": "buryatia",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "a68b21a0-0328-438b-81fc-afddfe384bd8"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-208872471_457245248"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 37,
+      "external_cached_candidates": 80,
+      "ranked": 106
+    },
+    {
+      "domain": "club223316011",
+      "community_id": "3ba600ac-2f91-4b5d-b7f4-4918e1c2ba75",
+      "category": "РЕГИОН 03",
+      "region_key": "buryatia",
+      "before": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "media_asset_id": "2cbec962-006d-44b3-9664-b59839f160f1"
+      },
+      "after": {
+        "source": "vk_category_archive",
+        "region_status": "same_region",
+        "identity": [
+          "vk_category_archive",
+          "-208872471_457245248"
+        ]
+      },
+      "own_archive_candidates": 0,
+      "same_region_candidates": 41,
+      "external_cached_candidates": 80,
+      "ranked": 110
+    }
+  ],
+  "vk_calls": 0,
+  "campaign_assignments_changed": 0
+}

@@ -512,6 +512,9 @@ export function DiscoveryPage() {
                   src={imageUrl(p)}
                   alt={`Фото сообщества ${i + 1}`}
                   loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.hidden = true;
+                  }}
                 />
               ))}
             </div>

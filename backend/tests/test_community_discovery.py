@@ -77,6 +77,11 @@ def test_deterministic_evidence_and_activity_lower_bounds():
     assert multi[0] > one[0] and multi[1] > one[1]
     assert topic_match("BMW E60", "БМВ Е60 клуб") == 1
     assert topic_match("BMW E60", "BMW E39 клуб") == 0
+    assert topic_match("тракторы", "Хоккейный клуб Трактор") == 0
+    assert topic_match("тракторы", "ХК Трактор Челябинск") == 0
+    assert topic_match("тракторы", "Синий трактор детский мультфильм") == 0
+    assert topic_match("тракторы", "Трактор x Bla Bla Bar Челябинск") == 0
+    assert topic_match("тракторы", "Синий трактор МТЗ 80 сельхоз техника") == 1
     vector = VisualEmbedding("fixture", 3, (1, 0, 0))
     other = VisualEmbedding("fixture", 3, (0, 1, 0))
     assert centroid([vector, vector]) == vector
@@ -255,6 +260,15 @@ async def test_durable_restart_dedup_sticky_rejection_region_filter_and_manual_a
             assert good.status == "rejected"
             good.status = "new"  # explicit operator restoration, not an automatic retry
             before = await db.scalar(select(func.count()).select_from(Submission))
+            with pytest.raises(ConflictError):
+                await approve(
+                    db,
+                    cid,
+                    category="54 регион",
+                    region_key="krasnoyarsk_krai",
+                    content_hint=None,
+                    reviewer_id=rid,
+                )
             result = await approve(
                 db,
                 cid,
