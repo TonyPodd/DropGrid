@@ -236,6 +236,11 @@ async def test_durable_restart_dedup_sticky_rejection_region_filter_and_manual_a
             row.state = "running"
             row.lease_token = uuid4()
             row.lease_until = utcnow() - timedelta(seconds=1)
+            stale = await db.scalar(select(Candidate).where(Candidate.vk_group_id == 201))
+            stale.visual_score = 0.99
+            stale.visual_centroid = b"stale-embedding"
+            stale.previews = ["/stale-preview"]
+            stale.reason = {**stale.reason, "confidence": "high", "photos_analyzed": 8}
         resumed = Discovery(sessions, service.client, Tokens(), service.engine)
         for _ in range(6):
             await resumed.tick()
@@ -247,6 +252,9 @@ async def test_durable_restart_dedup_sticky_rejection_region_filter_and_manual_a
             good, wrong = candidates[1:]
             assert good.analysis_state == "ready" and good.reason["region_status"] == "same_region"
             assert wrong.status == "unavailable" and wrong.reason["filter"] == "region_mismatch"
+            assert wrong.visual_score is None and wrong.visual_centroid is None
+            assert wrong.previews == [] and "photos_analyzed" not in wrong.reason
+            assert "confidence" not in wrong.reason and row.counters["visually_analyzed"] == 0
             assert len(good.found_by_queries) == 3 and good.graph_score > 0
             good.status = "rejected"
             good.classification = "previously_rejected"

@@ -416,13 +416,22 @@ class Discovery:
             matched = [q for q in run.queries if q["query"] in evidence.queries]
             targets = {str(q["region_key"]) for q in matched if q.get("region_key")}
             reason = {
-                **candidate.reason,
                 "topic": matched[0]["topic"],
                 "target_region_key": next(iter(targets)) if len(targets) == 1 else None,
                 "matched_region_keys": sorted(targets),
             }
             query_count = len(evidence.queries)
             current_seed_ids = evidence.seed_community_ids
+        # A canonical candidate can be rediscovered after its topic/region changed.
+        # Previous visual evidence must not consume this run's budget or survive filtering.
+        candidate.visual_score = None
+        candidate.visual_centroid = None
+        candidate.visual_model = None
+        candidate.visual_dimensions = None
+        candidate.previews = []
+        candidate.activity_score = 0.0
+        candidate.final_score = 0.0
+        candidate.graph_score = 0.0
         try:
             group = await self.client.describe_community(
                 candidate.vk_group_id, access_token=token, account_id=account

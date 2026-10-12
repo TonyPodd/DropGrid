@@ -95,19 +95,22 @@ Deterministic top 20 (final score, VK id tie-break; regional matches before unkn
 19. [BMW 5 ФОРУМ E39 E60 F10](https://vk.com/bmw5seriese39) — 0.667, needs_review, dead; photos 0.
 20. [БМВ е60 клуб Алматы BMW E60 Bros KZ](https://vk.com/e60club_almaty) — 0.667, needs_review, dead; photos 0.
 
-### tractors
+### tractors — corrected read-only retest
 
-Run: `17e83a84-5428-4fe0-94d7-684b847d72f2`
+Run: `cdb98a5e-58ef-464f-b781-2606415397a4`
 
 Queries: тракторы · сельхоз техника · кировец
 
-Raw 90; admitted unique 30; new 23; already in Grid 0; filtered 7; visually analyzed 19; high confidence 17; needs review 6.
-Duplicates 3; bounded out 57; region mismatches 0; active 20; dead 3; distinct-query support 3.
-Visual score distribution: {'count': 19, 'min': 0.5228297638942202, 'max': 0.9469425489532671, 'median': 0.899956920830877}. Duration 168.7s.
+Raw 90; admitted unique 30; new 16; already in Grid 0; filtered 14; high confidence 11; needs review 5.
+Duplicate hits 33 include canonical candidates rediscovered from the first tractor run; bounded out 57; region mismatches 0.
+Eligible candidates with visual evidence: 12; visual score distribution: {'count': 12, 'min': 0.8245607873318732, 'max': 0.9469425489532671, 'median': 0.9282371681072256}. Duration 129.6s.
 
-[Open this pilot inbox](https://45.147.177.46/discovery?grid=325b7475-0c97-442e-aaee-125d70a73e50&run=17e83a84-5428-4fe0-94d7-684b847d72f2)
+The initial run `17e83a84-5428-4fe0-94d7-684b847d72f2` admitted 23 new / 17 high-confidence candidates, including seven obvious hockey/cartoon/bar homonyms. An explicit topic prefilter was added and this one read-only retest confirmed that all seven are excluded. No human rejection/approval was fabricated.
+The stored retest counter `visually_analyzed=19` included seven previous embeddings on subsequently filtered candidates; only 12 eligible candidates have visual evidence. Historical activity counters likewise include retained evidence. Regression coverage now resets prior analysis before each new analysis so future filtering cannot consume the current visual budget or retain stale confidence/previews. No further live searches were run.
 
-Deterministic top 20 (final score, VK id tie-break; regional matches before unknown):
+[Open corrected pilot inbox](https://45.147.177.46/discovery?grid=325b7475-0c97-442e-aaee-125d70a73e50&run=cdb98a5e-58ef-464f-b781-2606415397a4)
+
+Deterministic top 16 eligible candidates:
 
 1. [Трактора, Сельхоз Техника](https://vk.com/club217882053) — 0.917, high, active; photos 8.
 2. [Тракторная Барахолка Крым](https://vk.com/public.traktorazborka.gvardiy) — 0.913, high, active; photos 8.
@@ -122,13 +125,11 @@ Deterministic top 20 (final score, VK id tie-break; regional matches before unkn
 11. [Продажа тракторов бу МТЗ 80, 82,  продам куплю](https://vk.com/automagnitki) — 0.857, needs_review, active; photos 0.
 12. [Грузовики Вездеходы Тракторы](https://vk.com/clubvezdechod) — 0.856, high, active; photos 8.
 13. [АРТЕХНИКА | Тракторы и экскаваторы](https://vk.com/artehnika) — 0.847, needs_review, active; photos 6.
-14. [Хоккейный клуб «Трактор»](https://vk.com/traktor_chelyabinsk) — 0.768, high, active; photos 8.
-15. [ХК  "ТРАКТОР" TankograD!](https://vk.com/hc_club_traktor_tankograd) — 0.766, high, active; photos 8.
-16. [ХК Трактор](https://vk.com/hctraktor) — 0.766, high, active; photos 8.
-17. [СИНИЙ ТРАКТОР](https://vk.com/bluetractor) — 0.761, high, active; photos 8.
-18. [ХК "Трактор" и не только...](https://vk.com/hc_traktor_chelyaba) — 0.760, high, active; photos 8.
-19. [ТРАКТОР x Bla Bla Bar Челябинск](https://vk.com/blablabar_che) — 0.758, needs_review, active; photos 3.
-20. [ХК "Трактор" Челябинск (unofficial)](https://vk.com/hc_traktor_tankograd) — 0.757, high, active; photos 8.
+14. [самодельные тракторы](https://vk.com/club11489848) — 0.571, needs_review, dead; photos 0.
+15. [Трактор ЮМЗ](https://vk.com/tractor_umz) — 0.571, needs_review, dead; photos 0.
+16. [Разбор тракторов. Запчасти. Уфа-Булгаково](https://vk.com/razbor.tractor) — 0.571, needs_review, dead; photos 0.
+
+Inbox after all pilots: new 66, recommended 40, needs review 26, rejected 0, added 0. These are machine suggestions, not human precision estimates. Six fresh corrected-pilot previews were accessible over authenticated HTTPS to both Tony and Tima.
 
 ## Preservation and resources
 
