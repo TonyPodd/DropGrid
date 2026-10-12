@@ -1,0 +1,116 @@
+.discovery-page {
+  min-width: 0;
+}
+.discovery-controls,
+.discovery-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 18px 0;
+}
+.discovery-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  min-width: 150px;
+  flex: 1 1 180px;
+}
+.discovery-controls select {
+  max-width: 100%;
+  width: 100%;
+}
+.discovery-counts {
+  align-items: center;
+  font-size: 14px;
+}
+.discovery-progress {
+  padding: 16px;
+  border: 1px solid #dbe4e9;
+  border-radius: 12px;
+}
+.discovery-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  gap: 18px;
+}
+.discovery-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid #dbe4e9;
+  border-radius: 14px;
+  background: white;
+}
+.discovery-card h2 {
+  font-size: 19px;
+  margin: 0 0 8px;
+}
+.discovery-card p,
+.discovery-card a {
+  overflow-wrap: anywhere;
+}
+.discovery-card header span {
+  font-size: 13px;
+  color: #52636d;
+}
+.discovery-thumbnails {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 12px 0;
+}
+.discovery-thumbnails img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.discovery-card dl div {
+  display: flex;
+  justify-content: space-between;
+}
+.discovery-card footer,
+.discovery-modal footer,
+.discovery-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+}
+.discovery-page pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.discovery-modal {
+  position: fixed;
+  inset: 0;
+  background: #15202c88;
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 16px;
+}
+.discovery-modal section {
+  background: white;
+  border-radius: 16px;
+  padding: 24px;
+  width: min(560px, 100%);
+  max-height: 90dvh;
+  overflow: auto;
+}
+.discovery-modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 15px 0;
+}
+@media (max-width: 600px) {
+  .discovery-card {
+    padding: 14px;
+  }
+  .discovery-modal section {
+    padding: 16px;
+  }
+}

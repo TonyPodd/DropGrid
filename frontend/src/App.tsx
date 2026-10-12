@@ -15,6 +15,7 @@ const VkAuthHelper =
   import.meta.env.VITE_ENABLE_VK_AUTH_HELPER === "true"
     ? lazy(() => import("./dev/VkAuthHelper"))
     : null;
+import { DiscoveryPage } from "./discovery";
 import { PhotoValidationPage } from "./validation";
 export function App() {
   const location = useLocation();
@@ -41,6 +42,7 @@ export function App() {
             <NavLink to="/communities">Communities</NavLink>
             <NavLink to="/accounts">Accounts</NavLink>
             <NavLink to="/media">Media</NavLink>
+            <NavLink to="/discovery">Discovery</NavLink>
             <NavLink to="/activity">Activity Center</NavLink>
           </nav>
           <p className="sidebar-note">
@@ -66,6 +68,7 @@ export function App() {
                   }
                 />
               ))}
+            <Route path="/discovery" element={<DiscoveryPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/" element={<DashboardPage />} />
             <Route path="/grids" element={<GridsPage />} />
