@@ -305,7 +305,9 @@ async def photo_review(campaign_id: UUID, session: Session, page: int = 1) -> di
 
 @router.put("/submissions/{submission_id}/photo-choice")
 async def set_choice(submission_id: UUID, data: ChoiceInput, session: Session) -> dict[str, object]:
-    selection = await choose(session, submission_id, data.rank, data.rating, data.shown_ranks)
+    selection = await choose(
+        session, submission_id, data.rank, data.rating, data.shown_ranks, revise_dislike=True
+    )
     if data.rating == "dislike":
         # A disliked photo cannot be approved: propose the next usable alternative.
         await next_alternative(session, selection, data.rank)

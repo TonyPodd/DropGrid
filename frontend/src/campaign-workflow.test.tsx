@@ -350,7 +350,9 @@ it("never offers to approve a photo the operator disliked", async () => {
   await userEvent.click(
     screen.getByRole("button", { name: "Заменить / альтернативы" }),
   );
-  expect(screen.getByRole("button", { name: "Отмечено 👎" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Выбрать (снять 👎)" }),
+  ).toBeEnabled();
   expect(
     screen.getByRole("button", { name: "Выбрать это фото" }),
   ).toBeEnabled();

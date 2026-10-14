@@ -190,6 +190,7 @@ async def action(
                 "dislike" if data.action == "dislike" else None,
                 data.shown_ranks,
                 allow_confirmed=True,
+                revise_dislike=data.action == "select",
             )
             if data.action == "dislike":
                 next_rank = await next_alternative(session, selection, data.rank)

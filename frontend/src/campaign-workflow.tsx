@@ -518,8 +518,9 @@ export function CampaignWorkflow({
                       {chosen?.operator_rating === "dislike" &&
                         !row.confirmed && (
                           <p className="short-error">
-                            Вы поставили 👎 этому фото, его нельзя подтвердить.
-                            Выберите другое в «Заменить / альтернативы».
+                            Вы поставили 👎 этому фото. Выберите другое в
+                            «Заменить / альтернативы» или выберите это снова,
+                            чтобы снять 👎.
                           </p>
                         )}
                       {!row.confirmed && campaign.status === "ready" && (
@@ -596,9 +597,7 @@ export function CampaignWorkflow({
                               </figcaption>
                               <button
                                 aria-pressed={c.rank === row.proposed_rank}
-                                disabled={
-                                  busy || c.operator_rating === "dislike"
-                                }
+                                disabled={busy}
                                 onClick={() =>
                                   void action(
                                     `/submissions/${row.submission_id}/photo-choice`,
@@ -613,7 +612,7 @@ export function CampaignWorkflow({
                                 }
                               >
                                 {c.operator_rating === "dislike"
-                                  ? "Отмечено 👎"
+                                  ? "Выбрать (снять 👎)"
                                   : "Выбрать это фото"}
                               </button>
                             </figure>
