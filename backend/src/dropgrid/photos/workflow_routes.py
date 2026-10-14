@@ -57,6 +57,8 @@ async def retry_failed(campaign_id: UUID, session: Session, request: Request) ->
 
 class WorkflowInput(Input):
     account_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
+    # Girl accounts for dating/selfie publics; they must also be in account_ids.
+    persona_account_ids: list[UUID] | None = Field(default=None, max_length=200)
 
 
 class ChoiceInput(Input):
@@ -69,7 +71,13 @@ class ChoiceInput(Input):
 async def prepare_workflow(
     campaign_id: UUID, data: WorkflowInput, session: Session, request: Request
 ) -> dict[str, object]:
-    job = await enqueue(session, campaign_id, request.app.state.photo_engine, data.account_ids)
+    job = await enqueue(
+        session,
+        campaign_id,
+        request.app.state.photo_engine,
+        data.account_ids,
+        persona_ids=data.persona_account_ids,
+    )
     return {
         "id": job.id,
         "state": job.state,

@@ -21,6 +21,7 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.domain.enums import SubmissionStatus
+from dropgrid.domain.personas import PERSONA_PROVIDER
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoQueryPlan
 from dropgrid.photos.learning import latest_model, predict, queue_training, valid_model
@@ -402,7 +403,9 @@ async def _confirm(
                 != candidate.features["context_desired_content"]
             ):
                 raise ConflictError("Photo context changed; prepare again")
-        if row.media_asset_id != asset.id:
+        # A girl's own photos are meant for many dating/selfie publics: no library limits.
+        personal = asset.provider == PERSONA_PROVIDER
+        if row.media_asset_id != asset.id and not personal:
             reused = (
                 await session.scalar(
                     select(func.count())
@@ -421,7 +424,7 @@ async def _confirm(
         from dropgrid.photos.rotation import community_usage, recently_used
 
         usage = await community_usage(session, row.community_id, utcnow())
-        if recently_used(
+        if not personal and recently_used(
             usage,
             asset.provider or "library",
             asset.provider_asset_id or str(asset.id),

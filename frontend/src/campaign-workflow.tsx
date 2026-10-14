@@ -9,6 +9,8 @@ import {
 import { accountsApi } from "./api/accounts";
 import type { Campaign } from "./api/types";
 import { genderLabel, useLoad, State, Pager } from "./shared";
+import { personaApi } from "./api/persona";
+import { PersonaSetup, personaReady, type PhotoCounts } from "./persona";
 type Job = {
   state: string;
   stage: string;
@@ -105,6 +107,14 @@ export function CampaignWorkflow({
       >(`/campaigns/${campaign.id}/account-pool`, { signal }),
     [campaign.id, revision],
   );
+  const persona = useLoad(
+    (signal) => personaApi.campaign(campaign.id, signal),
+    [campaign.id],
+  );
+  const [girlIds, setGirlIds] = useState<string[] | null>(null);
+  const [girlPhotos, setGirlPhotos] = useState<Record<string, PhotoCounts>>(
+    {},
+  );
   const job = useLoad(
     (signal) =>
       request<Job | null>(`/campaigns/${campaign.id}/preparation-workflow`, {
@@ -159,6 +169,26 @@ export function CampaignWorkflow({
       )
       .map((a) => a.id) ??
     [];
+  const usable =
+    accounts.data?.filter(
+      (a) => a.status === "active" && a.token_configured && a.vk_user_id,
+    ) ?? [];
+  const girls =
+    girlIds ?? persona.data?.accounts?.map((a) => a.account_id) ?? [];
+  const photoCounts: Record<string, PhotoCounts> = {
+    ...Object.fromEntries(
+      persona.data?.accounts?.map((a) => [
+        a.account_id,
+        { selfie: a.selfies, other: a.others },
+      ]) ?? [],
+    ),
+    ...girlPhotos,
+  };
+  const dating = !!persona.data?.targets;
+  // Girl accounts lead the queue: their dating/selfie publics, then the rest.
+  const queue = dating
+    ? [...girls, ...selected.filter((id) => !girls.includes(id))]
+    : selected;
   const previousActive = useRef(false);
   const active = job.data && ["queued", "running"].includes(job.data.state);
   useEffect(() => {
@@ -322,12 +352,29 @@ export function CampaignWorkflow({
                   </label>
                 ))}
             </State>
+            {dating && persona.data && (
+              <PersonaSetup
+                summary={persona.data}
+                accounts={usable}
+                girls={girls}
+                photos={photoCounts}
+                onGirls={setGirlIds}
+                onAccountsChanged={accounts.reload}
+                onPhotos={(id, n) =>
+                  setGirlPhotos((current) => ({ ...current, [id]: n }))
+                }
+              />
+            )}
             <button
               className="primary"
-              disabled={!selected.length}
+              disabled={
+                !queue.length ||
+                !personaReady(persona.data, usable, girls, photoCounts)
+              }
               onClick={() =>
                 void action(`/campaigns/${campaign.id}/prepare-workflow`, {
-                  account_ids: selected,
+                  account_ids: queue,
+                  ...(dating ? { persona_account_ids: girls } : {}),
                 })
               }
             >

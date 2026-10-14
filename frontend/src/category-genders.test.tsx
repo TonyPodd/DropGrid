@@ -51,7 +51,9 @@ function mock(data = distribution) {
       updated_at: "2026-10-11T10:00:00Z",
       categories: data.categories.map((row) => ({
         ...row,
-        gender: items.find((item) => item.category === row.category)!.gender,
+        gender:
+          items.find((item) => item.category === row.category)?.gender ??
+          row.gender,
       })),
     }));
 }
@@ -179,4 +181,42 @@ it("uses Russian plural forms for counts", () => {
     "категорий",
     "категорий",
   ]);
+});
+
+it("keeps dating/selfie categories out of the gender columns", async () => {
+  const save = mock({
+    ...distribution,
+    categories: [
+      { category: "АВТО", count: 12, gender: null, suggested_gender: null },
+      {
+        category: "ЗНАКОМСТВА",
+        count: 140,
+        gender: null,
+        suggested_gender: null,
+        persona: true,
+      },
+    ],
+  });
+  renderPage();
+  expect(
+    await screen.findByText(/Знакомства и селфи — фото девочки/),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/ЗНАКОМСТВА \(140\)/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /ЗНАКОМСТВА/ }),
+  ).not.toBeInTheDocument();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /АВТО/ }));
+  await user.click(
+    screen.getByRole("button", { name: "Добавить выбранные в «Мужские»" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Сохранить распределение" }),
+  );
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledExactlyOnceWith("g1", [
+      { category: "АВТО", gender: "male" },
+    ]),
+  );
+  expect(await screen.findByText(/Распределение сохранено/)).toBeInTheDocument();
 });

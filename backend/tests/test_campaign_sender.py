@@ -146,6 +146,8 @@ def mock(
     writes=True,
     allowlist=frozenset(),
     user_owned_upload=False,
+    suggestions=(),
+    delete_error=None,
 ):
     seen = []
     photo = {"owner_id": -GROUP, "id": 100}
@@ -171,7 +173,16 @@ def mock(
             await hook(method, params)
         if method == error:
             raise httpx.ReadTimeout("secret upstream URL", request=request)
-        if method == "photos.getWallUploadServer":
+        if method == "wall.get":
+            assert params["filter"] == ["suggests"]
+            owner = int(params["owner_id"][0])
+            items = [p for p in suggestions if p["owner_id"] == owner]
+            result = {"count": len(items), "items": items}
+        elif method == "wall.delete":
+            if delete_error:
+                return httpx.Response(200, json={"error": {"error_code": delete_error}})
+            result = 1
+        elif method == "photos.getWallUploadServer":
             photo["owner_id"] = USER if user_owned_upload else -int(params["group_id"][0])
             photo["id"] += 1
             result = {
@@ -230,6 +241,7 @@ async def test_success_and_repeated_ticks_are_idempotent(sessions, tmp_path):
     for _ in range(3):
         assert not await sender.tick(ids[0])
     assert [m for m, _ in seen] == [
+        "wall.get",
         "photos.getWallUploadServer",
         "multipart",
         "photos.saveWallPhoto",
@@ -681,3 +693,103 @@ async def test_vk_copies_user_owned_upload_to_canonical_group_photo(sessions, tm
     assert row.vk_send_receipt_post_id == row.vk_suggested_post_id == 42
     assert [method for method, _ in seen].count("wall.post") == 1
     assert (await get(sessions, data[2], MediaAsset)).usage_count == 1
+
+
+def stale_suggestion(post_id, days_ago, from_id=USER, post_type="suggest", owner=-GROUP):
+    date = int((utcnow() - timedelta(days=days_ago)).timestamp())
+    return {
+        "id": post_id,
+        "owner_id": owner,
+        "from_id": from_id,
+        "date": date,
+        "post_type": post_type,
+    }
+
+
+async def tracked_old_suggestion(sessions, data, post_id):
+    """A suggestion from an earlier campaign that is still on moderation."""
+    cid, aid, _, ids, _ = data
+    async with sessions() as s, s.begin():
+        current = await s.get(Campaign, cid)
+        target = await s.get(Submission, ids[0])
+        old = Campaign(
+            name="Earlier",
+            grid_id=current.grid_id,
+            track_url=current.track_url,
+            status=CampaignStatus.monitoring,
+        )
+        s.add(old)
+        await s.flush()
+        row = Submission(
+            campaign_id=old.id,
+            community_id=target.community_id,
+            account_id=aid,
+            status=SubmissionStatus.submitted,
+            vk_suggested_post_id=post_id,
+            vk_suggested_at=utcnow() - timedelta(days=6),
+            vk_next_check_at=utcnow(),
+        )
+        s.add(row)
+        await s.flush()
+        return row.id
+
+
+async def test_stale_own_suggestions_are_deleted_before_a_new_one(sessions, tmp_path):
+    data = await seed(sessions, tmp_path)
+    await start(sessions, data)
+    tracked = await tracked_old_suggestion(sessions, data, 7)
+    sender, seen, _ = mock(
+        sessions,
+        data[4],
+        suggestions=[
+            stale_suggestion(7, 6),
+            stale_suggestion(8, 1),
+            stale_suggestion(9, 6, from_id=USER + 1),
+            stale_suggestion(10, 6, post_type="post"),
+        ],
+    )
+    assert await sender.tick(data[3][0])
+    assert [m for m, _ in seen][:3] == ["wall.get", "wall.delete", "photos.getWallUploadServer"]
+    deletes = [params for method, params in seen if method == "wall.delete"]
+    assert deletes == [
+        {
+            "owner_id": [str(-GROUP)],
+            "post_id": ["7"],
+            "access_token": deletes[0]["access_token"],
+            "v": deletes[0]["v"],
+        }
+    ]
+    assert [m for m, _ in seen].count("wall.post") == 1
+    old = await get(sessions, tracked)
+    assert old.status == SubmissionStatus.not_found and old.error_code == "suggestion_withdrawn"
+    assert old.vk_next_check_at is None
+    assert (await get(sessions, data[3][0])).status == SubmissionStatus.submitted
+
+
+@pytest.mark.parametrize("failure", ["lookup", "delete"])
+async def test_failed_cleanup_never_blocks_the_new_suggestion(sessions, tmp_path, failure):
+    data = await seed(sessions, tmp_path)
+    await start(sessions, data)
+    tracked = await tracked_old_suggestion(sessions, data, 7)
+    sender, seen, _ = mock(
+        sessions,
+        data[4],
+        suggestions=[stale_suggestion(7, 6)],
+        error="wall.get" if failure == "lookup" else None,
+        delete_error=15 if failure == "delete" else None,
+    )
+    assert await sender.tick(data[3][0])
+    methods = [m for m, _ in seen]
+    assert methods.count("wall.delete") == (failure == "delete")
+    assert methods.count("wall.post") == 1
+    assert (await get(sessions, data[3][0])).status == SubmissionStatus.submitted
+    assert (await get(sessions, tracked)).status == SubmissionStatus.submitted
+
+
+async def test_cleanup_respects_the_configured_age(sessions, tmp_path, monkeypatch):
+    data = await seed(sessions, tmp_path)
+    await start(sessions, data)
+    sender, seen, _ = mock(sessions, data[4], suggestions=[stale_suggestion(7, 6)])
+    monkeypatch.setattr(sender.client.settings, "vk_stale_suggestion_days", 7)
+    assert await sender.tick(data[3][0])
+    assert "wall.delete" not in [m for m, _ in seen]

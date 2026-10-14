@@ -1,20 +1,28 @@
 """Deterministic campaign capacity planning. No network calls or write retries."""
 
 from collections import Counter, deque
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dropgrid.config import Settings
-from dropgrid.db.models import Account, Campaign, CampaignAccount, Community, Submission
+from dropgrid.db.models import (
+    Account,
+    AccountPersonaPhoto,
+    Campaign,
+    CampaignAccount,
+    Community,
+    Submission,
+)
 from dropgrid.domain.enums import AccountStatus, CategoryGender, GenderTag
 from dropgrid.services.catalog import ConflictError, get_entity
 from dropgrid.services.category_genders import UNPLACED, Placement
 
 GENDERED = {GenderTag.male, GenderTag.female}
 CATEGORY_UNASSIGNED = "category_gender_unassigned"
+PERSONA_ACCOUNT_MISSING = "persona_account_missing"
 
 
 def required_gender(community: Community, placement: Placement | None = None) -> GenderTag | None:
@@ -34,26 +42,20 @@ def distribute(
     rows: list[tuple[Submission, Community]],
     accounts: list[tuple[Account, int, int]],
     placements: Mapping[UUID, Placement],
+    persona: Collection[UUID] = frozenset(),
+    pinned: Mapping[UUID, UUID] | None = None,
 ) -> tuple[dict[UUID, UUID], dict[UUID, str]]:
     """Fill accounts one at a time in pool order: own-gender categories, then unisex.
 
-    The next account only receives what earlier accounts could not take. Insertion
-    order of the returned allocation is the campaign send order.
+    Girl (persona) accounts first take the dating/selfie publics, which no other
+    account may send. A public already holding one girl's photo (`pinned`: row →
+    account) stays with her. The next account only receives what earlier accounts
+    could not take. Insertion order of the returned allocation is the send order.
     """
     assigned: dict[UUID, UUID] = {}
     reasons: dict[UUID, str] = {}
     queues: dict[GenderTag | None, deque[UUID]] = {g: deque() for g in (*GENDERED, None)}
-
-    def order(row: tuple[Submission, Community]) -> tuple[bool, str, str, str]:
-        category = placements.get(row[1].id, UNPLACED).category
-        return category is None, category or "", row[1].domain, str(row[0].id)
-
-    for row, community in sorted(rows, key=order):
-        placement = placements.get(community.id, UNPLACED)
-        if placement.gender is None and community.required_gender_tag not in GENDERED:
-            reasons[row.id] = CATEGORY_UNASSIGNED
-            continue
-        queues[required_gender(community, placement)].append(row.id)
+    personal: deque[UUID] = deque()
     usable = sorted(
         (
             (a, quota, priority)
@@ -62,10 +64,32 @@ def distribute(
         ),
         key=lambda item: (item[2], str(item[0].id)),
     )
+    girls = {a.id for a, _, _ in usable if a.id in persona}
+    hers: dict[UUID, deque[UUID]] = {girl: deque() for girl in girls}
+
+    def order(row: tuple[Submission, Community]) -> tuple[bool, str, str, str]:
+        category = placements.get(row[1].id, UNPLACED).category
+        return category is None, category or "", row[1].domain, str(row[0].id)
+
+    for row, community in sorted(rows, key=order):
+        placement = placements.get(community.id, UNPLACED)
+        if placement.persona:
+            owner = (pinned or {}).get(row.id)
+            (hers[owner] if owner in hers else personal).append(row.id)
+            continue
+        if placement.gender is None and community.required_gender_tag not in GENDERED:
+            reasons[row.id] = CATEGORY_UNASSIGNED
+            continue
+        queues[required_gender(community, placement)].append(row.id)
     counts: Counter[UUID] = Counter()
     for account, quota, _ in usable:
         own = queues[account.gender_tag] if account.gender_tag in GENDERED else deque()
-        for queue in (own, queues[None]):
+        lanes = (
+            (hers[account.id], personal, own, queues[None])
+            if account.id in girls
+            else (own, queues[None])
+        )
+        for queue in lanes:
             while queue and counts[account.id] < quota:
                 assigned[queue.popleft()] = account.id
                 counts[account.id] += 1
@@ -75,7 +99,47 @@ def distribute(
             reasons[row_id] = (
                 "account_capacity_exhausted" if possible else "account_gender_mismatch"
             )
+    for row_id in [*personal, *(row for queue in hers.values() for row in queue)]:
+        reasons[row_id] = "account_capacity_exhausted" if girls else PERSONA_ACCOUNT_MISSING
     return assigned, reasons
+
+
+async def persona_pins(
+    session: AsyncSession, rows: list[Submission], girls: Collection[UUID]
+) -> dict[UUID, UUID]:
+    """Row → girl account whose own photo the row already carries."""
+    assets = {row.media_asset_id for row in rows if row.media_asset_id}
+    if not assets or not girls:
+        return {}
+    owners: dict[UUID, UUID] = {}
+    for account_id, asset_id in (
+        await session.execute(
+            select(AccountPersonaPhoto.account_id, AccountPersonaPhoto.media_asset_id)
+            .where(
+                AccountPersonaPhoto.media_asset_id.in_(assets),
+                AccountPersonaPhoto.account_id.in_(girls),
+            )
+            .order_by(AccountPersonaPhoto.account_id)
+        )
+    ).tuples():
+        owners.setdefault(asset_id, account_id)
+    return {
+        row.id: owners[row.media_asset_id]
+        for row in rows
+        if row.media_asset_id and row.media_asset_id in owners
+    }
+
+
+async def persona_accounts(session: AsyncSession, campaign_id: UUID) -> set[UUID]:
+    return set(
+        await session.scalars(
+            select(CampaignAccount.account_id).where(
+                CampaignAccount.campaign_id == campaign_id,
+                CampaignAccount.enabled.is_(True),
+                CampaignAccount.persona.is_(True),
+            )
+        )
+    )
 
 
 async def pool(
@@ -118,8 +182,13 @@ async def pool(
 
 
 async def save_pool(
-    session: AsyncSession, campaign_id: UUID, ids: list[UUID], settings: Settings
+    session: AsyncSession,
+    campaign_id: UUID,
+    ids: list[UUID],
+    settings: Settings,
+    persona: Collection[UUID] | None = None,
 ) -> None:
+    """Persist the pool in send order. Girl flags are kept unless `persona` is given."""
     campaign = await session.scalar(
         select(Campaign).where(Campaign.id == campaign_id).with_for_update()
     )
@@ -128,12 +197,15 @@ async def save_pool(
         raise AssertionError("unreachable")
     if campaign.status.value not in {"draft", "ready"}:
         raise ConflictError("Account pool cannot change after sending starts")
+    if persona is not None and set(persona) - set(ids):
+        raise ConflictError("Girl accounts must be part of the account pool")
     accounts = await pool(session, campaign_id, settings, ids)
     old = (
         await session.scalars(
             select(CampaignAccount).where(CampaignAccount.campaign_id == campaign_id)
         )
     ).all()
+    girls = {m.account_id for m in old if m.enabled and m.persona} if persona is None else persona
     for old_membership in old:
         old_membership.enabled = False
     for account, quota, order in accounts:
@@ -142,4 +214,5 @@ async def save_pool(
             membership = CampaignAccount(campaign_id=campaign_id, account_id=account.id)
             session.add(membership)
         membership.enabled, membership.max_submissions, membership.priority = True, quota, order
+        membership.persona = account.id in girls
     await session.flush()

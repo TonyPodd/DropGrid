@@ -56,6 +56,7 @@ export const sourceNames: Record<string, string> = {
   vk_archive: "VK · архив группы",
   library: "Библиотека",
   pixabay: "Pixabay",
+  persona: "Фото девочки",
 };
 export function imageUrl(path: string | null) {
   return path

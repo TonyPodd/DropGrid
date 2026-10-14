@@ -33,10 +33,10 @@ from dropgrid.services.catalog import ConflictError
 pytestmark = pytest.mark.integration
 
 
-async def test_sensitive_provider_is_not_searched(sessions, tmp_path):
+async def test_dating_categories_never_reach_photo_providers(sessions, tmp_path):
+    # Dating/selfie publics only ever get the girl account's own photos.
     cid = await prepared(sessions, count=1, category="ЗНАКОМСТВА")
     provider = FakePhotoProvider((candidate(),))
-    provider.supports_sensitive_context = False
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: pytest.fail("No download"))
     ) as client:
@@ -44,7 +44,7 @@ async def test_sensitive_provider_is_not_searched(sessions, tmp_path):
             cid, MediaPlanInput()
         )
     assert report.unassigned == 1 and not provider.calls
-    assert "provider_context_restricted" in report.categories[0].warnings
+    assert report.categories == [] and report.persona_assigned == 0
 
 
 async def test_force_preserves_nonpending_history(sessions, tmp_path):

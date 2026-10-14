@@ -11,6 +11,11 @@ CODES = frozenset(
         "photo_reuse_limit",
         "photo_recently_used",
         "photo_unavailable",
+        # A girl's photo belongs to one account (VK token) only.
+        "persona_photo_taken",
+        "persona_photo_duplicate",
+        "persona_photo_in_library",
+        "persona_photo_limit",
     }
 )
 

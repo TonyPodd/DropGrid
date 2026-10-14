@@ -53,6 +53,8 @@ export type CategoryGender = "male" | "female" | "unisex";
 export type CategoryGenderRow = CategoryCount & {
   gender: CategoryGender | null;
   suggested_gender: CategoryGender | null;
+  /** Dating/selfie: sent from the campaign's girl accounts, no column. */
+  persona?: boolean;
 };
 export type GridCategoryGenders = {
   grid_id: string;
@@ -171,6 +173,10 @@ export type CampaignPreflight = {
   capacity_unassigned?: number;
   category_unassigned?: number;
   unassigned_categories?: (string | null)[];
+  persona_targets?: number;
+  persona_account_missing?: number;
+  persona_photo_mismatch?: number;
+  persona_photos_incomplete?: number;
   review_pending?: number;
   total: number;
   resolved_sendable: number;

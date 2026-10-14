@@ -120,6 +120,27 @@ export function CampaignSendControls({
                   — без этого бот не начнёт отправку.
                 </p>
               )}
+              {!!report.data?.persona_account_missing && (
+                <p role="alert">
+                  Для {report.data.persona_account_missing} пабликов знакомств и
+                  селфи не выбраны аккаунты-девочки. Выберите их в «Настройках»
+                  и подготовьте кампанию.
+                </p>
+              )}
+              {!!report.data?.persona_photos_incomplete && (
+                <p role="alert">
+                  У {report.data.persona_photos_incomplete} аккаунтов-девочек не
+                  хватает фото: нужно хотя бы одно селфи и одно не селфи.
+                  Загрузите их в «Настройках» и подготовьте кампанию.
+                </p>
+              )}
+              {!!report.data?.persona_photo_mismatch && (
+                <p role="alert">
+                  У {report.data.persona_photo_mismatch} пабликов знакомств и
+                  селфи фото не той девочки, чей аккаунт будет отправлять.
+                  Подготовьте фото заново.
+                </p>
+              )}
               {report.data && (
                 <p role="status">
                   Доступно: {report.data.resolved_sendable} · Недоступно:{" "}

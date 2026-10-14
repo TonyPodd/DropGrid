@@ -21,6 +21,7 @@ from dropgrid.db.models import (
     Submission,
     utcnow,
 )
+from dropgrid.domain.personas import is_persona_category
 from dropgrid.integrations.vk.errors import (
     VKAuthenticationError,
     VKCaptchaRequiredError,
@@ -201,10 +202,15 @@ class MediaPreparation:
                 await enabled_account(s, account_id)
                 row = await get_entity(s, Community, community_id)
                 domain, active = row.domain, row.is_active
+                relation = await s.get(GridCommunity, (grid_id, community_id))
+                # Girl photos are chosen partly by the public's VK description.
+                describe = row.description is None and bool(
+                    relation and is_persona_category(relation.category)
+                )
             if not active:
                 context.warnings = ["community_disabled"]
                 return context
-            if context.resolution_status != "resolved":
+            if context.resolution_status != "resolved" or describe:
                 token = await self.collector.tokens.get_token(account_id)
                 result = (
                     await self.collector.client.resolve_communities(

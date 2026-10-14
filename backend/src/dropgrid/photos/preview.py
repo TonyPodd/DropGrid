@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from dropgrid.db.models import Community, CommunityContentProfile, GridCommunity, MediaAsset, utcnow
+from dropgrid.domain.personas import PERSONA_PROVIDER
 from dropgrid.photos.archive_retrieval import ARCHIVE_STRATA, age_band
 from dropgrid.photos.category_archive import CategoryLibraryStats, VKCategoryArchivePhotoProvider
 from dropgrid.photos.concepts import retrieval_hint
@@ -172,7 +173,10 @@ async def _photo_preview(
         library = (
             await session.scalars(
                 select(MediaAsset)
-                .where(MediaAsset.enabled.is_(True), MediaAsset.provider != "vk_archive")
+                .where(
+                    MediaAsset.enabled.is_(True),
+                    MediaAsset.provider.not_in(("vk_archive", PERSONA_PROVIDER)),
+                )
                 .order_by(MediaAsset.id)
                 .limit(100)
             )

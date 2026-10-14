@@ -1,12 +1,15 @@
 """Durable VK suggestion sender. A persisted write boundary is never replayed."""
 
 import asyncio
+import logging
+from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
+from pydantic import SecretStr
 from sqlalchemy import and_, exists, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -14,6 +17,7 @@ from sqlalchemy.orm import aliased
 from dropgrid.config import Settings
 from dropgrid.db.models import (
     Account,
+    AccountPersonaPhoto,
     Campaign,
     CampaignAccount,
     Community,
@@ -23,6 +27,7 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.domain.enums import AccountStatus, CampaignStatus, SubmissionStatus
+from dropgrid.domain.personas import PERSONA_KINDS, PERSONA_PROVIDER
 from dropgrid.integrations.vk.client import VKClient
 from dropgrid.integrations.vk.credentials import TokenProvider
 from dropgrid.integrations.vk.errors import (
@@ -36,13 +41,16 @@ from dropgrid.integrations.vk.errors import (
 )
 from dropgrid.integrations.vk.helpers import build_suggested_post_request
 from dropgrid.integrations.vk.media import checked_media
-from dropgrid.integrations.vk.models import VKAttachment, WallPostReceipt
+from dropgrid.integrations.vk.models import VKAttachment, WallPostDetails, WallPostReceipt
 from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.photos.images import MediaStorage
 from dropgrid.services.account_pools import (
     CATEGORY_UNASSIGNED,
+    PERSONA_ACCOUNT_MISSING,
     compatible,
     distribute,
+    persona_accounts,
+    persona_pins,
     pool,
     required_gender,
     save_pool,
@@ -60,6 +68,47 @@ MAX_UPLOAD_ATTEMPTS = 3
 MAX_READBACK_ATTEMPTS = 6
 PRE_WALL = {"queued", "claimed", "photo_uploaded"}
 READBACK = {"receipt_received", "readback_pending"}
+logger = logging.getLogger(__name__)
+
+
+def stale_suggestions(
+    posts: list[WallPostDetails], group_id: int, author_id: int, cutoff: datetime
+) -> list[WallPostDetails]:
+    """The author's own still-pending suggestions in this community posted before cutoff."""
+    return [
+        post
+        for post in posts
+        if post.post_type == "suggest"
+        and post.owner_id == -group_id
+        and post.from_id == author_id
+        and post.date is not None
+        and post.date < cutoff.timestamp()
+        and post.id > 0
+    ]
+
+
+async def record_withdrawn(
+    sessions: async_sessionmaker[AsyncSession], community_id: UUID, account_id: UUID, post_id: int
+) -> None:
+    """A deleted suggestion leaves publication monitoring as never published."""
+    async with sessions() as session, session.begin():
+        for row in (
+            await session.scalars(
+                select(Submission)
+                .where(
+                    Submission.community_id == community_id,
+                    Submission.account_id == account_id,
+                    Submission.vk_suggested_post_id == post_id,
+                    Submission.status == SubmissionStatus.submitted,
+                )
+                .with_for_update()
+            )
+        ).all():
+            row.status = SubmissionStatus.not_found
+            row.error_code = "suggestion_withdrawn"
+            row.error_message = "Unpublished suggestion deleted before a new one"
+            row.vk_next_check_at = None
+            row.vk_monitor_lease_token = row.vk_monitor_lease_until = None
 
 
 def usable_account(account: Account) -> bool:
@@ -103,6 +152,7 @@ async def preflight(
         key=lambda item: (item[2], str(item[0].id)),
     )
     places = await placements(session, campaign.grid_id)
+    girls = await persona_accounts(session, campaign_id)
     rows = (
         await session.execute(
             select(Submission, Community, MediaAsset)
@@ -154,7 +204,48 @@ async def preflight(
                             checked[asset.id] = False
                     invalid += int(not checked[asset.id])
         selected.append((row, reason))
-    allocation, failures = distribute(intended_rows, usable, places)
+    pins = await persona_pins(session, [row for row, _ in intended_rows], girls)
+    allocation, failures = distribute(intended_rows, usable, places, girls, pins)
+    # A girl's photo is only ever sent with her own account (VK token).
+    personal_assets = {
+        asset.id for _, _, asset in rows if asset and asset.provider == PERSONA_PROVIDER
+    }
+    links = (
+        (
+            await session.execute(
+                select(
+                    AccountPersonaPhoto.account_id,
+                    AccountPersonaPhoto.media_asset_id,
+                    AccountPersonaPhoto.kind,
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+    own_photos = {(owner, asset) for owner, asset, _ in links}
+    kinds: dict[UUID, set[str]] = defaultdict(set)
+    for owner, _, kind in links:
+        kinds[owner].add(kind)
+    persona_rows = [
+        row for row, community in intended_rows if places.get(community.id, UNPLACED).persona
+    ]
+    persona_ids = {row.id for row in persona_rows}
+    for row, _ in intended_rows:
+        account = allocation.get(row.id)
+        if (
+            account
+            and row.media_asset_id
+            and (row.id in persona_ids or row.media_asset_id in personal_assets)
+            and (account, row.media_asset_id) not in own_photos
+        ):
+            failures[row.id] = "persona_photo_mismatch"
+    # Every girl sending dating/selfie publics needs at least one selfie and one other photo.
+    incomplete = {
+        account
+        for row in persona_rows
+        if (account := allocation.get(row.id)) and not set(PERSONA_KINDS) <= kinds[account]
+    }
     capacity_missing = sum(reason == "account_capacity_exhausted" for reason in failures.values())
     unplaced = {
         places.get(community.id, UNPLACED).category
@@ -188,6 +279,7 @@ async def preflight(
         and not missing
         and not invalid
         and not failures
+        and not incomplete
         and not review_pending
         and all(
             row.status == SubmissionStatus.pending
@@ -211,6 +303,14 @@ async def preflight(
         "capacity_unassigned": capacity_missing,
         "category_unassigned": sum(reason == CATEGORY_UNASSIGNED for reason in failures.values()),
         "unassigned_categories": sorted(unplaced, key=lambda c: (c is None, c or "")),
+        "persona_targets": len(persona_rows),
+        "persona_account_missing": sum(
+            reason == PERSONA_ACCOUNT_MISSING for reason in failures.values()
+        ),
+        "persona_photo_mismatch": sum(
+            reason == "persona_photo_mismatch" for reason in failures.values()
+        ),
+        "persona_photos_incomplete": len(incomplete),
         "review_pending": review_pending,
         "assigned_per_account": [
             {
@@ -218,6 +318,7 @@ async def preflight(
                 "name": a.name,
                 "assigned": sum(v == a.id for v in allocation.values()),
                 "quota": quota,
+                "persona": a.id in girls,
             }
             for a, quota, _ in usable
         ],
@@ -552,6 +653,36 @@ class CampaignSender:
             row.vk_send_lease_token = row.vk_send_lease_until = None
             row.error_code = row.error_message = None
 
+    async def _withdraw_stale(
+        self, community: Community, account: Account, token: SecretStr
+    ) -> None:
+        """Delete this account's suggestions here that stayed unpublished too long.
+
+        Best effort before every new suggestion: a failed cleanup never blocks sending.
+        Only posts VK still reports as this account's pending suggestions are deleted.
+        """
+        assert community.vk_group_id is not None
+        group_id = community.vk_group_id
+        cutoff = utcnow() - timedelta(days=self.client.settings.vk_stale_suggestion_days)
+        try:
+            posts = await self.client.get_own_suggestions(
+                group_id, access_token=token, account_id=account.id
+            )
+        except VKError as error:
+            logger.warning("Stale suggestion lookup failed", extra={"error_code": error.code})
+            return
+        assert account.vk_user_id is not None
+        for post in stale_suggestions(posts, group_id, account.vk_user_id, cutoff):
+            try:
+                self._write_gate(group_id)
+                await self.client.delete_wall_post(
+                    -group_id, post.id, access_token=token, account_id=account.id
+                )
+            except VKError as error:
+                logger.warning("Stale suggestion deletion failed", extra={"error_code": error.code})
+                continue
+            await record_withdrawn(self.sessions, community.id, account.id, post.id)
+
     async def _process(self, claim: Submission) -> None:
         async with self.sessions() as session:
             campaign = await get_entity(session, Campaign, claim.campaign_id)
@@ -567,6 +698,17 @@ class CampaignSender:
                 if claim.media_asset_id
                 else None
             )
+            owner = (
+                await session.scalar(
+                    select(AccountPersonaPhoto.account_id).where(
+                        AccountPersonaPhoto.media_asset_id == asset.id
+                    )
+                )
+                if asset and asset.provider == PERSONA_PROVIDER
+                else None
+            )
+            # A girl's photo is never sent with another account's token.
+            foreign = bool(asset and asset.provider == PERSONA_PROVIDER and owner != account.id)
         phase = claim.vk_send_phase
         try:
             if phase in READBACK:
@@ -579,7 +721,7 @@ class CampaignSender:
                 return
             if not usable_account(account):
                 raise VKInputError("credentials", "Account unavailable")
-            reason = exclusion(community, account)
+            reason = "persona_photo_mismatch" if foreign else exclusion(community, account)
             if reason:
                 await self._save(
                     claim,
@@ -601,6 +743,7 @@ class CampaignSender:
             )
             token = await self.tokens.get_token(account.id)
             assert community.vk_group_id is not None
+            await self._withdraw_stale(community, account, token)
             photo = await self.uploader.upload(
                 data,
                 community_id=community.vk_group_id,

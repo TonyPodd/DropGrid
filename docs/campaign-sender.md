@@ -10,6 +10,20 @@ Accounts send strictly one at a time per Campaign: a later account's upload star
 when no earlier account (by `send_order`) has queued/claimed/uploaded work left. Each account
 sends its own gender's categories first, then unisex ones. Receipt read-back and unknown
 outcomes never hold the next account back; failed rows count as finished.
+Before each new suggestion the sender lists the account's own suggestions in that
+community (`wall.get filter=suggests`) and deletes (`wall.delete`) every one VK still
+reports as `post_type=suggest` by this account and older than
+`VK_STALE_SUGGESTION_DAYS` (default 5). A tracked Submission for a deleted post becomes
+`not_found` with `suggestion_withdrawn` and leaves publication monitoring. Cleanup is
+best effort: lookup/delete failures are logged and never block the new suggestion.
+Published posts are never touched: VK does not list them as suggestions.
+The official schema documents `wall.delete` only generically (user token; errors
+`wall_access_post`, `group_need_2fa`, `not_found`), so author deletion of an own pending
+suggestion in a foreign community must be confirmed live. Check one community without
+the sender: `diagnostics suggest-cleanup --account-id UUID --community-id ID --dry-run`
+only lists stale own suggestions; without `--dry-run` it requires `VK_WRITE_ENABLED=true`
+and the community in `VK_TEST_ALLOWED_COMMUNITY_IDS`, deletes with the sender's rule and
+reports deleted IDs and per-post VK error codes. `--max-age-days` overrides the age.
 Every intended eligible row must have a valid, enabled, assigned local JPEG whose
 hash and dimensions agree with MediaAsset. Preflight never contacts VK. Start
 only queues work; it does not enable writes or start a process.

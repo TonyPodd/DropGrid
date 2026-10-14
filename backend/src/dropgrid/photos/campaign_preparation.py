@@ -35,6 +35,8 @@ async def enqueue(
     engine: PhotoEngine,
     account_ids: list[UUID] | None = None,
     submission_ids: list[UUID] | None = None,
+    *,
+    persona_ids: list[UUID] | None = None,
 ) -> CampaignPreparationJob:
     campaign = await locked_campaign(session, campaign_id)
     if campaign.status not in {CampaignStatus.draft, CampaignStatus.ready}:
@@ -52,7 +54,9 @@ async def enqueue(
         raise ConflictError("Selected pool contains unusable accounts")
     if not usable:
         raise ConflictError("Connect at least one usable VK account")
-    await save_pool(session, campaign_id, [a.id for a in usable], engine.planner.settings)
+    await save_pool(
+        session, campaign_id, [a.id for a in usable], engine.planner.settings, persona_ids
+    )
     report = await prepare_campaign(session, campaign_id)
     campaign.preparation_state = "preparing"
     if old:
