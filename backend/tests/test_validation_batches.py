@@ -313,6 +313,65 @@ async def test_dislike_wraps_skips_unavailable_and_reports_exhaustion(
 
 
 @pytest.mark.integration
+async def test_disliked_photo_cannot_be_selected_or_approved_in_review(client, sessions, tmp_path):
+    _, _, selection_id, t, b, _, http = await batch_fixture(client, sessions, tmp_path)
+    try:
+        path = f"/api/v1/review-batches/{b['id']}/items/0/action"
+        data = {
+            "selection_id": str(selection_id),
+            "reviewer_id": t,
+            "action": "dislike",
+            "rank": 1,
+            "shown_ranks": [1],
+        }
+        assert (await client.post(path, json=data)).json()["next_rank"] == 2
+        for action in ("select", "confirm"):
+            data.update(action=action, rank=1, shown_ranks=[1, 2])
+            refused = await client.post(path, json=data)
+            assert refused.status_code == 409
+            assert refused.json()["detail"] == {"code": "photo_disliked"}
+        async with sessions() as db:
+            selection = await db.get(PhotoSelectionSession, selection_id)
+            assert selection.confirmed_at is None and selection.proposed_rank == 2
+        data.update(action="confirm", rank=2)
+        approved = await client.post(path, json=data)
+        assert approved.status_code == 200 and approved.json()["confirmed"] == 1
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.integration
+async def test_campaign_review_never_approves_a_disliked_photo(client, sessions, tmp_path):
+    cid, sid, selection_id, _, _, _, http = await batch_fixture(client, sessions, tmp_path)
+    try:
+        choice = f"/api/v1/submissions/{sid}/photo-choice"
+        disliked = await client.put(
+            choice, json={"rank": 1, "rating": "dislike", "shown_ranks": [1]}
+        )
+        assert disliked.json()["proposed_rank"] == 2
+        reselect = await client.put(choice, json={"rank": 1, "shown_ranks": [1, 2]})
+        assert reselect.status_code == 409
+        # Even a disliked proposal from earlier data is never approved.
+        async with sessions() as db, db.begin():
+            (await db.get(PhotoSelectionSession, selection_id)).proposed_rank = 1
+        for body in (None, {"proposed_rank": 1, "shown_ranks": [1]}):
+            refused = await client.post(f"/api/v1/submissions/{sid}/photo-approve", json=body)
+            assert refused.status_code == 409
+            assert refused.json()["detail"] == {"code": "photo_disliked"}
+        everything = await client.post(f"/api/v1/campaigns/{cid}/photo-approve-all")
+        assert everything.json() == {"confirmed": 0, "skipped_disliked": 1}
+        async with sessions() as db:
+            assert (await db.get(PhotoSelectionSession, selection_id)).confirmed_at is None
+            assert (await db.get(Campaign, cid)).preparation_state == "awaiting_review"
+        # An explicit 👍 revises the 👎 and makes the photo approvable again.
+        await client.put(choice, json={"rank": 1, "rating": "like", "shown_ranks": [1]})
+        approved = await client.post(f"/api/v1/submissions/{sid}/photo-approve")
+        assert approved.status_code == 200
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.integration
 async def test_dislike_rejected_when_closed_preserves_rating_and_selection(
     client, sessions, tmp_path
 ):

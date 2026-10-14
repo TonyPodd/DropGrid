@@ -203,11 +203,16 @@ export function PhotoValidationPage() {
   const act = useCallback(
     async (action: string, rank = active) => {
       if (!batch || !item || busy) return;
-      if (
-        action === "dislike" &&
-        item.candidates.find((c) => c.rank === rank)?.rating === "dislike"
-      )
+      const disliked =
+        item.candidates.find((c) => c.rank === rank)?.rating === "dislike";
+      if (action === "dislike" && disliked) return;
+      if ((action === "confirm" || action === "select") && disliked) {
+        // A photo marked «Не нравится» can never be approved.
+        setNotice(
+          "👎 Это фото отмечено «Не нравится», его нельзя одобрить. Выберите другой вариант или пропустите сообщество.",
+        );
         return;
+      }
       if (!batch.reviewer_id) {
         setError("Выберите своё имя перед проверкой.");
         return;
@@ -257,7 +262,7 @@ export function PhotoValidationPage() {
           setNotice(
             result.next_rank != null
               ? "👎 Отметка сохранена. Показан следующий вариант."
-              : "👎 Отметка сохранена. Все доступные варианты отклонены. Можно выбрать вариант вручную или пропустить сообщество.",
+              : "👎 Отметка сохранена. Все доступные варианты отклонены — пропустите сообщество.",
           );
         } else if (result.current_position === item.position)
           setRevision((n) => n + 1);
@@ -632,8 +637,14 @@ export function PhotoValidationPage() {
                       disabled={
                         busy ||
                         !chosen?.image ||
+                        chosen.rating === "dislike" ||
                         !batch.reviewer_id ||
                         batch.state !== "open"
+                      }
+                      title={
+                        chosen?.rating === "dislike"
+                          ? "Фото с «Не нравится» нельзя одобрить"
+                          : undefined
                       }
                       onClick={() => void act("confirm")}
                     >
@@ -677,7 +688,12 @@ export function PhotoValidationPage() {
                           c.rating === "dislike" ? "is-disliked" : undefined
                         }
                         aria-pressed={active === c.rank}
-                        disabled={busy}
+                        disabled={busy || c.rating === "dislike"}
+                        title={
+                          c.rating === "dislike"
+                            ? "Отмечено «Не нравится» — выбрать нельзя"
+                            : undefined
+                        }
                         onClick={() => void act("select", c.rank)}
                       >
                         {c.image ? (

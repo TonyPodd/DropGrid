@@ -301,3 +301,63 @@ it("records visible alternatives when confirming the unchanged automatic selecti
     shown_ranks: [1, 2],
   });
 });
+
+it("never offers to approve a photo the operator disliked", async () => {
+  const fetch = mock();
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("photo-review"))
+      return new Response(
+        JSON.stringify({
+          total: 1,
+          prepared: 1,
+          needs_attention: 0,
+          items: [
+            {
+              submission_id: "s",
+              community_id: "g",
+              community: "Girl car",
+              media_asset_id: "m1",
+              attention: [],
+              confirmed: false,
+              proposed_rank: 1,
+              candidates: [1, 2].map((rank) => ({
+                rank,
+                provider: "pinterest",
+                media_asset_id: `m${rank}`,
+                features: { final_score: 0.8 },
+                source_community_id: "g",
+                operator_rating: rank === 1 ? "dislike" : null,
+              })),
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    if (url.includes("photo-approve-all"))
+      return new Response(
+        JSON.stringify({ confirmed: 0, skipped_disliked: 1 }),
+        { status: 200 },
+      );
+    return original(input, init);
+  });
+  render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
+  expect(
+    await screen.findByText(/Вы поставили 👎 этому фото/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Подтвердить" })).toBeDisabled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Заменить / альтернативы" }),
+  );
+  expect(screen.getByRole("button", { name: "Отмечено 👎" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Выбрать это фото" }),
+  ).toBeEnabled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Подтвердить все выбранные" }),
+  );
+  expect(
+    await screen.findByText(/Не подтверждено фото с 👎: 1/),
+  ).toBeInTheDocument();
+});

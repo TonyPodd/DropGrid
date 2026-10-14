@@ -20,8 +20,10 @@ from dropgrid.db.models import (
     Submission,
 )
 from dropgrid.photos.campaign_preparation import enqueue
+from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.learning import latest_model, queue_training, valid_model
 from dropgrid.photos.review import choose, confirm, latest_selection
+from dropgrid.photos.validation import next_alternative
 from dropgrid.services.account_pools import pool, save_pool
 from dropgrid.services.catalog import ConflictError, get_entity
 from dropgrid.services.sending import usable_account
@@ -304,6 +306,9 @@ async def photo_review(campaign_id: UUID, session: Session, page: int = 1) -> di
 @router.put("/submissions/{submission_id}/photo-choice")
 async def set_choice(submission_id: UUID, data: ChoiceInput, session: Session) -> dict[str, object]:
     selection = await choose(session, submission_id, data.rank, data.rating, data.shown_ranks)
+    if data.rating == "dislike":
+        # A disliked photo cannot be approved: propose the next usable alternative.
+        await next_alternative(session, selection, data.rank)
     return {"proposed_rank": selection.proposed_rank, "confirmed": False}
 
 
@@ -379,21 +384,35 @@ async def approve_all(
             for displayed in data.reviews:
                 if displayed.submission_id not in by_id:
                     raise ConflictError("Displayed review is outside this campaign approval scope")
-                observed[displayed.submission_id] = await record_approval_view(
-                    session, displayed.submission_id, displayed
-                )
-    confirmed = 0
+                try:
+                    observed[displayed.submission_id] = await record_approval_view(
+                        session, displayed.submission_id, displayed
+                    )
+                except PhotoConflict as error:
+                    if error.code != "photo_disliked":
+                        raise
+    confirmed = disliked = 0
     for row in rows:
         expected_id, expected_rank = observed.get(row.id, (None, None))
-        await confirm(
-            engine.planner, row.id, expected_selection_id=expected_id, expected_rank=expected_rank
-        )
+        try:
+            await confirm(
+                engine.planner,
+                row.id,
+                expected_selection_id=expected_id,
+                expected_rank=expected_rank,
+            )
+        except PhotoConflict as error:
+            # Disliked choices stay for a manual replacement instead of being approved.
+            if error.code != "photo_disliked":
+                raise
+            disliked += 1
+            continue
         confirmed += 1
     async with engine.planner.sessions() as session, session.begin():
         campaign = await get_entity(session, Campaign, campaign_id)
-        if campaign.status.value == "ready":
+        if campaign.status.value == "ready" and not disliked:
             campaign.preparation_state = "ready"
-    return {"confirmed": confirmed}
+    return {"confirmed": confirmed, "skipped_disliked": disliked}
 
 
 class RankingInput(Input):

@@ -55,6 +55,8 @@ export async function request<T>(
           "Профиль занят обработкой фото. Повторите после завершения.",
         preview_in_progress:
           "Сравнение фото уже выполняется. Дождитесь завершения.",
+        photo_disliked:
+          "Это фото отмечено «Не нравится» — его нельзя одобрить. Выберите другой вариант или пропустите сообщество.",
       };
       const payload: unknown = await response.json().catch(() => null);
       if (payload && typeof payload === "object" && "detail" in payload) {

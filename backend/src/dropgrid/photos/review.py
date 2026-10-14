@@ -21,6 +21,7 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.domain.enums import SubmissionStatus
+from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoQueryPlan
 from dropgrid.photos.learning import latest_model, predict, queue_training, valid_model
 from dropgrid.photos.planner import CampaignMediaPlanner
@@ -221,6 +222,9 @@ async def choose(
     candidate = await session.get(PhotoSelectionCandidate, (selection.id, rank))
     if candidate is None:
         raise ConflictError("Candidate was not displayed in this review")
+    # Only an explicit 👍 revises a 👎; a disliked photo cannot become the choice.
+    if rating is None and candidate.operator_rating == "dislike":
+        raise PhotoConflict("photo_disliked")
     selection.proposed_rank = rank
     campaign.preparation_state = "awaiting_review"
     displayed = (
@@ -296,6 +300,8 @@ async def _confirm(
             PhotoSelectionCandidate, (selection.id, selection.proposed_rank)
         )
         assert candidate
+        if candidate.operator_rating == "dislike":
+            raise PhotoConflict("photo_disliked")
         proposed = selection.proposed_rank
         asset = (
             await session.get(MediaAsset, candidate.media_asset_id)

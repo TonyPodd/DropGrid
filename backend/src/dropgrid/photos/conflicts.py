@@ -6,6 +6,8 @@ CODES = frozenset(
         "archive_sync_in_progress",
         "profile_locked",
         "preview_in_progress",
+        # A photo the operator marked «Не нравится» can no longer be chosen or approved.
+        "photo_disliked",
     }
 )
 
