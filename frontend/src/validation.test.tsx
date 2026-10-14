@@ -169,6 +169,44 @@ it("saves dislike, shows the next alternative in the same community, and restore
   );
 });
 
+it("never approves a disliked photo by button, alternative or keyboard", async () => {
+  const fetch = fixture();
+  mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  const actions = () =>
+    fetch.mock.calls.filter(([u]) => String(u).endsWith("/action")).length;
+  await userEvent.click(screen.getByRole("button", { name: "Не нравится" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("img", { name: "Выбрано: Community 0" }),
+    ).toHaveAttribute("src", expect.stringContaining("/0-2/content")),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Альтернативы" }));
+  expect(screen.getByRole("button", { name: /1\..*👎/ })).toBeDisabled();
+  const afterDislike = actions();
+  await userEvent.keyboard("1");
+  expect(actions()).toBe(afterDislike);
+  expect(screen.getByRole("status")).toHaveTextContent("нельзя одобрить");
+  for (const rank of [3, null]) {
+    await userEvent.keyboard("d");
+    if (rank)
+      await waitFor(() =>
+        expect(
+          screen.getByRole("img", { name: "Выбрано: Community 0" }),
+        ).toHaveAttribute("src", expect.stringContaining(`/0-${rank}/content`)),
+      );
+  }
+  await screen.findByText(/Все доступные варианты отклонены — пропустите/);
+  // The remaining photo is disliked too: approving stays impossible.
+  expect(
+    screen.getByRole("button", { name: /^(Оставить|Выбрать)$/ }),
+  ).toBeDisabled();
+  const exhausted = actions();
+  await userEvent.keyboard("{Enter}");
+  expect(actions()).toBe(exhausted);
+  expect(screen.getByText("0 / 3")).toBeInTheDocument();
+});
+
 it("keyboard dislike never wraps to a rejected photo and reports exhausted alternatives without confirming", async () => {
   const fetch = fixture();
   mount();

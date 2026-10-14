@@ -25,6 +25,7 @@ type Candidate = {
   reference_id: string | null;
   source_community_id: string;
   features: Record<string, number>;
+  operator_rating?: string | null;
 };
 type Row = {
   selection_id?: string;
@@ -85,6 +86,7 @@ export function CampaignWorkflow({
     [page, setPage] = useState(1),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
     [ids, setIds] = useState<string[] | null>(null),
     [opened, setOpened] = useState<string | null>(null),
     [attentionOnly, setAttentionOnly] = useState(false),
@@ -171,8 +173,16 @@ export function CampaignWorkflow({
   async function action(path: string, body?: unknown, method = "POST") {
     setBusy(true);
     setError("");
+    setNotice("");
     try {
-      await request(path, { method, body });
+      const result = await request<{ skipped_disliked?: number }>(path, {
+        method,
+        body,
+      });
+      if (result?.skipped_disliked)
+        setNotice(
+          `Не подтверждено фото с 👎: ${result.skipped_disliked}. Замените их другим вариантом.`,
+        );
       setRevision((n) => n + 1);
       onChanged();
     } catch (err) {
@@ -278,6 +288,7 @@ export function CampaignWorkflow({
         Отправка → Мониторинг → Результаты
       </p>
       {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
       {["draft", "ready"].includes(campaign.status) && (
         <details open={stage === "Настройки"}>
           <summary>Настройки</summary>
@@ -504,10 +515,21 @@ export function CampaignWorkflow({
                           {attentionNames[flag] ?? "Требует проверки"} ·{" "}
                         </small>
                       ))}
+                      {chosen?.operator_rating === "dislike" &&
+                        !row.confirmed && (
+                          <p className="short-error">
+                            Вы поставили 👎 этому фото, его нельзя подтвердить.
+                            Выберите другое в «Заменить / альтернативы».
+                          </p>
+                        )}
                       {!row.confirmed && campaign.status === "ready" && (
                         <div className="actions">
                           <button
-                            disabled={busy || !chosen}
+                            disabled={
+                              busy ||
+                              !chosen ||
+                              chosen.operator_rating === "dislike"
+                            }
                             onClick={() =>
                               void action(
                                 `/submissions/${row.submission_id}/photo-approve`,
@@ -574,7 +596,9 @@ export function CampaignWorkflow({
                               </figcaption>
                               <button
                                 aria-pressed={c.rank === row.proposed_rank}
-                                disabled={busy}
+                                disabled={
+                                  busy || c.operator_rating === "dislike"
+                                }
                                 onClick={() =>
                                   void action(
                                     `/submissions/${row.submission_id}/photo-choice`,
@@ -588,7 +612,9 @@ export function CampaignWorkflow({
                                   )
                                 }
                               >
-                                Выбрать это фото
+                                {c.operator_rating === "dislike"
+                                  ? "Отмечено 👎"
+                                  : "Выбрать это фото"}
                               </button>
                             </figure>
                           ))}
