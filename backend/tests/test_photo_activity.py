@@ -193,3 +193,62 @@ async def test_activity_keeps_old_active_job_when_recent_history_is_full(session
         activities = await list_activity(session)
         assert activities[0].state == "running"
         assert sum(item.state == "success" for item in activities) == 100
+
+
+@pytest.mark.parametrize(
+    "status,lease_seconds,expected",
+    [
+        ("submitted", None, "waiting"),
+        ("submitted", -10, "waiting"),
+        ("submitted", 60, "running"),
+        ("published", None, "success"),
+        ("not_found", None, "warning"),
+    ],
+)
+async def test_campaign_monitoring_waits_without_spinning_or_mutating_receipt(
+    client, sessions, status, lease_seconds, expected
+):
+    from dropgrid.db.models import Campaign, Grid, Submission
+
+    async with sessions() as session, session.begin():
+        grid = Grid(name="Test")
+        community = Community(domain="test-monitor")
+        session.add_all([grid, community])
+        await session.flush()
+        campaign = Campaign(
+            name="Controlled test",
+            grid_id=grid.id,
+            track_url="https://vk.com/audio1_2",
+            status="monitoring",
+            created_at=utcnow() - timedelta(days=6),
+        )
+        session.add(campaign)
+        await session.flush()
+        receipt = Submission(
+            campaign_id=campaign.id,
+            community_id=community.id,
+            status=status,
+            submitted_at=utcnow() - timedelta(days=6),
+            vk_suggested_post_id=6,
+            vk_last_checked_at=utcnow(),
+            vk_next_check_at=utcnow() + timedelta(minutes=5),
+            vk_monitor_lease_until=utcnow() + timedelta(seconds=lease_seconds)
+            if lease_seconds is not None
+            else None,
+            vk_monitor_evidence={"suggestion_state": "pending", "pending_after_deadline": True},
+        )
+        session.add(receipt)
+        await session.flush()
+        cid, sid = campaign.id, receipt.id
+        next_check = receipt.vk_next_check_at
+    response = await client.get("/api/v1/activity")
+    assert response.status_code == 200
+    item = next(row for row in response.json() if row["id"] == f"campaign:{cid}")
+    assert item["state"] == expected
+    if expected == "waiting":
+        assert item["stage"] == "Ожидаем модерацию" and "повторная отправка" in item["message"]
+    async with sessions() as session:
+        receipt = await session.get(Submission, sid)
+        assert receipt.status.value == status and receipt.vk_next_check_at == next_check
+        assert receipt.vk_suggested_post_id == 6
+        assert (await session.get(Campaign, cid)).status.value == "monitoring"

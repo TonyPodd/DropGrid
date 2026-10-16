@@ -62,7 +62,7 @@ class ActivityRead(BaseModel):
     id: str
     kind: str
     label: str
-    state: Literal["queued", "running", "success", "warning", "failed"]
+    state: Literal["queued", "running", "waiting", "success", "warning", "failed"]
     stage: str
     current: int = 0
     total: int | None = None
@@ -124,7 +124,7 @@ async def list_activity(session: AsyncSession) -> list[ActivityRead]:
                 if prefix
                 else None
             )
-            state: Literal["queued", "running", "success", "warning", "failed"] = (
+            state: Literal["queued", "running", "waiting", "success", "warning", "failed"] = (
                 "failed"
                 if row.state == "failed" or row.error_code
                 else "queued"
@@ -271,21 +271,50 @@ async def list_activity(session: AsyncSession) -> list[ActivityRead]:
             if submission.submitted_at:
                 key = f"{account_name or 'Account'} · отправлено"
                 campaign_counters[key] = campaign_counters.get(key, 0) + 1
+        monitoring = campaign.status.value == "monitoring"
+        checking = any(
+            row.vk_monitor_lease_until and row.vk_monitor_lease_until > utcnow()
+            for row, _ in allocated
+        )
+        awaiting_publication = any(row.status.value == "submitted" for row, _ in allocated)
+        monitoring_state: Literal["running", "waiting", "success", "warning"] = (
+            "running"
+            if checking
+            else "waiting"
+            if awaiting_publication
+            else "success"
+            if allocated and all(row.status.value == "published" for row, _ in allocated)
+            else "warning"
+        )
         result.append(
             ActivityRead(
                 id=f"campaign:{campaign.id}",
                 kind="campaign",
                 label=campaign.name,
-                state="running"
-                if campaign.status.value in ("running", "monitoring")
+                state=monitoring_state
+                if monitoring
+                else "running"
+                if campaign.status.value == "running"
                 else "success",
-                stage="Мониторинг"
-                if campaign.status.value == "monitoring"
+                stage=(
+                    "Проверяем публикацию"
+                    if checking
+                    else "Ожидаем модерацию"
+                    if awaiting_publication
+                    else "Мониторинг завершён"
+                )
+                if monitoring
                 else "Отправка"
                 if campaign.status.value == "running"
                 else "Проверка фото"
                 if campaign.preparation_state == "awaiting_review"
                 else "Готово к отправке",
+                message=(
+                    "Публикация ещё не подтверждена. Проверки выполняются периодически; "
+                    "повторная отправка не требуется."
+                )
+                if monitoring and monitoring_state == "waiting"
+                else None,
                 counters=campaign_counters,
                 current=sum(1 for row, _ in allocated if row.submitted_at),
                 total=len(allocated),

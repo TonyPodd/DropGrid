@@ -92,3 +92,14 @@ cannot be inferred safely and remain unresolved until actual receipt evidence is
 available. The notification delivery mechanism is not assumed to be exhaustive or
 durable; the independent wall fallback is required. This change does not establish
 notification coverage for suggestions without canonical photos.
+
+### Activity Center waiting state
+
+A campaign in `monitoring` is not continuously executing a task. Between bounded
+publication checks its activity is `waiting` / «Ожидаем модерацию»: no progress
+animation, zero-second duration, or active-task count. Only a live submission
+monitor lease makes that campaign activity `running`. Expired leases do not.
+All published receipts show completed monitoring; unresolved terminal outcomes
+show a warning. This read-only projection does not change campaign/receipt state,
+next-check times, deadlines or sending behavior. A clearly pending suggestion may
+remain pending beyond 72 hours; the UI must not imply a stuck send or require resend.

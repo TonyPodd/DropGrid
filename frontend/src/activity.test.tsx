@@ -81,3 +81,30 @@ it("notifies completion from the global poll on any page", async () => {
     await screen.findByRole("status", {}, { timeout: 5000 }),
   ).toHaveTextContent("Готово: Сравнение фото · Honda");
 });
+it("shows moderation waiting without an active spinner, progress or zero-second duration", async () => {
+  vi.spyOn(activityApi, "list").mockResolvedValue([
+    {
+      ...row,
+      kind: "campaign",
+      state: "waiting",
+      stage: "Ожидаем модерацию",
+      elapsed_seconds: 0,
+    },
+  ]);
+  render(
+    <MemoryRouter>
+      <ActivityProvider>
+        <ActivityIndicator />
+        <ActivityPage />
+      </ActivityProvider>
+    </MemoryRouter>,
+  );
+  await screen.findByText("Ожидание");
+  expect(screen.getByText(/Ожидаем модерацию/)).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: /Нет активных задач/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  expect(screen.queryByText(/0 сек\./)).not.toBeInTheDocument();
+  expect(document.querySelector(".activity-spinner")).not.toBeInTheDocument();
+});

@@ -7,7 +7,7 @@ export type Activity = {
   id: string;
   kind: string;
   label: string;
-  state: "queued" | "running" | "success" | "warning" | "failed";
+  state: "queued" | "running" | "waiting" | "success" | "warning" | "failed";
   stage: string;
   current: number;
   total: number | null;
@@ -46,7 +46,7 @@ export function ActivityProvider({ children }: { children: ReactNode }) {
             !["queued", "running"].includes(row.state)
           )
             setNotice(
-              `${row.state === "failed" ? "Не завершено" : "Готово"}: ${row.label}${row.current ? ` · ${row.current}` : ""}`,
+              `${row.state === "failed" ? "Не завершено" : row.state === "waiting" ? "Ожидание" : "Готово"}: ${row.label}${row.current ? ` · ${row.current}` : ""}`,
             );
         }
         previous.current = new Map(rows.map((row) => [row.id, row.state]));
@@ -126,6 +126,7 @@ export function ActivityCard({ row }: { row: Activity }) {
             {
               queued: "В очереди",
               running: "В работе",
+              waiting: "Ожидание",
               success: "Готово",
               warning: "Предупреждение",
               failed: "Ошибка",
@@ -148,7 +149,7 @@ export function ActivityCard({ row }: { row: Activity }) {
         />
       )}
       <small>
-        {row.elapsed_seconds} сек. · Начало:{" "}
+        {row.state !== "waiting" && `${row.elapsed_seconds} сек. · `}Начало:{" "}
         {new Date(row.started_at).toLocaleString()} · Обновлено:{" "}
         {new Date(row.updated_at).toLocaleTimeString()}
       </small>
