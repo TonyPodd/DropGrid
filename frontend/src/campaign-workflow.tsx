@@ -167,7 +167,11 @@ export function CampaignWorkflow({
   }, [active, onChanged]);
   useEffect(() => {
     if (!active && campaign.status !== "ready") return;
-    const timer = setInterval(() => setRevision((n) => n + 1), 3000);
+    // Follow preparation closely; while reviewing, refresh rarely and quietly.
+    const timer = setInterval(
+      () => setRevision((n) => n + 1),
+      active ? 3000 : 30000,
+    );
     return () => clearInterval(timer);
   }, [active, campaign.status]);
   async function action(path: string, body?: unknown, method = "POST") {

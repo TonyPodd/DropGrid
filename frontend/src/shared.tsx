@@ -11,9 +11,10 @@ export function useLoad<T>(
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
+    // Keep showing the previous data while refreshing: periodic refreshes and
+    // reloads after an action must not blank the page, reset scroll or close panels.
     setLoading(true);
     setError("");
-    setData(undefined);
     loader(controller.signal)
       .then((value) => {
         if (!controller.signal.aborted) setData(value);
@@ -33,21 +34,34 @@ export function State({
   loading,
   error,
   retry,
+  data,
   children,
 }: {
   loading: boolean;
   error: string;
   retry: () => void;
+  /** Loaded data: once present, refreshes keep the content on screen. */
+  data?: unknown;
   children: ReactNode;
 }) {
-  return loading ? (
-    <p role="status">Загрузка…</p>
-  ) : error ? (
-    <div role="alert">
-      {error} <button onClick={retry}>Повторить</button>
-    </div>
-  ) : (
-    <>{children}</>
+  const loaded = data !== undefined;
+  if (loading && !loaded) return <p role="status">Загрузка…</p>;
+  if (error && !loaded)
+    return (
+      <div role="alert">
+        {error} <button onClick={retry}>Повторить</button>
+      </div>
+    );
+  return (
+    <>
+      {error && (
+        <p className="refresh-error" role="alert">
+          Не удалось обновить данные: {error}{" "}
+          <button onClick={retry}>Повторить</button>
+        </p>
+      )}
+      {children}
+    </>
   );
 }
 export function Badge({ status }: { status: string }) {
