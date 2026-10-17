@@ -958,3 +958,11 @@ details > summary {
   border-color: #245d79;
   color: white;
 }
+.refresh-error {
+  font-size: 13px;
+  padding: 6px 0;
+}
+.refresh-error button {
+  padding: 2px 8px;
+  font-size: 13px;
+}

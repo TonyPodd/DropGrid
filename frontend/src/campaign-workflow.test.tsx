@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { CampaignWorkflow } from "./campaign-workflow";
@@ -360,4 +360,25 @@ it("never offers to approve a photo the operator disliked", async () => {
   expect(
     await screen.findByText(/Не подтверждено фото с 👎: 1/),
   ).toBeInTheDocument();
+});
+
+it("refreshes a ready campaign rarely and without blanking the review", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const fetch = mock();
+    render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
+    await screen.findByText("Girl car");
+    const reviews = () =>
+      fetch.mock.calls.filter(([url]) => String(url).includes("photo-review"))
+        .length;
+    const first = reviews();
+    await act(() => vi.advanceTimersByTimeAsync(10000));
+    expect(reviews()).toBe(first);
+    await act(() => vi.advanceTimersByTimeAsync(25000));
+    expect(reviews()).toBeGreaterThan(first);
+    expect(screen.getByText("Girl car")).toBeInTheDocument();
+    expect(screen.queryByText("Загрузка…")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
