@@ -81,11 +81,15 @@ async def refresh_snapshot(
         )
     # Keep the original winner's identity/source/score; this is display exploration only.
     from dropgrid.photos.domain import Deduplicator
+    from dropgrid.photos.history import proposed_photos
 
+    async with planner.sessions() as db:
+        seen = await proposed_photos(db, campaign.id)
     pool = [
         i
         for i in pool
-        if i.identity != winner.identity
+        if i not in seen
+        and i.identity != winner.identity
         and not (i.asset and i.asset.id == original_asset)
         and not (i.sha256 and i.sha256 == winner.sha256)
         and not Deduplicator().near(i.perceptual_hash, winner.perceptual_hash)

@@ -185,9 +185,21 @@ Snapshot and final assignment are short transactions. The final transaction
 revalidates lease, campaign lifecycle, grid categories, assignments and enabled
 assets. Concurrent import/prepare changes cannot silently overwrite assignments.
 
-`max_reuse_per_asset=3` is a **per-campaign ceiling across categories**, not a
-target. Prefer unique assets, then balanced reuse up to the ceiling; never lower
-quality to fill every submission. The shortlist downloads at most the number of
+`max_reuse_per_asset` (default `PHOTO_MAX_REUSE_PER_ASSET=1`) is a **per-campaign
+ceiling across categories**, not a target: by default every community gets its
+own photo. Prefer unique assets, then balanced reuse up to the ceiling; never
+lower quality to fill every submission.
+
+A photo the bot has proposed once is never proposed again, in any campaign
+(dry runs included) and for any community. "Proposed" means the bot's pick or
+the operator's choice in an earlier selection session, or a photo assigned to a
+submission of another campaign; matching uses provider identity, asset, SHA-256
+and the exact perceptual hash. Such photos are dropped before ranking, so they
+are neither picked nor shown as alternatives; alternatives also hide photos
+already given to another community of the same campaign. When retrieval drops
+proposed photos it also searches the next result page of every query
+(`page=2`, 25 more Pinterest pins per query) to find fresh ones. A community
+whose candidates were all proposed before gets `repeats_exhausted`. The shortlist downloads at most the number of
 missing unique assets plus `PHOTO_DOWNLOAD_SPARE` (default three) per category.
 Library assets are used first; a sufficiently sized library makes no provider
 request. At most four downloads/normalizations run at once across plans in a
@@ -209,7 +221,7 @@ returned. Campaign lifecycle remains ready. No sender is started automatically.
 ## API and UI
 
 - `POST /api/v1/campaigns/{campaign_id}/media/plan`:
-  `{"max_reuse_per_asset":3,"force":false}` (both optional).
+  `{"max_reuse_per_asset":1,"force":false}` (both optional).
 - `GET /api/v1/media-assets`: page/page_size and category/provider/enabled filters.
 - `GET /api/v1/media-assets/{id}`: safe provenance/metadata; no filesystem path.
 - `GET /api/v1/media-assets/{id}/content`: DB UUID lookup and validated local JPEG.

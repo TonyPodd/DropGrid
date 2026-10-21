@@ -36,7 +36,7 @@ async def test_primary_threshold_controls_fallback(count, warning, expected):
         visual = SimpleNamespace(embedder=None)
         last_retrieval = None
 
-        async def compare(self, cid, plan):
+        async def compare(self, cid, plan, exclude=None):
             return (
                 [PoolCandidate(pin_candidate(pin(i), i), "pinterest") for i in range(count)],
                 count,
@@ -72,7 +72,7 @@ async def test_small_optional_diversity_is_bounded():
         visual = SimpleNamespace(embedder=None)
         last_retrieval = None
 
-        async def compare(self, cid, plan):
+        async def compare(self, cid, plan, exclude=None):
             return (
                 [PoolCandidate(pin_candidate(pin(i), i), "pinterest") for i in range(24)],
                 24,

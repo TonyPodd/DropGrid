@@ -3,12 +3,13 @@
 Provider priority controls network work, never the global ranking formula.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from dropgrid.config import Settings
 from dropgrid.photos.cache import SearchCache
-from dropgrid.photos.domain import PhotoError, PhotoPolicy, PhotoQueryPlan
+from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoPolicy, PhotoQueryPlan
 from dropgrid.photos.pinterest_preview import PinterestPreview
 from dropgrid.photos.pool import PoolCandidate
 from dropgrid.photos.retrieval import RetrievalResult, retrieve_photos
@@ -59,6 +60,7 @@ async def discover(
     include_primary: bool = True,
     include_fallback: bool = True,
     for_campaign: bool = False,
+    exclude: Callable[[PhotoCandidate], bool] | None = None,
 ) -> DiscoveryResult:
     roles = DiscoveryPolicy.configured(settings)
     result = DiscoveryResult()
@@ -76,7 +78,7 @@ async def discover(
                 result.pins_retrieved,
                 result.pin_queries,
                 warnings,
-            ) = await primary.compare(community_id, primary_plan)
+            ) = await primary.compare(community_id, primary_plan, exclude=exclude)
             result.warnings.extend(warnings)
             result.pins_materialized = getattr(primary, "last_materialized", len(result.pins))
             result.pins_embedded = getattr(
@@ -102,7 +104,7 @@ async def discover(
     if include_fallback and result.fallback_reason != "not_needed":
         sample = roles.diversity if result.fallback_reason == "diversity" else None
         result.fallback = await retrieve_photos(
-            fallback, plan, policy, target=sample, max_candidates=sample
+            fallback, plan, policy, target=sample, max_candidates=sample, exclude=exclude
         )
         result.warnings.extend(result.fallback.warnings)
         if include_primary and primary and not result.pins:

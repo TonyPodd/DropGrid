@@ -1,7 +1,9 @@
 """Deterministic, non-sensitive preparation failure codes."""
 
 
-def reason(pool_size: int, warnings: list[str], cooldown: int = 0, reuse: int = 0) -> str:
+def reason(
+    pool_size: int, warnings: list[str], cooldown: int = 0, reuse: int = 0, repeat: int = 0
+) -> str:
     if any("storage" in w for w in warnings):
         return "storage_error"
     if any(
@@ -18,7 +20,8 @@ def reason(pool_size: int, warnings: list[str], cooldown: int = 0, reuse: int = 
     if any(w.startswith("category_archive_") for w in warnings):
         return "category_archive_error"
     if not pool_size:
-        return "no_candidates"
+        # Every candidate had already been proposed before.
+        return "repeats_exhausted" if repeat else "no_candidates"
     if cooldown >= pool_size:
         return "cooldown_exhausted"
     if reuse >= pool_size or "duplicate_not_reusable" in warnings:

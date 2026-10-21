@@ -1,5 +1,6 @@
 """Bounded multi-query retrieval with fair quotas and explicit provenance."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from dropgrid.photos.cache import SearchCache
@@ -37,21 +38,31 @@ async def retrieve_photos(
     *,
     target: int | None = None,
     max_candidates: int | None = None,
+    exclude: Callable[[PhotoCandidate], bool] | None = None,
 ) -> RetrievalResult:
+    """``exclude`` drops already proposed photos; if any were dropped, the next
+    result page of every query is searched too, so fresh photos replace them."""
     result = RetrievalResult()
     if plan.sensitive and not cache.provider.supports_sensitive_context:
         result.warnings.append("provider_context_restricted")
         return result
     by_identity: dict[tuple[str, str], RetrievedPhoto] = {}
     lanes: list[list[tuple[str, str]]] = []
-    searches = plan.variants[:MAX_RETRIEVAL_QUERIES]
+    first = plan.variants[:MAX_RETRIEVAL_QUERIES]
+    deeper = tuple(s.model_copy(update={"page": s.page + 1}) for s in first if s.page < 2)
+    searches = first + deeper if exclude else first
+    excluded = 0
     for query_index, search in enumerate(searches):
+        if query_index == len(first) and (
+            not excluded or (target is not None and len(by_identity) >= target)
+        ):
+            break
         await emit(
             "pinterest_search"
             if getattr(cache.provider, "name", "") == "pinterest"
             else "pixabay_search",
             query_index,
-            len(searches),
+            len(searches) if excluded else len(first),
         )
         try:
             found, hit = await cache.search(search)
@@ -62,6 +73,10 @@ async def retrieve_photos(
             result.warnings.append(exc.code)
             break
         valid = [c for c in found if policy.candidate_allowed(c, plan.sensitive)]
+        if exclude:
+            fresh = [c for c in valid if not exclude(c)]
+            excluded += len(valid) - len(fresh)
+            valid = fresh
         valid.sort(key=lambda c: (-PhotoRanker().score(c, search), c.provider, c.provider_asset_id))
         lane = []
         for photo in valid[:MAX_CANDIDATES_PER_QUERY]:
@@ -79,7 +94,7 @@ async def retrieve_photos(
         if getattr(cache.provider, "name", "") == "pinterest"
         else "pixabay_search",
         len(lanes),
-        len(searches),
+        len(searches) if excluded else len(first),
         raw_candidates=len(by_identity),
     )
     seen: set[tuple[str, str]] = set()

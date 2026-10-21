@@ -29,6 +29,9 @@ class PinterestPolicy(PhotoPolicy):
     trusted_hosts: frozenset[str] = frozenset({"i.pinimg.com"})
 
 
+PAGE_SIZE = 25
+
+
 class PinterestSearchBackend(Protocol):
     async def search(self, query: str, limit: int) -> list[dict[str, object]]: ...
 
@@ -52,8 +55,12 @@ class ApifyPinterestBackend:
                 response = await self.client.post(
                     f"https://api.apify.com/v2/actors/{self.actor}/runs",
                     headers=headers,
-                    params={"timeout": 45, "waitForFinish": 45, "maxItems": min(limit, 25)},
-                    json={"searchQueries": [query], "maxPins": min(limit, 25)},
+                    params={
+                        "timeout": 45,
+                        "waitForFinish": 45,
+                        "maxItems": min(limit, 2 * PAGE_SIZE),
+                    },
+                    json={"searchQueries": [query], "maxPins": min(limit, 2 * PAGE_SIZE)},
                     timeout=48,
                 )
                 response.raise_for_status()
@@ -68,7 +75,7 @@ class ApifyPinterestBackend:
                 response = await self.client.get(
                     f"https://api.apify.com/v2/datasets/{dataset}/items",
                     headers=headers,
-                    params={"clean": "true", "limit": min(limit, 25)},
+                    params={"clean": "true", "limit": min(limit, 2 * PAGE_SIZE)},
                     timeout=5,
                 )
                 response.raise_for_status()
@@ -77,7 +84,7 @@ class ApifyPinterestBackend:
                 items = response.json()
                 if not isinstance(items, list):
                     raise PhotoError("pinterest_search_unavailable")
-                return [row for row in items[: min(limit, 25)] if isinstance(row, dict)]
+                return [row for row in items[: min(limit, 2 * PAGE_SIZE)] if isinstance(row, dict)]
         except (httpx.HTTPError, ValueError, TypeError, AttributeError, TimeoutError):
             raise PhotoError("pinterest_search_unavailable") from None
 
@@ -152,9 +159,11 @@ class PinterestPhotoProvider:
     async def search(self, search: PhotoSearch) -> PhotoSearchResult:
         if self.backend is None:
             raise PhotoError("pinterest_backend_unavailable")
-        rows = await self.backend.search(search.query, 25)
+        # Page 2 is the next 25 pins of the same query: fresh photos once page 1 is used up.
+        start = PAGE_SIZE * (search.page - 1)
+        rows = await self.backend.search(search.query, start + PAGE_SIZE)
         candidates: dict[str, PhotoCandidate] = {}
-        for position, row in enumerate(rows[:25]):
+        for position, row in enumerate(rows[start : start + PAGE_SIZE], start):
             try:
                 photo = pin_candidate(row, position)
                 candidates.setdefault(photo.provider_asset_id, photo)

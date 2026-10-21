@@ -91,6 +91,10 @@ def test_safe_failure_reasons(pool, warnings, cooldown, reuse, expected):
     assert reason(pool, warnings, cooldown, reuse) == expected
 
 
+def test_all_candidates_proposed_before():
+    assert reason(0, [], repeat=5) == "repeats_exhausted"
+
+
 @pytest.mark.integration
 async def batch_fixture(client, sessions, tmp_path):
     cid, sid, target, ref, _, _, planner, item, http = await archive_fixture(sessions, tmp_path)
