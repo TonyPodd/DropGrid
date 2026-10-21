@@ -43,8 +43,8 @@ only failed pending submission IDs; successful rows are not re-prepared. Read-on
 context, reference/discovery/ranking/import pipeline and concurrency bounds are shared
 with ordinary preparation. Known safe reasons replace generic preparation_error:
 no_candidates, no_references, materialization_failed, dedup_exhausted,
-cooldown_exhausted, download_error, storage_error, category_archive_error,
-pinterest_unavailable, other. Provider warnings remain separate. A retry may remain
+cooldown_exhausted, repeats_exhausted, download_error, storage_error,
+category_archive_error, pinterest_unavailable, other. Provider warnings remain separate. A retry may remain
 unassigned when no viable sources exist; it does not relax reuse, licensing or ranking.
 
 Photo Lab remains the owner tool for investigating one community. Review is human

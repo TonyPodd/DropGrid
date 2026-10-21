@@ -143,8 +143,23 @@ async def test_partial_reuse_ceiling(sessions, tmp_path):
     ) as client:
         report = await make_planner(
             sessions, tmp_path, FakePhotoProvider((candidate(),)), client
-        ).plan(cid, MediaPlanInput())
+        ).plan(cid, MediaPlanInput(max_reuse_per_asset=3))
     assert report.newly_assigned == 3 and report.unassigned == 1 and report.unique_assets == 1
+
+
+async def test_one_photo_per_community_by_default(sessions, tmp_path):
+    cid = await prepared(sessions, count=4)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                200, content=image_bytes(), headers={"content-type": "image/jpeg"}
+            )
+        )
+    ) as client:
+        report = await make_planner(
+            sessions, tmp_path, FakePhotoProvider((candidate(),)), client
+        ).plan(cid, MediaPlanInput())
+    assert report.newly_assigned == 1 and report.unassigned == 3 and report.unique_assets == 1
 
 
 async def prepared(sessions, count=8, category="ГРУЗОВИКИ"):
@@ -201,7 +216,7 @@ async def test_plan_category_idempotent_balanced_and_no_usage_increment(sessions
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = make_planner(sessions, tmp_path, provider, client)
-        report = await planner.plan(cid, MediaPlanInput())
+        report = await planner.plan(cid, MediaPlanInput(max_reuse_per_asset=3))
         assert report.total_submissions == report.newly_assigned == 8
         assert report.unassigned == 0 and report.unique_assets == 3
         assert report.downloaded_assets == len(downloads) == 3
@@ -214,7 +229,7 @@ async def test_plan_category_idempotent_balanced_and_no_usage_increment(sessions
                 for a in (await db.scalars(select(MediaAsset))).all()
             )
         requests = len(provider.calls)
-        again = await planner.plan(cid, MediaPlanInput())
+        again = await planner.plan(cid, MediaPlanInput(max_reuse_per_asset=3))
         assert again.previously_assigned == 8 and again.newly_assigned == 0
         assert len(provider.calls) == requests and len(downloads) == 3
         async with sessions() as db:
@@ -248,7 +263,7 @@ async def prepared_different(sessions, count=2):
         return new.id
 
 
-async def test_partial_download_bounds_and_provider_id_reuse(sessions, tmp_path):
+async def test_partial_download_bounds_and_fresh_photos_next_campaign(sessions, tmp_path):
     cid = await prepared(sessions, count=2)
     provider = FakePhotoProvider(tuple(candidate(i) for i in range(1, 101)))
     downloads = []
@@ -267,8 +282,14 @@ async def test_partial_download_bounds_and_provider_id_reuse(sessions, tmp_path)
         assert report.unique_assets == 2 and len(downloads) == 2
         cid2 = await prepared_different(sessions, count=2)
         report2 = await planner.plan(cid2, MediaPlanInput())
-        assert report2.newly_assigned == 2 and report2.reused_existing_assets == 2
-        assert len(downloads) == 2 and len(provider.calls) == 1
+        # Photos of the first campaign were proposed already: the next one gets new photos.
+        assert report2.newly_assigned == 2 and report2.reused_existing_assets == 0
+        assert len(downloads) == 4 and len(provider.calls) == 1
+    async with sessions() as db:
+        rows = (await db.execute(select(Submission.campaign_id, Submission.media_asset_id))).all()
+    first = {asset for campaign, asset in rows if campaign == cid}
+    second = {asset for campaign, asset in rows if campaign == cid2}
+    assert len(first) == len(second) == 2 and not first & second
 
 
 async def test_missing_provider_partial_and_no_corruption(sessions, tmp_path):
@@ -357,7 +378,7 @@ async def test_exact_near_provider_alias_dedup(sessions, tmp_path):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = make_planner(sessions, tmp_path, provider, client)
-        report = await planner.plan(cid, MediaPlanInput())
+        report = await planner.plan(cid, MediaPlanInput(max_reuse_per_asset=3))
     assert report.unique_assets == 1 and report.newly_assigned == 3
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(MediaAsset)) == 1

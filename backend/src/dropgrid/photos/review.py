@@ -23,6 +23,7 @@ from dropgrid.db.models import (
 from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoQueryPlan
+from dropgrid.photos.history import ProposedPhotos
 from dropgrid.photos.learning import latest_model, predict, queue_training, valid_model
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, materialize_archive, regional_priority
@@ -78,11 +79,17 @@ async def snapshot(
     baseline: list[PoolCandidate],
     model_version: str,
     warnings: list[str],
+    hidden: ProposedPhotos | None = None,
 ) -> None:
     viable = [
         item
         for item in items
-        if item.photo.publication_eligible or item.photo.provider == "pinterest"
+        if (item.photo.publication_eligible or item.photo.provider == "pinterest")
+        and (
+            hidden is None
+            or (item.asset is not None and item.asset.id == submission.media_asset_id)
+            or item not in hidden
+        )
     ]
     chosen = next(
         (item for item in viable if item.asset and item.asset.id == submission.media_asset_id), None

@@ -410,7 +410,7 @@ class PinterestDirectBackend:
                         cursors.add(cursor)
                 if not pins:
                     raise PhotoError("pinterest_search_unavailable")
-                return [pin.record() for pin in list(pins.values())[: min(limit, 30)]]
+                return [pin.record() for pin in list(pins.values())[:limit]]
             except (httpx.HTTPError, PhotoError, ValueError, TypeError, TimeoutError):
                 raise PhotoError("pinterest_search_unavailable") from None
             finally:

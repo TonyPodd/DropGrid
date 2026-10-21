@@ -462,6 +462,11 @@ class CampaignMediaPlanner:
                     )
                 ).all()
             }
+        from dropgrid.photos.history import proposed_photos
+
+        async with self.sessions() as session:
+            # A photo the bot has proposed once is never proposed again; look for new ones.
+            seen = await proposed_photos(session, campaign_id)
         total = len(rows)
         previously = sum(s.media_asset_id is not None for s, _ in rows)
         report = MediaPlanRead(
@@ -531,6 +536,7 @@ class CampaignMediaPlanner:
                         if normalize_category(a.category) == category
                         and self.eligible(a, plan.sensitive)
                         and preserved_counts[a.id] < reuse
+                        and not seen.asset(a)
                     ]
                     available[context] = assets
                     report.source_contributions["library"]["retrieved"] += len(assets)
@@ -562,6 +568,7 @@ class CampaignMediaPlanner:
                             self.policy,
                             for_campaign=True,
                             include_fallback=stop_provider is None,
+                            exclude=seen.photo,
                         )
                         discovered_pins[context] = discovery.pins
                         primary_counts = report.source_contributions["pinterest"]
@@ -591,7 +598,9 @@ class CampaignMediaPlanner:
                             break
                         for candidate in found[:24] if hinted else found:
                             identity = (candidate.provider, candidate.provider_asset_id)
-                            if not self.policy.candidate_allowed(candidate, plan.sensitive):
+                            if not self.policy.candidate_allowed(
+                                candidate, plan.sensitive
+                            ) or seen.photo(candidate):
                                 continue
                             known = next(
                                 (
@@ -607,6 +616,7 @@ class CampaignMediaPlanner:
                                     self.eligible(known, plan.sensitive)
                                     and known not in assets
                                     and preserved_counts[known.id] < reuse
+                                    and not seen.asset(known)
                                 ):
                                     assets.append(known)
                                 continue
@@ -650,7 +660,7 @@ class CampaignMediaPlanner:
                         for asset, created, error in results:
                             if error:
                                 warnings.append(error)
-                            if asset is not None:
+                            if asset is not None and not seen.asset(asset):
                                 source_of_asset.setdefault(asset.id, "pixabay")
                                 report.source_contributions["pixabay"]["materialized"] += int(
                                     created
@@ -735,6 +745,10 @@ class CampaignMediaPlanner:
                                 report.source_contributions["vk_category_archive"]["retrieved"] += (
                                     len(category_pool)
                                 )
+                            # Already proposed photos are neither picked nor shown as alternatives.
+                            fresh_pool = [item for item in pool if item not in seen]
+                            exhaustion[sid]["repeat"] += len(pool) - len(fresh_pool)
+                            pool = fresh_pool
                             mixed_ranked = await rank_pool(
                                 self.visual, community_id, pool, plan, grid_id=campaign.grid_id
                             )
@@ -798,6 +812,9 @@ class CampaignMediaPlanner:
                                         if asset:
                                             exhaustion[sid]["reuse"] += 1
                                         continue
+                                    if seen.asset(asset):
+                                        exhaustion[sid]["repeat"] += 1
+                                        continue
                                     item.asset = asset
                                     source_of_asset[asset.id] = "pinterest"
                                     if all(a.id != asset.id for a in available[context]):
@@ -827,6 +844,9 @@ class CampaignMediaPlanner:
                                         continue
                                     if reserved_counts[asset.id] >= reuse:
                                         exhaustion[sid]["reuse"] += 1
+                                        continue
+                                    if seen.asset(asset):
+                                        exhaustion[sid]["repeat"] += 1
                                         continue
                                     if all(a.id != asset.id for a in available[context]):
                                         available[context].append(asset)
@@ -1057,11 +1077,25 @@ class CampaignMediaPlanner:
                     ]["selected"] += 1
                 elif data.force and submission.status == SubmissionStatus.pending:
                     submission.media_asset_id = None
+            from dropgrid.photos.history import ProposedPhotos
             from dropgrid.photos.review import snapshot
 
+            # Alternatives must not offer a photo that another community already got.
+            taken = ProposedPhotos()
+            assigned = {s.media_asset_id for s in current if s.media_asset_id}
+            for asset in await session.scalars(
+                select(MediaAsset).where(MediaAsset.id.in_(assigned))
+            ):
+                taken.remember_asset(asset)
+            for submission in current:
+                if submission.id not in snapshots:
+                    continue
+                for item in snapshots[submission.id][1]:
+                    if item.asset and item.asset.id == submission.media_asset_id:
+                        taken.remember_item(item)
             for submission in current:
                 if submission.id in snapshots and submission.id in assignments:
-                    await snapshot(session, submission, *snapshots[submission.id])
+                    await snapshot(session, submission, *snapshots[submission.id], hidden=taken)
                 elif submission.media_asset_id is None:
                     from dropgrid.photos.failures import reason
 
@@ -1076,6 +1110,7 @@ class CampaignMediaPlanner:
                             warnings,
                             counts_failed["cooldown"],
                             counts_failed["reuse"],
+                            counts_failed["repeat"],
                         )
                     ]
                     if submission.id in snapshots:

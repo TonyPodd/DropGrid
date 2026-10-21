@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from collections.abc import Callable
 from uuid import UUID
 
 from sqlalchemy import select
@@ -140,10 +141,18 @@ class PinterestPreview:
             )
 
     async def compare(
-        self, community_id: UUID, plan: PhotoQueryPlan
+        self,
+        community_id: UUID,
+        plan: PhotoQueryPlan,
+        exclude: Callable[[PhotoCandidate], bool] | None = None,
     ) -> tuple[list[PoolCandidate], int, dict[str, list[str]], list[str]]:
         result = await retrieve_photos(
-            self.cache, plan, PinterestPolicy(), target=self.target_candidates, max_candidates=40
+            self.cache,
+            plan,
+            PinterestPolicy(),
+            target=self.target_candidates,
+            max_candidates=40,
+            exclude=exclude,
         )
         pool = []
         queries = {item.photo.provider_asset_id: item.queries for item in result.items[:100]}
