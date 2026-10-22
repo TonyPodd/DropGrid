@@ -33,8 +33,14 @@ class AccountCreate(Input):
     status: AccountStatus = AccountStatus.active
 
 
+# Users behind the authenticated proxy who add accounts.
+AccountOwner = Literal["tony", "tima"]
+
+
 class AccountPatch(Input):
     campaign_send_quota: int | None = Field(default=None, ge=1, le=10000)
+    # Set by hand for accounts added before the owner was recorded.
+    owner: AccountOwner | None = None
     name: Name | None = None
     vk_user_id: int | None = Field(default=None, gt=0, le=2**63 - 1)
     gender_tag: GenderTag | None = None
@@ -55,6 +61,7 @@ class AccountRead(Output):
     gender_tag: GenderTag | None
     status: AccountStatus
     token_configured: bool
+    owner: str | None = None
     last_validated_at: datetime | None = None
     campaign_send_quota: int | None = None
     created_at: datetime

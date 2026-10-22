@@ -19,6 +19,8 @@ export const submissionStatuses = [
 export type CampaignStatus = (typeof campaignStatuses)[number];
 export type SubmissionStatus = (typeof submissionStatuses)[number];
 export type Account = {
+  /** Who added the account: "tony" / "tima". */
+  owner?: string | null;
   last_validated_at?: string | null;
   campaign_send_quota?: number | null;
   token_configured?: boolean;

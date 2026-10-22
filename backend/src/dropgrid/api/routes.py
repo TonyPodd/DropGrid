@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 
-from dropgrid.api.access import owner_token_access
+from dropgrid.api.access import owner_token_access, remote_user
 from dropgrid.api.dependencies import VK, Limit, Offset, Session, Tokens, database
 from dropgrid.api.schemas import (
     AccountCreate,
@@ -98,13 +98,16 @@ async def connect_account(
 ) -> Account:
     owner_token_access(request, client.settings)
     return await account_tokens.connect_token(
-        session, data.access_token, client, request.app.state.token_cipher
+        session, data.access_token, client, request.app.state.token_cipher, remote_user(request)
     )
 
 
 @router.post("/accounts", response_model=AccountRead, status_code=201)
-async def account_create(data: AccountCreate, session: Session) -> Account:
-    return await catalog.create_account(session, data)
+async def account_create(data: AccountCreate, request: Request, session: Session) -> Account:
+    account = await catalog.create_account(session, data)
+    account.owner = remote_user(request)
+    await session.flush()
+    return account
 
 
 @router.get("/accounts/{entity_id}", response_model=AccountRead)
@@ -123,7 +126,12 @@ async def account_token_import(
 ) -> AccountTokenRead:
     owner_token_access(request, client.settings)
     account = await account_tokens.import_token(
-        session, account_id, data.access_token, client, request.app.state.token_cipher
+        session,
+        account_id,
+        data.access_token,
+        client,
+        request.app.state.token_cipher,
+        remote_user(request),
     )
     assert account.vk_user_id is not None
     return AccountTokenRead(account_id=account.id, vk_user_id=account.vk_user_id, name=account.name)

@@ -63,9 +63,9 @@ class WorkflowInput(Input):
 
 
 class ChoiceInput(Input):
-    rank: int = Field(ge=1, le=12)
+    rank: int = Field(ge=1, le=24)
     rating: Literal["like", "dislike"] | None = None
-    shown_ranks: list[int] = Field(default_factory=list, max_length=12)
+    shown_ranks: list[int] = Field(default_factory=list, max_length=24)
 
 
 @router.post("/campaigns/{campaign_id}/prepare-workflow")
@@ -207,6 +207,7 @@ async def get_pool(
         {
             "account_id": a.id,
             "name": a.name,
+            "owner": a.owner,
             "gender_tag": a.gender_tag,
             "quota": quota,
             "assigned": counts.get(a.id, 0),
@@ -326,8 +327,8 @@ async def set_choice(submission_id: UUID, data: ChoiceInput, session: Session) -
 
 class ApprovalInput(Input):
     selection_id: UUID | None = None
-    proposed_rank: int | None = Field(default=None, ge=1, le=12)
-    shown_ranks: list[int] = Field(default_factory=list, max_length=12)
+    proposed_rank: int | None = Field(default=None, ge=1, le=24)
+    shown_ranks: list[int] = Field(default_factory=list, max_length=24)
 
 
 class DisplayedApproval(ApprovalInput):

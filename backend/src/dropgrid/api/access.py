@@ -35,6 +35,12 @@ class ProxyAccess(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def remote_user(request: Request) -> str | None:
+    """The authenticated proxy user ("tony" / "tima"); None in local development."""
+    user = getattr(request.state, "remote_user", None)
+    return user if user in {"tony", "tima"} else None
+
+
 def owner_token_access(request: Request, settings: Settings) -> None:
     if settings.app_env != "development" and getattr(request.state, "remote_user", None) not in {
         "tony",

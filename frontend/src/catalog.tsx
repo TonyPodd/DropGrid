@@ -4,7 +4,15 @@ import { accountsApi, communitiesApi, getDashboard } from "./api/accounts";
 import { request, ApiError, errorMessage } from "./api/client";
 import { CampaignTable } from "./campaigns";
 import { campaignStatuses } from "./api/types";
-import { Badge, categoryName, Pager, State, useLoad } from "./shared";
+import {
+  accountName,
+  Badge,
+  categoryName,
+  owners,
+  Pager,
+  State,
+  useLoad,
+} from "./shared";
 import { Link } from "react-router-dom";
 
 export function DashboardPage() {
@@ -122,7 +130,31 @@ export function AccountsPage() {
                 {state.data.map((a) => (
                   <tr key={a.id}>
                     <td>
-                      {a.name}
+                      {accountName(a)}
+                      <label>
+                        Кто добавил
+                        <select
+                          aria-label={`Кто добавил ${a.name}`}
+                          value={a.owner ?? ""}
+                          onChange={async (e) => {
+                            try {
+                              await accountsApi.patch(a.id, {
+                                owner: e.target.value || null,
+                              });
+                              state.reload();
+                            } catch (err) {
+                              setMessage(errorMessage(err));
+                            }
+                          }}
+                        >
+                          <option value="">Не указано</option>
+                          {Object.entries(owners).map(([id, name]) => (
+                            <option key={id} value={id}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                       {usage.data?.items
                         .filter((row) => row.account_id === a.id)
                         .map((row, i) => (

@@ -3,12 +3,13 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { request, errorMessage } from "./api/client";
 import { imageUrl } from "./validation";
 import { DiscoveryQuality, type Quality } from "./discovery-quality";
+import { accountName } from "./shared";
 import "./discovery.css";
 
 type Region = { key: string; name: string; codes: string[] };
 type Options = {
   grids: { id: string; name: string }[];
-  accounts: { id: string; name: string }[];
+  accounts: { id: string; name: string; owner?: string | null }[];
   seeds: {
     id: string;
     name: string;
@@ -359,7 +360,7 @@ export function DiscoveryPage() {
             <option value="">Нужен проверенный токен</option>
             {options?.accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {accountName(a)}
               </option>
             ))}
           </select>

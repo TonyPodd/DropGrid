@@ -8,7 +8,7 @@ import {
   type PersonaPhotoKind,
 } from "./api/persona";
 import type { Account } from "./api/types";
-import { genderLabel, plural, State, useLoad } from "./shared";
+import { accountName, genderLabel, plural, State, useLoad } from "./shared";
 
 /** Selfies and other photos of one girl; she needs at least one of each. */
 export type PhotoCounts = Record<PersonaPhotoKind, number>;
@@ -240,7 +240,7 @@ function AccountPicker({
             <option value="">— выберите —</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name} · {genderLabel(a.gender_tag)}
+                {accountName(a)} · {genderLabel(a.gender_tag)}
               </option>
             ))}
           </select>

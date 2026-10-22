@@ -156,6 +156,13 @@ async def snapshot(
     submission.photo_attention = attention
 
 
+# Alternatives shown for one community (also the bound of stored candidate ranks).
+DISPLAY_LIMIT = 24
+# Alternatives keep room for Pinterest pins and the community's own old photos when the
+# pool has them, instead of filling up with the highest-scored source only.
+DISPLAY_QUOTAS = {"pinterest": 8, "vk_archive": 8}
+
+
 def display_set(items: list[PoolCandidate], chosen: PoolCandidate) -> list[PoolCandidate]:
     """Explore sources without changing the production winner or scores."""
     selected = [chosen]
@@ -164,12 +171,20 @@ def display_set(items: list[PoolCandidate], chosen: PoolCandidate) -> list[PoolC
         if item.source not in providers:
             selected.append(item)
             providers.add(item.source)
+    for source, quota in DISPLAY_QUOTAS.items():
+        have = sum(item.source == source for item in selected)
+        for item in items:
+            if have >= quota or len(selected) >= DISPLAY_LIMIT:
+                break
+            if item.source == source and item not in selected:
+                selected.append(item)
+                have += 1
     for item in items:
-        if len(selected) >= 12:
+        if len(selected) >= DISPLAY_LIMIT:
             break
         if item not in selected:
             selected.append(item)
-    return [item for item in items if item in selected][:12]
+    return [item for item in items if item in selected][:DISPLAY_LIMIT]
 
 
 async def latest_selection(

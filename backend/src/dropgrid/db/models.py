@@ -78,6 +78,8 @@ class Account(Identity, Updated, Base):
     )
     encrypted_access_token: Mapped[str | None] = mapped_column(Text)
     vk_next_send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who added the account ("tony" / "tima"); None for accounts added before this.
+    owner: Mapped[str | None] = mapped_column(String(16))
 
     @property
     def token_configured(self) -> bool:
@@ -633,7 +635,7 @@ class PhotoSelectionSession(Identity, Base):
 
 class PhotoSelectionCandidate(Base):
     __tablename__ = "photo_selection_candidates"
-    __table_args__ = (CheckConstraint("rank >= 1 AND rank <= 12", name="rank_bounded"),)
+    __table_args__ = (CheckConstraint("rank >= 1 AND rank <= 24", name="rank_bounded"),)
     selection_session_id: Mapped[UUID] = mapped_column(
         ForeignKey("photo_selection_sessions.id", ondelete="CASCADE"), primary_key=True
     )

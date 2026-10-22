@@ -154,5 +154,10 @@ export function plural(n: number, one: string, few: string, many: string) {
   const last = n % 10;
   return last === 1 ? one : last >= 2 && last <= 4 ? few : many;
 }
+// Users who add VK accounts, as shown after an account name.
+export const owners: Record<string, string> = { tony: "Тони", tima: "Тима" };
+/** «Аня Иванова (Тима)»: the account and who added it. */
+export const accountName = (a: { name: string; owner?: string | null }) =>
+  a.owner ? `${a.name} (${owners[a.owner] ?? a.owner})` : a.name;
 export const genderLabel = (value: string | null | undefined) =>
   value === "male" ? "муж." : value === "female" ? "жен." : "без пола";
