@@ -33,7 +33,7 @@ async def options(
         for row in (await session.scalars(select(Grid).order_by(Grid.name, Grid.id))).all()
     ]
     accounts = [
-        {"id": row.id, "name": row.name, "vk_user_id": row.vk_user_id}
+        {"id": row.id, "name": row.name, "owner": row.owner, "vk_user_id": row.vk_user_id}
         for row in (
             await session.scalars(
                 select(Account)

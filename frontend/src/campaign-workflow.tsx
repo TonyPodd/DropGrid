@@ -8,7 +8,14 @@ import {
 } from "./api/client";
 import { accountsApi } from "./api/accounts";
 import type { Campaign } from "./api/types";
-import { date, genderLabel, useLoad, State, Pager } from "./shared";
+import {
+  accountName,
+  date,
+  genderLabel,
+  useLoad,
+  State,
+  Pager,
+} from "./shared";
 import { personaApi } from "./api/persona";
 import { PersonaSetup, personaReady, type PhotoCounts } from "./persona";
 type Job = {
@@ -151,6 +158,7 @@ export function CampaignWorkflow({
         {
           account_id: string;
           name: string;
+          owner?: string | null;
           quota: number;
           assigned: number;
           usable: boolean;
@@ -405,7 +413,7 @@ export function CampaignWorkflow({
                         )
                       }
                     />
-                    {a.name} · {genderLabel(a.gender_tag)} · квота{" "}
+                    {accountName(a)} · {genderLabel(a.gender_tag)} · квота{" "}
                     {pool.data?.find((row) => row.account_id === a.id)?.quota ??
                       a.campaign_send_quota ??
                       100}
@@ -535,7 +543,7 @@ export function CampaignWorkflow({
           <div className="metrics">
             {pool.data.map((a) => (
               <div key={a.account_id}>
-                <span>{a.name}</span>
+                <span>{accountName(a)}</span>
                 <strong>
                   {a.assigned} / {a.quota}
                 </strong>

@@ -3,7 +3,14 @@ import { request } from "./api/client";
 import { campaignsApi } from "./api/campaigns";
 import { errorMessage } from "./api/client";
 import type { Campaign } from "./api/types";
-import { categoryName, Confirm, genderLabel, State, useLoad } from "./shared";
+import {
+  accountName,
+  categoryName,
+  Confirm,
+  genderLabel,
+  State,
+  useLoad,
+} from "./shared";
 
 export function CampaignSendControls({
   campaign,
@@ -18,6 +25,7 @@ export function CampaignSendControls({
         {
           account_id: string;
           name: string;
+          owner?: string | null;
           gender_tag?: string | null;
           assigned: number;
           quota: number;
@@ -76,7 +84,7 @@ export function CampaignSendControls({
               {accounts.data
                 ?.map(
                   (a, i) =>
-                    `${i + 1}. ${a.name} (${genderLabel(a.gender_tag)}) ${a.assigned}/${a.quota}`,
+                    `${i + 1}. ${accountName(a)} · ${genderLabel(a.gender_tag)} · ${a.assigned}/${a.quota}`,
                 )
                 .join(" → ")}
             </p>

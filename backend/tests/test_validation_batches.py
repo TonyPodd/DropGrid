@@ -22,14 +22,14 @@ from dropgrid.photos.validation import stratify
 
 
 def test_source_balanced_display_keeps_winner_without_score_bonus():
-    options = [SimpleNamespace(source="vk_category_archive", identity=i) for i in range(20)]
+    options = [SimpleNamespace(source="vk_category_archive", identity=i) for i in range(40)]
     options += [
-        SimpleNamespace(source=p, identity=20 + i)
+        SimpleNamespace(source=p, identity=40 + i)
         for i, p in enumerate(["pinterest", "library", "vk_archive", "pixabay"])
     ]
     chosen = options[5]
     display = display_set(options, chosen)
-    assert len(display) == 12 and chosen in display
+    assert len(display) == 24 and chosen in display
     assert {i.source for i in display} == {
         "pinterest",
         "library",
@@ -37,7 +37,7 @@ def test_source_balanced_display_keeps_winner_without_score_bonus():
         "pixabay",
         "vk_category_archive",
     }
-    assert len(options) == 24 and options[5] is chosen
+    assert len(options) == 44 and options[5] is chosen
 
 
 def test_stratification_deterministic_150_covers_axes_and_competition():

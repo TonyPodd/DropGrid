@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
-import { State, useLoad } from "./shared";
+import { accountName, State, useLoad } from "./shared";
 
 function Counter({ loader }: { loader: () => Promise<number> }) {
   const state = useLoad(() => loader(), []);
@@ -43,4 +43,12 @@ it("shows a failed refresh without wiping the content", async () => {
     "Не удалось обновить данные: сеть",
   );
   expect(screen.getByText("Значение 1")).toBeInTheDocument();
+});
+
+it("shows who added an account in brackets", () => {
+  expect(accountName({ name: "Аня Иванова", owner: "tima" })).toBe(
+    "Аня Иванова (Тима)",
+  );
+  expect(accountName({ name: "Антон", owner: "tony" })).toBe("Антон (Тони)");
+  expect(accountName({ name: "Старый", owner: null })).toBe("Старый");
 });

@@ -139,8 +139,8 @@ class ActionInput(Input):
     selection_id: UUID
     reviewer_id: UUID
     action: Literal["confirm", "skip", "attention", "dislike", "select"]
-    rank: int = Field(ge=1, le=12)
-    shown_ranks: list[int] = Field(min_length=1, max_length=12)
+    rank: int = Field(ge=1, le=24)
+    shown_ranks: list[int] = Field(min_length=1, max_length=24)
     expected_confirmed_at: datetime | None = None
 
 

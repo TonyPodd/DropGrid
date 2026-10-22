@@ -260,3 +260,35 @@ async def test_capability_permission_failure_is_read_only(client, sessions):
         and TOKEN not in result.text
         and calls == ["users.get", "groups.getById"]
     )
+
+
+@pytest.mark.integration
+async def test_account_remembers_who_added_it(client, sessions, monkeypatch):
+    def handle(r):
+        return httpx.Response(
+            200, json={"response": [{"id": 321, "first_name": "Аня", "last_name": "Иванова"}]}
+        )
+
+    async with VKClient(
+        Settings(_env_file=None), transport=httpx.MockTransport(handle), limiter=NoWaitLimiter()
+    ) as vk:
+        configure(client, sessions, vk)
+        monkeypatch.setattr("dropgrid.api.routes.remote_user", lambda request: "tima")
+        added = (await client.post("/api/v1/accounts/connect", json={"access_token": TOKEN})).json()
+        assert added["name"] == "Аня Иванова" and added["owner"] == "tima"
+        # Reconnecting the same VK account by someone else keeps who added it first.
+        monkeypatch.setattr("dropgrid.api.routes.remote_user", lambda request: "tony")
+        again = (await client.post("/api/v1/accounts/connect", json={"access_token": TOKEN})).json()
+        assert again["id"] == added["id"] and again["owner"] == "tima"
+    async with sessions() as db, db.begin():
+        old = Account(name="Добавлен раньше")
+        db.add(old)
+        await db.flush()
+        old_id = old.id
+    # Accounts added before the owner was recorded are labelled by hand.
+    patched = await client.patch(f"/api/v1/accounts/{old_id}", json={"owner": "tony"})
+    assert patched.json()["owner"] == "tony"
+    cleared = await client.patch(f"/api/v1/accounts/{old_id}", json={"owner": None})
+    assert cleared.json()["owner"] is None
+    unknown = await client.patch(f"/api/v1/accounts/{old_id}", json={"owner": "bob"})
+    assert unknown.status_code == 422

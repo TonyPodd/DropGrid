@@ -21,6 +21,7 @@ async def import_token(
     token: SecretStr,
     client: VKClient,
     cipher: AccountTokenCipher,
+    owner: str | None = None,
 ) -> Account:
     account = await get_entity(session, Account, account_id)
     if account.status.value == "disabled":
@@ -40,6 +41,8 @@ async def import_token(
     account.last_validated_at = utcnow()
     account.status = AccountStatus.active
     account.encrypted_access_token = encrypted
+    # Whoever adds the token to an account without a recorded owner is its owner.
+    account.owner = account.owner or owner
     await session.flush()
     return account
 
@@ -88,7 +91,11 @@ async def capabilities(
 
 
 async def connect_token(
-    session: AsyncSession, token: SecretStr, client: VKClient, cipher: AccountTokenCipher
+    session: AsyncSession,
+    token: SecretStr,
+    client: VKClient,
+    cipher: AccountTokenCipher,
+    owner: str | None = None,
 ) -> Account:
     provisional_id = uuid4()
     cipher.encrypt(token, provisional_id)  # configuration/input check before read-only validation
@@ -108,5 +115,7 @@ async def connect_token(
     account.encrypted_access_token = cipher.encrypt(token, account.id)
     account.last_validated_at = utcnow()
     account.status = AccountStatus.active
+    # Reconnecting keeps who added the account first.
+    account.owner = account.owner or owner
     await session.flush()
     return account

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { accountsApi } from "./api/accounts";
 import { gridsApi } from "./api/grids";
 import { errorMessage } from "./api/client";
-import { State, useLoad } from "./shared";
+import { accountName, State, useLoad } from "./shared";
 
 export function GridReadinessPanel({ gridId }: { gridId: string }) {
   const readiness = useLoad(
@@ -83,7 +83,7 @@ export function GridReadinessPanel({ gridId }: { gridId: string }) {
               ?.filter((a) => a.status === "active" && a.token_configured)
               .map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {accountName(a)}
                 </option>
               ))}
           </select>
