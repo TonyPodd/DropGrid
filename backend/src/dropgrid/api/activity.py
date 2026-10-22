@@ -252,7 +252,10 @@ async def list_activity(session: AsyncSession) -> list[ActivityRead]:
     campaigns = (
         await session.scalars(
             select(Campaign)
-            .where(Campaign.status.in_(("ready", "running", "monitoring")))
+            .where(
+                Campaign.status.in_(("ready", "running", "monitoring")),
+                Campaign.deleted_at.is_(None),
+            )
             .limit(100)
         )
     ).all()

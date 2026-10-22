@@ -46,7 +46,7 @@ export function CampaignsPage() {
         </Link>
       </div>
       <State {...state} retry={state.reload}>
-        <CampaignTable campaigns={state.data ?? []} />
+        <CampaignTable campaigns={state.data ?? []} onChanged={state.reload} />
       </State>
       <Pager
         page={page}
@@ -57,7 +57,94 @@ export function CampaignsPage() {
     </>
   );
 }
-export function CampaignTable({ campaigns }: { campaigns: Campaign[] }) {
+/** Preparing, sending or monitoring: stop it first, delete afterwards. */
+export function inProgress(c: Campaign) {
+  return (
+    ["running", "monitoring"].includes(c.status) ||
+    (c.preparation_state === "preparing" &&
+      ["draft", "ready"].includes(c.status))
+  );
+}
+export function CampaignActions({
+  campaign,
+  onStopped,
+  onDeleted,
+}: {
+  campaign: Campaign;
+  onStopped: () => void;
+  onDeleted: () => void;
+}) {
+  const [confirm, setConfirm] = useState<"stop" | "delete" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const running = inProgress(campaign);
+  async function act() {
+    setBusy(true);
+    setError("");
+    try {
+      if (confirm === "stop") {
+        await campaignsApi.cancel(campaign.id);
+        onStopped();
+      } else {
+        await campaignsApi.remove(campaign.id);
+        onDeleted();
+      }
+      setConfirm(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <button
+        className={running ? undefined : "danger"}
+        onClick={() => {
+          setError("");
+          setConfirm(running ? "stop" : "delete");
+        }}
+      >
+        {running ? "Остановить" : "Удалить"}
+      </button>
+      {error && !confirm && <span role="alert">{error}</span>}
+      {confirm && (
+        <Confirm
+          title={confirm === "stop" ? "Остановить кампанию" : "Удалить кампанию"}
+          busy={busy}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void act()}
+        >
+          {confirm === "stop" ? (
+            <p>
+              «{campaign.name}» остановится:{" "}
+              {campaign.preparation_state === "preparing" &&
+              !["running", "monitoring"].includes(campaign.status)
+                ? "подбор фото прервётся"
+                : "бот перестанет предлагать новые посты, уже отправленные останутся в пабликах"}
+              . Продолжить остановленную кампанию нельзя — после остановки её
+              можно удалить.
+            </p>
+          ) : (
+            <p>
+              «{campaign.name}» пропадёт из списка, отменить это нельзя. Фото
+              этой кампании останутся использованными и не появятся в новых
+              кампаниях.
+            </p>
+          )}
+          {error && <p role="alert">{error}</p>}
+        </Confirm>
+      )}
+    </>
+  );
+}
+export function CampaignTable({
+  campaigns,
+  onChanged,
+}: {
+  campaigns: Campaign[];
+  onChanged?: () => void;
+}) {
   return campaigns.length ? (
     <div className="table-wrap">
       <table>
@@ -68,6 +155,7 @@ export function CampaignTable({ campaigns }: { campaigns: Campaign[] }) {
             <th>Status</th>
             <th>Submissions</th>
             <th>Создана</th>
+            {onChanged && <th aria-label="Действия" />}
           </tr>
         </thead>
         <tbody>
@@ -84,6 +172,15 @@ export function CampaignTable({ campaigns }: { campaigns: Campaign[] }) {
               </td>
               <td>{c.submission_count}</td>
               <td>{date(c.created_at)}</td>
+              {onChanged && (
+                <td>
+                  <CampaignActions
+                    campaign={c}
+                    onStopped={onChanged}
+                    onDeleted={onChanged}
+                  />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -617,6 +714,7 @@ export function SubmissionsPanel({
 }
 export function CampaignDetailPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const [revision, setRevision] = useState(0);
   const [editing, setEditing] = useState(false);
   const [photoResult, setPhotoResult] = useState<MediaPlan>();
@@ -645,7 +743,14 @@ export function CampaignDetailPage() {
           <>
             <div className="page-heading">
               <h1>{state.data.name}</h1>
-              <Badge status={state.data.status} />
+              <div className="actions">
+                <Badge status={state.data.status} />
+                <CampaignActions
+                  campaign={state.data}
+                  onStopped={() => setRevision((n) => n + 1)}
+                  onDeleted={() => navigate("/campaigns")}
+                />
+              </div>
             </div>
             {editing && state.data.status === "draft" ? (
               <CampaignForm

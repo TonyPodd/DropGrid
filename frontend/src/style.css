@@ -131,6 +131,13 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
+button.danger {
+  color: #9b3a34;
+  border-color: #e3c2bf;
+}
+button.danger:hover {
+  background: #fbefee;
+}
 .primary {
   color: white;
   background: #245d79;
