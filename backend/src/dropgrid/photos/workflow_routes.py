@@ -14,14 +14,13 @@ from dropgrid.db.models import (
     CampaignPreparationJob,
     Community,
     PhotoRankingModel,
-    PhotoRankingPreference,
     PhotoSelectionCandidate,
     PhotoSelectionSession,
     Submission,
 )
 from dropgrid.photos.campaign_preparation import enqueue
 from dropgrid.photos.conflicts import PhotoConflict
-from dropgrid.photos.learning import latest_model, queue_training, valid_model
+from dropgrid.photos.learning import active_model, latest_trained, queue_training
 from dropgrid.photos.review import choose, confirm, latest_selection
 from dropgrid.photos.validation import next_alternative
 from dropgrid.services.account_pools import pool, save_pool
@@ -415,12 +414,9 @@ async def approve_all(
     return {"confirmed": confirmed, "skipped_disliked": disliked}
 
 
-class RankingInput(Input):
-    mode: Literal["deterministic", "learned"]
-
-
 @router.get("/photo-ranking")
 async def ranking_status(session: Session, request: Request) -> dict[str, object]:
+    settings = request.app.state.vk_client.settings
     count = (
         await session.scalar(
             select(func.count())
@@ -429,8 +425,7 @@ async def ranking_status(session: Session, request: Request) -> dict[str, object
         )
         or 0
     )
-    model = await latest_model(session)
-    pref = await session.get(PhotoRankingPreference, 1)
+    active, last = await active_model(session), await latest_trained(session)
     from dropgrid.db.models import PhotoReviewer
 
     reviewer_counts = (
@@ -448,45 +443,53 @@ async def ranking_status(session: Session, request: Request) -> dict[str, object
             )
         ).all()
     )
+    current: dict[str, object] = {}
+    if active:
+        metrics = active.metrics or {}
+        saved = metrics.get("current")
+        # Until its first re-evaluation a champion has only its own training result.
+        current = (
+            saved
+            if isinstance(saved, dict)
+            else {
+                "top1": metrics.get("learned_top1"),
+                "baseline_top1": metrics.get("baseline_top1"),
+                "validation": metrics.get("validation"),
+            }
+        )
+    last_metrics = (last.metrics or {}) if last else {}
     return {
-        "mode": pref.mode if pref else "deterministic",
         "reviewers": {name: count for name, count in reviewer_counts},
         "choices": count,
-        "minimum": request.app.state.vk_client.settings.photo_learned_ranker_min_choices,
-        "model_version": str(model.id) if model else None,
-        "remaining": max(
-            0, request.app.state.vk_client.settings.photo_learned_ranker_min_choices - count
-        ),
-        "retrain_interval": (
-            request.app.state.vk_client.settings.photo_learned_ranker_retrain_choices
-        ),
-        "latest_model": ("learned:" if pref and pref.mode == "learned" else "shadow:")
-        + str(model.id)
-        if model
-        else "deterministic",
-        "metrics": model.metrics if model else None,
-        "promotion_ready": bool(
-            valid_model(model) and model and model.metrics and model.metrics.get("promotion_ready")
-        ),
+        "minimum": settings.photo_learned_ranker_min_choices,
+        "remaining": max(0, settings.photo_learned_ranker_min_choices - count),
+        "retrain_interval": settings.photo_learned_ranker_retrain_choices,
+        "next_training_at": last.training_choices + settings.photo_learned_ranker_retrain_choices
+        if last
+        else settings.photo_learned_ranker_min_choices,
+        "latest_model": f"pairwise-v1:{active.id}" if active else "deterministic",
+        "active": {
+            "version": str(active.id),
+            "trained_at": active.trained_at,
+            "top1": current.get("top1"),
+            "baseline_top1": current.get("baseline_top1"),
+            "validation": current.get("validation"),
+        }
+        if active
+        else None,
+        "last_training": {
+            "version": str(last.id),
+            "trained_at": last.trained_at,
+            "outcome": last_metrics.get("outcome"),
+            "learned_top1": last_metrics.get("learned_top1"),
+            "baseline_top1": last_metrics.get("baseline_top1"),
+            "champion_top1": last_metrics.get("champion_top1"),
+        }
+        if last
+        else None,
+        "metrics": last.metrics if last else None,
         "training": bool(jobs),
     }
-
-
-@router.put("/photo-ranking")
-async def set_ranking(data: RankingInput, session: Session) -> dict[str, object]:
-    model = await latest_model(session)
-    if data.mode == "learned" and not (
-        valid_model(model) and model and model.metrics and model.metrics.get("promotion_ready")
-    ):
-        raise ConflictError(
-            "Learned ranking is not ready; deterministic baseline remains available"
-        )
-    preference = await session.get(PhotoRankingPreference, 1)
-    if preference is None:
-        preference = PhotoRankingPreference(id=1)
-        session.add(preference)
-    preference.mode = data.mode
-    return {"mode": data.mode}
 
 
 @router.post("/photo-ranking/train")

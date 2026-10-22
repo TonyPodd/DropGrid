@@ -8,7 +8,7 @@ import {
 } from "./api/client";
 import { accountsApi } from "./api/accounts";
 import type { Campaign } from "./api/types";
-import { genderLabel, useLoad, State, Pager } from "./shared";
+import { date, genderLabel, useLoad, State, Pager } from "./shared";
 type Job = {
   state: string;
   stage: string;
@@ -64,6 +64,52 @@ const attentionNames: Record<string, string> = {
   category_archive_error: "Недоступен архив категории",
   other: "Подготовка не завершилась",
 };
+type Ranking = {
+  choices: number;
+  minimum: number;
+  retrain_interval?: number;
+  next_training_at?: number;
+  training?: boolean;
+  reviewers?: Record<string, number>;
+  active?: {
+    trained_at: string | null;
+    top1?: number | null;
+    baseline_top1?: number | null;
+  } | null;
+  last_training?: {
+    trained_at: string | null;
+    outcome?: string | null;
+    learned_top1?: number | null;
+    baseline_top1?: number | null;
+    champion_top1?: number | null;
+  } | null;
+};
+const percent = (value?: number | null) =>
+  typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
+function rankerSummary(r: Ranking) {
+  if (r.active)
+    return `Подбор фото: обученная модель · угадывает ваш выбор в ${percent(r.active.top1)} случаев (формула — ${percent(r.active.baseline_top1)})`;
+  if (r.choices < r.minimum)
+    return `Подбор фото: базовая формула · выборов для обучения модели: ${r.choices} / ${r.minimum}`;
+  return "Подбор фото: базовая формула · модель пока не обогнала её";
+}
+function trainingOutcome(t: NonNullable<Ranking["last_training"]>) {
+  const fresh = `новая версия угадала ${percent(t.learned_top1)}`;
+  switch (t.outcome) {
+    case "promoted":
+      return `${fresh} и стала рабочей.`;
+    case "kept":
+      return `${fresh}, рабочая — ${percent(t.champion_top1)}: оставлена рабочая.`;
+    case "fallback":
+      return `рабочая модель стала хуже базовой формулы (${percent(t.champion_top1)} против ${percent(t.baseline_top1)}), подбор вернулся на формулу.`;
+    case "not_better":
+      return `${fresh}, базовая формула — ${percent(t.baseline_top1)}: пока не лучше формулы.`;
+    case "insufficient_validation":
+      return "мало свежих решений для проверки, ничего не поменялось.";
+    default:
+      return `${fresh}.`;
+  }
+}
 function image(c: Candidate, row: Row) {
   return c.media_asset_id
     ? mediaContentUrl(c.media_asset_id)
@@ -131,17 +177,7 @@ export function CampaignWorkflow({
     [campaign.id, revision],
   );
   const ranking = useLoad(
-    (signal) =>
-      request<{
-        mode: string;
-        choices: number;
-        minimum: number;
-        promotion_ready: boolean;
-        metrics: Record<string, unknown> | null;
-        latest_model?: string;
-        remaining?: number;
-        reviewers?: Record<string, number>;
-      }>("/photo-ranking", { signal }),
+    (signal) => request<Ranking>("/photo-ranking", { signal }),
     [revision],
   );
   const batches = useLoad(
@@ -274,12 +310,7 @@ export function CampaignWorkflow({
           )}
         </div>
       )}
-      {ranking.data && (
-        <p>
-          Manual decisions: {ranking.data.choices} / {ranking.data.minimum} ·
-          Latest model: {ranking.data.latest_model ?? "deterministic"}
-        </p>
-      )}
+      {ranking.data && <p>{rankerSummary(ranking.data)}</p>}
       {dryRunUrl && (
         <p>
           <a href={dryRunUrl}>Открыть отдельную dry-run кампанию</a>
@@ -642,31 +673,52 @@ export function CampaignWorkflow({
         {ranking.data && (
           <>
             <p>
-              Подтверждённых выборов: {ranking.data.choices} /{" "}
-              {ranking.data.minimum}. Режим: {ranking.data.mode}. До явного
-              включения используется исходное ранжирование.
+              Модель одна и учится сама на подтверждённых выборах: первый раз
+              после {ranking.data.minimum}, затем каждые{" "}
+              {ranking.data.retrain_interval ?? 25}. Новая версия заменяет
+              рабочую, только если на одних и тех же свежих решениях угадывает
+              ваш выбор не хуже неё и лучше базовой формулы.
             </p>
+            <p>
+              Подтверждённых выборов: {ranking.data.choices}.{" "}
+              {ranking.data.training
+                ? "Идёт обучение…"
+                : `Следующее обучение — на ${Math.max(
+                    ranking.data.next_training_at ?? ranking.data.minimum,
+                    ranking.data.minimum,
+                  )} выборах.`}
+            </p>
+            {ranking.data.active ? (
+              <p>
+                Сейчас фото подбирает обученная модель
+                {ranking.data.active.trained_at
+                  ? ` от ${date(ranking.data.active.trained_at)}`
+                  : ""}
+                : угадывает ваш выбор в {percent(ranking.data.active.top1)}{" "}
+                случаев, базовая формула —{" "}
+                {percent(ranking.data.active.baseline_top1)}.
+              </p>
+            ) : (
+              <p>Сейчас фото подбирает базовая формула.</p>
+            )}
+            {ranking.data.last_training && (
+              <p>
+                Последнее обучение
+                {ranking.data.last_training.trained_at
+                  ? ` ${date(ranking.data.last_training.trained_at)}`
+                  : ""}
+                : {trainingOutcome(ranking.data.last_training)}
+              </p>
+            )}
             <button
-              disabled={busy || ranking.data.choices < ranking.data.minimum}
+              disabled={
+                busy ||
+                !!ranking.data.training ||
+                ranking.data.choices < ranking.data.minimum
+              }
               onClick={() => void action("/photo-ranking/train")}
             >
-              Обновить модель
-            </button>
-            <button
-              disabled={busy || !ranking.data.promotion_ready}
-              onClick={() =>
-                void action("/photo-ranking", { mode: "learned" }, "PUT")
-              }
-            >
-              Включить проверенную модель
-            </button>
-            <button
-              disabled={busy}
-              onClick={() =>
-                void action("/photo-ranking", { mode: "deterministic" }, "PUT")
-              }
-            >
-              Исходное ранжирование
+              Обучить сейчас
             </button>
             {ranking.data.reviewers && (
               <p>
@@ -675,35 +727,6 @@ export function CampaignWorkflow({
                   .map(([name, count]) => `${name}: ${count}`)
                   .join(" · ") || "Нет подтверждённых решений"}
               </p>
-            )}
-            {ranking.data.metrics && (
-              <dl>
-                {Object.entries(ranking.data.metrics).map(([key, value]) => (
-                  <div key={key}>
-                    <dt>
-                      {(
-                        {
-                          train: "Training decisions",
-                          validation: "Validation decisions",
-                          baseline_top1: "Baseline top-1 agreement",
-                          learned_top1: "Learned top-1 agreement",
-                          promotion_ready: "Promotion ready",
-                        } as Record<string, string>
-                      )[key] ?? key}
-                    </dt>
-                    <dd>
-                      {key === "promotion_ready"
-                        ? value
-                          ? "yes"
-                          : "no"
-                        : ["baseline_top1", "learned_top1"].includes(key) &&
-                            typeof value === "number"
-                          ? `${(value * 100).toFixed(1)}%`
-                          : String(value)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
             )}
           </>
         )}

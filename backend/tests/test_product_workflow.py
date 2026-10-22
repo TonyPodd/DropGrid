@@ -301,8 +301,39 @@ async def test_pool_preflight_and_persisted_assignments(
                 await start_campaign(db, cid, None, None, storage, Settings(_env_file=None))
 
 
+async def add_choices(sessions, cid, sid, community_id, start, count, baseline_rank=1):
+    async with sessions() as db, db.begin():
+        for i in range(start, start + count):
+            context = PhotoSelectionSession(
+                campaign_id=cid,
+                submission_id=sid,
+                community_id=community_id,
+                category="Music",
+                content_hint="woman car",
+                baseline_rank=baseline_rank,
+                proposed_rank=2,
+                chosen_rank=2,
+                confirmed_at=utcnow() + timedelta(seconds=i),
+            )
+            db.add(context)
+            await db.flush()
+            for rank in (1, 2, 3):
+                db.add(
+                    PhotoSelectionCandidate(
+                        selection_session_id=context.id,
+                        rank=rank,
+                        provider="pinterest",
+                        source_identity=str(rank),
+                        features={"metadata_score": 0.1 if rank == 1 else 0.9 if rank == 2 else 1},
+                        candidate={},
+                        displayed=rank < 3,
+                        selected=rank == 2,
+                    )
+                )
+
+
 @pytest.mark.integration
-async def test_training_threshold_shadow_explicit_enable_and_retrain(sessions, tmp_path, client):
+async def test_training_threshold_automatic_champion_and_retrain(sessions, tmp_path, client):
     from dropgrid.photos.domain import PhotoQueryBuilder
     from dropgrid.photos.pool import PoolCandidate
     from dropgrid.photos.review import rerank
@@ -312,44 +343,11 @@ async def test_training_threshold_shadow_explicit_enable_and_retrain(sessions, t
     async with sessions() as db:
         sub = await db.scalar(select(Submission))
         sid, community_id = sub.id, sub.community_id
-
-    async def add_choices(start, count):
-        async with sessions() as db, db.begin():
-            for i in range(start, start + count):
-                context = PhotoSelectionSession(
-                    campaign_id=cid,
-                    submission_id=sid,
-                    community_id=community_id,
-                    category="Music",
-                    content_hint="woman car",
-                    baseline_rank=1,
-                    proposed_rank=2,
-                    chosen_rank=2,
-                    confirmed_at=utcnow() + timedelta(seconds=i),
-                )
-                db.add(context)
-                await db.flush()
-                for rank in (1, 2, 3):
-                    db.add(
-                        PhotoSelectionCandidate(
-                            selection_session_id=context.id,
-                            rank=rank,
-                            provider="pinterest",
-                            source_identity=str(rank),
-                            features={
-                                "metadata_score": 0.1 if rank == 1 else 0.9 if rank == 2 else 1
-                            },
-                            candidate={},
-                            displayed=rank < 3,
-                            selected=rank == 2,
-                        )
-                    )
-
-    await add_choices(0, 99)
+    await add_choices(sessions, cid, sid, community_id, 0, 99)
     settings = Settings(_env_file=None)
     async with sessions() as db, db.begin():
         assert await queue_training(db, settings) is None
-    await add_choices(99, 1)
+    await add_choices(sessions, cid, sid, community_id, 99, 1)
     async with sessions() as db, db.begin():
         assert await queue_training(db, settings)
     assert await train_one(sessions, settings)
@@ -358,12 +356,15 @@ async def test_training_threshold_shadow_explicit_enable_and_retrain(sessions, t
         assert model.metrics["train"] == 80 and model.metrics["validation"] == 20
         assert model.metrics["pairwise_examples"] == 80  # hidden rank 3 is never a negative
         assert model.metrics["baseline_top1"] == 0 and model.metrics["learned_top1"] == 1
-        assert model.metrics["promotion_ready"]
+        # Better than the baseline and no champion yet: it ranks photos without a switch.
+        assert model.state == "champion" and model.metrics["outcome"] == "promoted"
         version = model.id
     dashboard = (await client.get("/api/v1/photo-ranking")).json()
     assert dashboard["choices"] == 100 and dashboard["remaining"] == 0
-    assert dashboard["latest_model"] == f"shadow:{version}"
-    assert dashboard["metrics"]["train"] == 80 and dashboard["metrics"]["validation"] == 20
+    assert dashboard["latest_model"] == f"pairwise-v1:{version}"
+    assert dashboard["active"]["top1"] == 1 and dashboard["active"]["baseline_top1"] == 0
+    assert dashboard["last_training"]["outcome"] == "promoted"
+    assert dashboard["next_training_at"] == 125
     http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("No HTTP")))
     planner = make_planner(sessions, tmp_path, FakePhotoProvider(), http)
     # Only current bounded score features enter the model, never vectors or outcomes.
@@ -383,23 +384,102 @@ async def test_training_threshold_shadow_explicit_enable_and_retrain(sessions, t
         for i in (1, 2)
     ]
     plan = PhotoQueryBuilder().build("Music", "woman car")
-    assert (await rerank(planner, items, plan))[0] == items  # SHADOW
-    response = await client.put("/api/v1/photo-ranking", json={"mode": "learned"})
-    assert response.status_code == 200
     ranked, model_version = await rerank(planner, items, plan)
     assert ranked[0] is items[1] and model_version == f"pairwise-v1:{version}"
-    await add_choices(100, 24)
+    # The manual baseline/learned switch is gone.
+    assert (await client.put("/api/v1/photo-ranking", json={"mode": "learned"})).status_code == 405
+    await add_choices(sessions, cid, sid, community_id, 100, 24)
     async with sessions() as db, db.begin():
         assert await queue_training(db, settings) is None
-    await add_choices(124, 1)
+    await add_choices(sessions, cid, sid, community_id, 124, 1)
     async with sessions() as db, db.begin():
         assert await queue_training(db, settings)
-    async with sessions() as db, db.begin():
-        model = await db.get(PhotoRankingModel, version)
-        model.feature_schema_version = 999
+    assert await train_one(sessions, settings)
+    async with sessions() as db:
+        old = await db.get(PhotoRankingModel, version)
+        new = await db.scalar(select(PhotoRankingModel).where(PhotoRankingModel.id != version))
+        # As accurate as the champion on the same newest decisions: the newer one takes over.
+        assert new.metrics["champion_version"] == str(version)
+        assert new.metrics["outcome"] == "promoted" and new.state == "champion"
+        assert old.state == "retired"
+        new.feature_schema_version = 999
+        await db.commit()
     assert (await rerank(planner, items, plan))[1] == "deterministic-v1"
-    assert (await client.put("/api/v1/photo-ranking", json={"mode": "learned"})).status_code == 409
     await http.aclose()
+
+
+def champion_model(state, metadata_weight):
+    coefficients = [0.0] * DIMENSIONS
+    coefficients[1] = metadata_weight
+    return PhotoRankingModel(
+        state=state,
+        feature_schema_version=1,
+        coefficients=coefficients,
+        training_choices=0,
+        trained_at=utcnow() - timedelta(days=1),
+        metrics={"learned_top1": 1.0, "baseline_top1": 0.5, "promotion_ready": True},
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "state,weight,outcome",
+    [
+        ("champion", 1.0, "kept"),
+        ("ready", 1.0, "kept"),  # a model enabled under the former manual switch
+        ("champion", -1.0, "fallback"),
+    ],
+)
+async def test_challenger_never_replaces_a_better_champion(sessions, state, weight, outcome):
+    from dropgrid.photos.learning import active_model
+
+    cid = await prepared(sessions, count=1)
+    async with sessions() as db, db.begin():
+        sub = await db.scalar(select(Submission))
+        sid, community_id = sub.id, sub.community_id
+        incumbent = champion_model(state, weight)
+        db.add(incumbent)
+        await db.flush()
+        incumbent_id = incumbent.id
+    # The baseline already picks the chosen photo, so a challenger cannot beat it.
+    await add_choices(sessions, cid, sid, community_id, 0, 100, baseline_rank=2)
+    settings = Settings(_env_file=None)
+    async with sessions() as db, db.begin():
+        assert await queue_training(db, settings)
+    assert await train_one(sessions, settings)
+    async with sessions() as db:
+        challenger = await db.scalar(
+            select(PhotoRankingModel).where(PhotoRankingModel.id != incumbent_id)
+        )
+        incumbent = await db.get(PhotoRankingModel, incumbent_id)
+        active = await active_model(db)
+    assert challenger.state == "evaluated" and challenger.metrics["outcome"] == outcome
+    assert challenger.metrics["baseline_top1"] == 1 and challenger.metrics["learned_top1"] == 1
+    if outcome == "kept":
+        assert incumbent.state == "champion" and active.id == incumbent_id
+        assert incumbent.metrics["current"]["top1"] == 1
+    else:
+        # Worse than the baseline on fresh decisions: the baseline ranks again.
+        assert challenger.metrics["champion_top1"] == 0
+        assert incumbent.state == "retired" and active is None
+
+
+@pytest.mark.parametrize(
+    "enough,baseline,challenger,champion,expected",
+    [
+        (False, 0, 20, None, "insufficient_validation"),
+        (True, 10, 12, None, "promoted"),
+        (True, 10, 10, None, "not_better"),
+        (True, 10, 15, 15, "promoted"),
+        (True, 10, 14, 15, "kept"),
+        (True, 10, 9, 10, "kept"),
+        (True, 10, 9, 8, "fallback"),
+    ],
+)
+def test_champion_decision(enough, baseline, challenger, champion, expected):
+    from dropgrid.photos.learning import decide
+
+    assert decide(enough, baseline, challenger, champion) == expected
 
 
 @pytest.mark.integration
@@ -467,3 +547,22 @@ async def test_connect_preserves_development_only_import_guard(client, sessions)
         assert (
             await client.post("/api/v1/accounts/connect", json={"access_token": TOKEN})
         ).status_code == 403
+
+
+@pytest.mark.integration
+async def test_worker_start_evaluates_once_without_champion(sessions):
+    from dropgrid.photos.learning import bootstrap
+
+    cid = await prepared(sessions, count=1)
+    async with sessions() as db:
+        sub = await db.scalar(select(Submission))
+    await add_choices(sessions, cid, sub.id, sub.community_id, 0, 100)
+    settings = Settings(_env_file=None)
+    await bootstrap(sessions, settings)
+    async with sessions() as db:
+        assert (await db.scalar(select(PhotoRankingModel))).state == "queued"
+    assert await train_one(sessions, settings)
+    await bootstrap(sessions, settings)  # a champion exists now: nothing to evaluate
+    async with sessions() as db:
+        states = (await db.scalars(select(PhotoRankingModel.state))).all()
+    assert states == ["champion"]

@@ -60,10 +60,19 @@ outcomes are never operator preferences.
 `PHOTO_LEARNED_RANKER_RETRAIN_CHOICES=25` additional confirmations, or explicitly update.
 The worker fits a small CPU pairwise logistic linear model on current features. Older 80%
 train; newer 20% validate. Metrics include baseline/learned top-1 agreement, pair counts,
-schema version and sample counts. The model starts in SHADOW; it cannot affect selection
-unless it outperforms the baseline on at least 20 held-out decisions **and** the operator
-explicitly enables it under Advanced. Missing/corrupt models fall back to deterministic
-ranking. Every assignment stores its ranking model version. CLIP and baseline weights are
+schema version and sample counts.
+
+There is one working model, the **champion**; there is no manual baseline/learned switch.
+Each training produces a challenger. Challenger, champion and the deterministic baseline
+are scored on the same newest validation decisions, which neither model was trained on.
+With at least 20 of them the outcome is: `promoted` (challenger beats the baseline and is
+at least as accurate as the champion; it becomes the champion), `kept` (the champion stays
+and records its fresh accuracy), `fallback` (the champion fell behind the baseline and is
+retired; the baseline ranks until a challenger beats it) or `not_better` (no champion and
+the challenger does not beat the baseline). With fewer, nothing changes. Replaced
+champions become `retired`. Without a champion the worker evaluates once at start, so a
+model that passed the former manual check competes right away. Missing/corrupt models fall
+back to deterministic ranking. Every assignment stores its ranking model version. CLIP and baseline weights are
 unchanged; no per-community models or external ML services.
 
 ## Validation

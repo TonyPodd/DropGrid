@@ -85,12 +85,7 @@ function mock(job: unknown = null) {
           ],
         };
       else if (url.includes("photo-ranking"))
-        data = {
-          mode: "deterministic",
-          choices: 0,
-          minimum: 100,
-          promotion_ready: false,
-        };
+        data = { choices: 0, minimum: 100, active: null, last_training: null };
       else if (url.includes("photo-choice")) {
         proposed = JSON.parse(String(init?.body)).rank;
         data = { proposed_rank: proposed };
@@ -212,11 +207,11 @@ it("shows full-grid capacity and compact learning readiness", async () => {
     if (url.endsWith("photo-ranking"))
       return new Response(
         JSON.stringify({
-          mode: "deterministic",
           choices: 24,
           minimum: 100,
           latest_model: "deterministic",
-          promotion_ready: false,
+          active: null,
+          last_training: null,
         }),
       );
     return previous(input, init);
@@ -234,31 +229,36 @@ it("shows full-grid capacity and compact learning readiness", async () => {
     screen.getByText("Подключите дополнительные аккаунты или уменьшите scope."),
   ).toBeInTheDocument();
   expect(
-    await screen.findByText(/Manual decisions: 24 \/ 100/),
+    await screen.findByText(/выборов для обучения модели: 24 \/ 100/),
   ).toBeInTheDocument();
   expect(screen.getByText(/DRY RUN · отправка запрещена/)).toBeInTheDocument();
   expect(
     screen.queryByText("Создать отдельный dry run"),
   ).not.toBeInTheDocument();
 });
-it("keeps shadow diagnostics under Advanced and never promotes automatically", async () => {
+it("shows the one working model and offers no ranking switch", async () => {
   const fetch = mock();
   const previous = fetch.getMockImplementation()!;
   fetch.mockImplementation(async (input, init) => {
     if (String(input).endsWith("photo-ranking"))
       return new Response(
         JSON.stringify({
-          mode: "deterministic",
-          choices: 100,
+          choices: 130,
           minimum: 100,
-          latest_model: "shadow:fixture-v1",
-          promotion_ready: true,
-          metrics: {
-            train: 80,
-            validation: 20,
-            baseline_top1: 0.5,
-            learned_top1: 0.65,
-            promotion_ready: true,
+          retrain_interval: 25,
+          next_training_at: 150,
+          latest_model: "pairwise-v1:fixture-v2",
+          active: {
+            trained_at: "2026-10-20T10:00:00Z",
+            top1: 0.78,
+            baseline_top1: 0.61,
+          },
+          last_training: {
+            trained_at: "2026-10-21T10:00:00Z",
+            outcome: "kept",
+            learned_top1: 0.7,
+            baseline_top1: 0.6,
+            champion_top1: 0.78,
           },
         }),
       );
@@ -266,16 +266,24 @@ it("keeps shadow diagnostics under Advanced and never promotes automatically", a
   });
   render(<CampaignWorkflow campaign={campaign} onChanged={vi.fn()} />);
   expect(
-    await screen.findByText(/Latest model: shadow:fixture-v1/),
+    await screen.findByText(
+      "Подбор фото: обученная модель · угадывает ваш выбор в 78% случаев (формула — 61%)",
+    ),
   ).toBeInTheDocument();
   const summary = screen.getByText("Обучение автоподбора / диагностика");
   expect(summary.closest("details")).not.toHaveAttribute("open");
   await userEvent.click(summary);
-  expect(screen.getByText("Training decisions")).toBeInTheDocument();
-  expect(screen.getByText("Validation decisions")).toBeInTheDocument();
-  expect(screen.getByText("50.0%")).toBeInTheDocument();
-  expect(screen.getByText("65.0%")).toBeInTheDocument();
-  expect(screen.getByText("yes")).toBeInTheDocument();
+  expect(screen.getByText(/Следующее обучение — на 150 выборах/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/новая версия угадала 70%, рабочая — 78%: оставлена рабочая/),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Обучить сейчас" })).toBeEnabled();
+  expect(
+    screen.queryByRole("button", { name: "Включить проверенную модель" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Исходное ранжирование" }),
+  ).not.toBeInTheDocument();
   expect(
     fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
   ).toHaveLength(0);

@@ -15,7 +15,7 @@ from dropgrid.logging import configure_logging
 from dropgrid.photos.archive import VKArchivePhotoProvider
 from dropgrid.photos.campaign_preparation import CampaignPreparation
 from dropgrid.photos.engine import PhotoEngine
-from dropgrid.photos.learning import train_one
+from dropgrid.photos.learning import bootstrap, train_one
 from dropgrid.photos.operation_jobs import PhotoJobs
 from dropgrid.photos.preparation import MediaPreparation
 from dropgrid.photos.reference_jobs import ReferenceJobs
@@ -48,6 +48,10 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
     operations = PhotoJobs(engine, service.collector)
     workflow = CampaignPreparation(engine, MediaPreparation(service.collector))
     try:
+        try:
+            await bootstrap(db.sessions, settings)
+        except (SQLAlchemyError, PostgresError, OSError):
+            logger.warning("Ranking bootstrap skipped")
         while not stop.is_set():
             try:
                 processed = await service.tick()

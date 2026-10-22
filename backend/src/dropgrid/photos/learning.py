@@ -1,11 +1,18 @@
-"""Local interpretable pairwise ranker. Confirmed, displayed choices only; shadow first."""
+"""Local interpretable pairwise ranker trained on confirmed, displayed choices.
+
+One model ranks photos: the champion. Every training produces a challenger that is
+compared with the champion and with the deterministic baseline on the same, newest
+decisions neither was trained on. The challenger replaces the champion only if it
+is at least as accurate as the champion and more accurate than the baseline. A
+champion that falls behind the baseline is retired and the baseline ranks again.
+"""
 
 import math
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from dropgrid.config import Settings
@@ -65,10 +72,15 @@ def features(row: PhotoSelectionCandidate, context: PhotoSelectionSession) -> li
     )
 
 
+# "ready" marks models that passed the former manual-enable check.
+TRAINED_STATES = ("ready", "evaluated", "champion", "retired")
+MIN_VALIDATION = 20
+
+
 def valid_model(model: PhotoRankingModel | None) -> bool:
     return bool(
         model
-        and model.state in {"ready", "evaluated"}
+        and model.state in TRAINED_STATES
         and model.feature_schema_version == SCHEMA_VERSION
         and model.coefficients
         and len(model.coefficients) == DIMENSIONS
@@ -104,14 +116,50 @@ def temporal_split(
     return ordered[:cut], ordered[cut:]
 
 
-async def latest_model(session: AsyncSession) -> PhotoRankingModel | None:
-    result = await session.scalar(
+async def active_model(session: AsyncSession) -> PhotoRankingModel | None:
+    """The champion that ranks photos; None means the deterministic baseline ranks."""
+    model = await session.scalar(
         select(PhotoRankingModel)
-        .where(PhotoRankingModel.state.in_(("ready", "evaluated")))
+        .where(PhotoRankingModel.state == "champion")
         .order_by(PhotoRankingModel.trained_at.desc(), PhotoRankingModel.id.desc())
         .limit(1)
     )
-    return result
+    return model if valid_model(model) else None
+
+
+async def latest_trained(session: AsyncSession) -> PhotoRankingModel | None:
+    model: PhotoRankingModel | None = await session.scalar(
+        select(PhotoRankingModel)
+        .where(PhotoRankingModel.state.in_(TRAINED_STATES))
+        .order_by(PhotoRankingModel.trained_at.desc(), PhotoRankingModel.id.desc())
+        .limit(1)
+    )
+    return model
+
+
+async def _incumbent(session: AsyncSession) -> PhotoRankingModel | None:
+    champion = await active_model(session)
+    if champion:
+        return champion
+    # Before the first champion, a model that passed the former check may compete.
+    legacy = await session.scalar(
+        select(PhotoRankingModel)
+        .where(PhotoRankingModel.state == "ready")
+        .order_by(PhotoRankingModel.trained_at.desc(), PhotoRankingModel.id.desc())
+        .limit(1)
+    )
+    return legacy if valid_model(legacy) else None
+
+
+def decide(enough: bool, baseline: int, challenger: int, champion: int | None) -> str:
+    """Outcome of one training, from top-1 hits on the same validation decisions."""
+    if not enough:
+        return "insufficient_validation"
+    if challenger > baseline and (champion is None or challenger >= champion):
+        return "promoted"
+    if champion is None:
+        return "not_better"
+    return "kept" if champion >= baseline else "fallback"
 
 
 async def queue_training(
@@ -135,7 +183,7 @@ async def queue_training(
         return active
     previous = await session.scalar(
         select(PhotoRankingModel)
-        .where(PhotoRankingModel.state.in_(("ready", "evaluated")))
+        .where(PhotoRankingModel.state.in_(TRAINED_STATES))
         .order_by(PhotoRankingModel.created_at.desc())
         .limit(1)
     )
@@ -232,10 +280,26 @@ async def train_one(sessions: async_sessionmaker[AsyncSession], settings: Settin
                     for w, x in zip(weights, delta, strict=True)
                 ]
         model.coefficients, model.feature_schema_version = weights, SCHEMA_VERSION
-        model.state = "ready"  # permits evaluation only; preference is still deterministic
+        model.state = "evaluated"  # a challenger until the comparison below promotes it
+        incumbent = await _incumbent(session)
+
+        def hits(ranker: PhotoRankingModel) -> int:
+            return sum(
+                predict(groups.get(d.id, []), d, ranker) == d.chosen_rank for d in validation
+            )
+
         baseline = sum(d.chosen_rank == d.baseline_rank for d in validation)
-        learned = sum(predict(groups.get(d.id, []), d, model) == d.chosen_rank for d in validation)
+        learned = hits(model)
+        held = hits(incumbent) if incumbent else None
+        outcome = decide(
+            len(validation) >= MIN_VALIDATION and bool(comparisons), baseline, learned, held
+        )
         denominator = max(1, len(validation))
+        evaluation = {
+            "validation": len(validation),
+            "baseline_top1": baseline / denominator,
+            "evaluated_at": utcnow().isoformat(),
+        }
         model.metrics = {
             "decisions": len(decisions),
             "train": len(train),
@@ -244,8 +308,26 @@ async def train_one(sessions: async_sessionmaker[AsyncSession], settings: Settin
             "rating_examples": len(weak_comparisons),
             "baseline_top1": baseline / denominator,
             "learned_top1": learned / denominator,
-            "promotion_ready": len(validation) >= 20 and learned > baseline and bool(comparisons),
+            "champion_version": str(incumbent.id) if incumbent else None,
+            "champion_top1": held / denominator if held is not None else None,
+            "outcome": outcome,
+            "promotion_ready": outcome == "promoted",
         }
+        if outcome in {"promoted", "fallback"}:
+            await session.execute(
+                update(PhotoRankingModel)
+                .where(PhotoRankingModel.state.in_(("champion", "ready")))
+                .values(state="retired")
+            )
+        if outcome == "promoted":
+            model.state = "champion"
+            model.metrics["current"] = {**evaluation, "top1": learned / denominator}
+        elif outcome == "kept" and incumbent and held is not None:
+            incumbent.state = "champion"
+            incumbent.metrics = {
+                **(incumbent.metrics or {}),
+                "current": {**evaluation, "top1": held / denominator},
+            }
         reviewers = {
             r.id: r.display_name for r in (await session.scalars(select(PhotoReviewer))).all()
         }
@@ -276,6 +358,11 @@ async def train_one(sessions: async_sessionmaker[AsyncSession], settings: Settin
             or 0
         )
         model.trained_at = utcnow()
-        if not model.metrics["promotion_ready"]:
-            model.state = "evaluated"
         return True
+
+
+async def bootstrap(sessions: async_sessionmaker[AsyncSession], settings: Settings) -> None:
+    """Without a champion, evaluate once at worker start instead of waiting for new choices."""
+    async with sessions() as session, session.begin():
+        if not await active_model(session):
+            await queue_training(session, settings, explicit=True)
