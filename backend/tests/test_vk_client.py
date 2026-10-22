@@ -213,6 +213,46 @@ async def test_generic_write_guard_before_http(method):
             await client.call(method, access_token=TOKEN, account_id=ACCOUNT)
 
 
+async def test_delete_wall_post_is_a_guarded_single_write():
+    calls = []
+
+    def handle(request):
+        calls.append(dict(httpx.QueryParams(request.content.decode())))
+        return httpx.Response(200, json={"response": 1 if len(calls) == 1 else 0})
+
+    async with VKClient(
+        settings(), transport=httpx.MockTransport(handle), limiter=NoWaitLimiter()
+    ) as client:
+        with pytest.raises(VKWriteDisabledError):
+            await client.delete_wall_post(-123, 7, access_token=TOKEN, account_id=ACCOUNT)
+    assert calls == []
+    async with VKClient(
+        settings(vk_write_enabled=True),
+        transport=httpx.MockTransport(handle),
+        limiter=NoWaitLimiter(),
+    ) as client:
+        await client.delete_wall_post(-123, 7, access_token=TOKEN, account_id=ACCOUNT)
+        with pytest.raises(VKProtocolError):
+            await client.delete_wall_post(-123, 8, access_token=TOKEN, account_id=ACCOUNT)
+        with pytest.raises(VKInputError):
+            await client.delete_wall_post(-123, 0, access_token=TOKEN, account_id=ACCOUNT)
+    assert [(c["owner_id"], c["post_id"]) for c in calls] == [("-123", "7"), ("-123", "8")]
+
+
+async def test_own_suggestions_skip_malformed_items():
+    def handle(request):
+        params = dict(httpx.QueryParams(request.content.decode()))
+        assert params["owner_id"] == "-123" and params["filter"] == "suggests"
+        items = [{"id": 7, "owner_id": -123, "post_type": "suggest"}, {"id": "bad"}]
+        return httpx.Response(200, json={"response": {"count": 2, "items": items}})
+
+    async with VKClient(
+        settings(), transport=httpx.MockTransport(handle), limiter=NoWaitLimiter()
+    ) as client:
+        posts = await client.get_own_suggestions(123, access_token=TOKEN, account_id=ACCOUNT)
+    assert [p.id for p in posts] == [7]
+
+
 async def test_enabled_write_never_retries_uncertain_timeout():
     calls = []
 

@@ -56,6 +56,10 @@ async def retry_failed(campaign_id: UUID, session: Session, request: Request) ->
 
 class WorkflowInput(Input):
     account_ids: list[UUID] | None = Field(default=None, min_length=1, max_length=200)
+    # Girl accounts for dating/selfie publics; they must also be in account_ids.
+    persona_account_ids: list[UUID] | None = Field(default=None, max_length=200)
+    # False: only select photos. True: also suggest the posts once photos are ready.
+    auto_send: bool = False
 
 
 class ChoiceInput(Input):
@@ -68,7 +72,14 @@ class ChoiceInput(Input):
 async def prepare_workflow(
     campaign_id: UUID, data: WorkflowInput, session: Session, request: Request
 ) -> dict[str, object]:
-    job = await enqueue(session, campaign_id, request.app.state.photo_engine, data.account_ids)
+    job = await enqueue(
+        session,
+        campaign_id,
+        request.app.state.photo_engine,
+        data.account_ids,
+        persona_ids=data.persona_account_ids,
+        auto_send=data.auto_send,
+    )
     return {
         "id": job.id,
         "state": job.state,
@@ -304,7 +315,9 @@ async def photo_review(campaign_id: UUID, session: Session, page: int = 1) -> di
 
 @router.put("/submissions/{submission_id}/photo-choice")
 async def set_choice(submission_id: UUID, data: ChoiceInput, session: Session) -> dict[str, object]:
-    selection = await choose(session, submission_id, data.rank, data.rating, data.shown_ranks)
+    selection = await choose(
+        session, submission_id, data.rank, data.rating, data.shown_ranks, revise_dislike=True
+    )
     if data.rating == "dislike":
         # A disliked photo cannot be approved: propose the next usable alternative.
         await next_alternative(session, selection, data.rank)

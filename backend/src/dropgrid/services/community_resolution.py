@@ -29,6 +29,7 @@ async def apply_resolution(
     row.vk_group_id = group.id
     if group.name:
         row.name = group.name[:200]
+    row.description = group.description.strip()[:2000] or None
     if group.screen_name:
         try:
             canonical = normalize_vk_community_reference(group.screen_name)

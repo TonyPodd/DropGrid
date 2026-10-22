@@ -5,23 +5,25 @@ from datetime import datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, true
+from sqlalchemy import func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dropgrid.db.models import (
     Campaign,
     CampaignAccount,
     CampaignPreparationJob,
+    GridCommunity,
     Submission,
     utcnow,
 )
 from dropgrid.domain.enums import CampaignStatus
 from dropgrid.integrations.vk.read_only import preparation_read_only
+from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.engine import PhotoEngine
 from dropgrid.photos.preparation import MediaPreparation
 from dropgrid.photos.progress import observer
 from dropgrid.photos.schemas import MediaPlanInput
-from dropgrid.services.account_pools import pool, save_pool
+from dropgrid.services.account_pools import accounts_needed, pool, save_pool
 from dropgrid.services.campaigns import locked_campaign, prepare_campaign
 from dropgrid.services.catalog import ConflictError
 from dropgrid.services.sending import preflight, usable_account
@@ -35,10 +37,16 @@ async def enqueue(
     engine: PhotoEngine,
     account_ids: list[UUID] | None = None,
     submission_ids: list[UUID] | None = None,
+    *,
+    persona_ids: list[UUID] | None = None,
+    auto_send: bool | None = None,
 ) -> CampaignPreparationJob:
+    """``auto_send`` None keeps the campaign's choice (retries); a bool sets it."""
     campaign = await locked_campaign(session, campaign_id)
     if campaign.status not in {CampaignStatus.draft, CampaignStatus.ready}:
         raise ConflictError("Preparation is unavailable after sending starts")
+    if auto_send and campaign.is_dry_run:
+        raise ConflictError("Dry-run campaigns cannot be sent")
     old = await session.scalar(
         select(CampaignPreparationJob)
         .where(CampaignPreparationJob.campaign_id == campaign_id)
@@ -52,7 +60,23 @@ async def enqueue(
         raise ConflictError("Selected pool contains unusable accounts")
     if not usable:
         raise ConflictError("Connect at least one usable VK account")
-    await save_pool(session, campaign_id, [a.id for a in usable], engine.planner.settings)
+    if auto_send:
+        communities = (
+            await session.scalar(
+                select(func.count())
+                .select_from(GridCommunity)
+                .where(GridCommunity.grid_id == campaign.grid_id)
+            )
+            or 0
+        )
+        quota = engine.planner.settings.account_campaign_send_quota
+        if len(usable) < accounts_needed(communities, quota):
+            raise PhotoConflict("accounts_needed", "Not enough accounts to suggest every post")
+    if auto_send is not None:
+        campaign.auto_send = auto_send
+    await save_pool(
+        session, campaign_id, [a.id for a in usable], engine.planner.settings, persona_ids
+    )
     report = await prepare_campaign(session, campaign_id)
     campaign.preparation_state = "preparing"
     if old:

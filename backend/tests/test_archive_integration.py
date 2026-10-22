@@ -448,7 +448,7 @@ async def test_real_planner_mixed_winner_lazy_import_and_no_cross_community(
             visual=VisualLibrary(sessions, storage, embedder),
         )
         planner.archive = VKArchivePhotoProvider(collector)
-        await planner.plan(campaign_id, MediaPlanInput(max_reuse_per_asset=1))
+        await planner.plan(campaign_id, MediaPlanInput())
     async with sessions() as s:
         own = await s.scalar(select(Submission).where(Submission.community_id == cid))
         other = await s.scalar(select(Submission).where(Submission.community_id != cid))
@@ -462,8 +462,11 @@ async def test_real_planner_mixed_winner_lazy_import_and_no_cross_community(
                 and other.media_asset_id == pixabay_id
             )
         else:
+            # The best fit serves both communities: photos may repeat within a campaign.
             assert (
-                not archives and own.media_asset_id == pixabay_id and other.media_asset_id is None
+                not archives
+                and own.media_asset_id == pixabay_id
+                and other.media_asset_id == pixabay_id
             )
         assert await s.scalar(select(func.count()).select_from(CommunityMediaUsage)) == 0
         assert all(a.usage_count == 0 for a in (await s.scalars(select(MediaAsset))).all())

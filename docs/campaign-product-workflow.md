@@ -48,6 +48,43 @@ A grid category without a saved column blocks preflight (`category_unassigned`,
 Changing a distribution affects campaigns at their next preparation/start; started
 campaigns keep their persisted assignment.
 
+## Dating and selfie publics (girl photos)
+
+Grid categories whose name contains «знакомств» or «селфи» (also `selfie`/`dating`) are
+persona categories. They need no gender column in **Categories**. Before preparation the
+campaign counts these publics and shows ⌈publics / quota⌉ girl-account slots (1 account =
+`ACCOUNT_CAMPAIGN_SEND_QUOTA`, 100 publics). Each slot takes an already connected account
+or a new one connected by token right there (`/accounts/connect`; marked female when it
+has no gender). Each girl account has any number of selfies and other photos, at least
+one of each and at most 30 (`POST /accounts/{id}/persona-photos?kind=selfie|other`: raw
+JPEG/PNG/WEBP, optional tags such as «в зеркале»; `PATCH`/`DELETE .../{media_asset_id}`
+moves a photo between kinds, retags or removes it; selfies are always tagged «селфи»).
+Preparation is blocked until capacity covers every public and every girl has both kinds.
+
+A girl's photo belongs to her account (one VK token) only: `account_persona_photos` has a
+unique `media_asset_id`; uploads reject a photo linked to or already sent by another
+account (`persona_photo_taken`), a photo she already has (`persona_photo_duplicate`),
+library photos (`persona_photo_in_library`) and a 31st photo (`persona_photo_limit`).
+Uploads use provider `persona`, never offered to other categories. Removing a photo keeps
+its MediaAsset for history.
+
+Allocation puts girl accounts' lane first: their dating/selfie publics, then their own
+gender and unisex categories. Other accounts never receive persona publics. A public that
+already holds one girl's photo stays with her (pinned), so pilot scopes cannot swap
+girls. Photo choice (`photos/persona.py`) ranks only the allocated girl's photos per
+public: 70% CLIP similarity to the public's core wall references, 25% tag matches in its
+name, VK description and grid hints, 5% spread across the campaign; a photo the public
+already received in the cooldown window goes last. Choices are snapshotted like library
+choices, so REVIEW_BEFORE_SEND works unchanged; confirming a girl photo skips the library
+reuse limit and community cooldown. Preparation reads the VK description once for persona
+publics that have none yet.
+
+Preflight blocks start on `persona_account_missing`, `persona_photos_incomplete` (a girl
+without a selfie or without another photo) or `persona_photo_mismatch` (any row whose
+girl photo is not the allocated account's). The sender re-checks ownership before any VK
+call and skips such a row as `persona_photo_mismatch`, so a girl's photo is never sent
+with another token.
+
 ## Learning from explicit review
 
 At most 12 candidate feature snapshots per selection session: scores, provider, context and

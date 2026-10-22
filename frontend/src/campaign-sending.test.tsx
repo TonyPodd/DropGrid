@@ -86,17 +86,16 @@ it("uses persisted account pool and confirmation, starts a pilot scope only on c
   });
   expect(changed).toHaveBeenCalledOnce();
 });
-it("blocks missing media preflight", async () => {
+it("skips communities without a photo instead of blocking the start", async () => {
   mock();
   vi.mocked(campaignsApi.preflight).mockResolvedValue({
     ...report,
-    ready: false,
     media_missing: 1,
   });
   render(<CampaignSendControls campaign={campaign} onChanged={vi.fn()} />);
   await screen.findByText(/Очередь аккаунтов .*1\. Usable/);
-  await screen.findByText(/Без фото: 1/);
-  expect(screen.getByRole("button", { name: "Start campaign" })).toBeDisabled();
+  await screen.findByText(/Без фото \(пропустим\): 1/);
+  expect(screen.getByRole("button", { name: "Start campaign" })).toBeEnabled();
 });
 it("asks to distribute grid categories before sending", async () => {
   mock();

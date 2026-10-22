@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import signal
+from datetime import datetime
+from uuid import UUID
 
 from asyncpg import PostgresError
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,7 +16,7 @@ from dropgrid.integrations.vk.photos import WallPhotoUploader
 from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
 from dropgrid.logging import configure_logging
 from dropgrid.photos.images import LocalMediaStorage
-from dropgrid.services.sending import CampaignSender
+from dropgrid.services.sending import CampaignSender, autostart
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +24,19 @@ logger = logging.getLogger(__name__)
 async def run(settings: Settings, stop: asyncio.Event) -> None:
     db = Database(settings)
     async with VKClient(settings) as client, WallPhotoUploader(client) as uploader:
+        storage = LocalMediaStorage(settings.media_storage_dir)
         sender = CampaignSender(
             db.sessions,
             client,
             DBTokenProvider(db.sessions, AccountTokenCipher(settings.app_secret_key)),
-            LocalMediaStorage(settings.media_storage_dir),
+            storage,
             uploader,
         )
+        checked: dict[UUID, datetime] = {}
         try:
             while not stop.is_set():
                 try:
+                    await autostart(db.sessions, storage, settings, checked)
                     await sender.tick()
                 except (SQLAlchemyError, PostgresError, OSError, TimeoutError):
                     # No exception bodies: they can contain SQL parameters/credentials.

@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     apify_api_token: SecretStr | None = None
     pinterest_apify_actor: str = ""
     media_storage_dir: Path = Path("media")
-    photo_max_reuse_per_asset: int = Field(default=1, ge=1, le=20)
+    # None: within one campaign a photo may serve any number of communities it fits.
+    photo_max_reuse_per_asset: int | None = Field(default=None, ge=1, le=10000)
     photo_search_cache_hours: int = Field(default=24, ge=24, le=168)
     photo_download_concurrency: int = Field(default=4, ge=1, le=6)
     campaign_reference_warmup_target: int = Field(default=12, ge=1, le=20)
@@ -63,6 +64,8 @@ class Settings(BaseSettings):
     vk_api_version: str = "5.199"
     vk_write_enabled: bool = False
     vk_send_interval_seconds: float = Field(default=60, ge=1, le=86400)
+    # Before a new suggestion the sender deletes this account's older unpublished ones there.
+    vk_stale_suggestion_days: int = Field(default=5, ge=1, le=365)
     vk_test_allowed_community_ids: Annotated[frozenset[int], NoDecode] = frozenset()
     vk_test_access_token: SecretStr | None = None
     vk_test_account_id: UUID | None = None

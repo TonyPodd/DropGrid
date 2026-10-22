@@ -20,7 +20,14 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.photos.visual import VisualEmbedder
-from dropgrid.services.account_pools import CATEGORY_UNASSIGNED, distribute, pool
+from dropgrid.services.account_pools import (
+    CATEGORY_UNASSIGNED,
+    PERSONA_ACCOUNT_MISSING,
+    distribute,
+    persona_accounts,
+    persona_pins,
+    pool,
+)
 from dropgrid.services.catalog import get_entity
 from dropgrid.services.category_genders import placements
 from dropgrid.services.sending import usable_account
@@ -77,6 +84,12 @@ async def report(
             ).all()
         )
     assets = Counter(row.media_asset_id for row, _ in rows if row.media_asset_id)
+    # Girl photos are reused across dating/selfie publics by design: not a library breach.
+    library = Counter(
+        row.media_asset_id
+        for row, _ in rows
+        if row.media_asset_id and row.photo_source != "persona"
+    )
     sources = Counter(row.photo_source or "library" for row, _ in rows if row.media_asset_id)
     attention = Counter(flag for row, _ in rows for flag in row.photo_attention)
     selections = (
@@ -128,14 +141,18 @@ async def report(
     allocation_rows: list[tuple[Submission, Community]] = (
         [(r, c) for r, c in rows] if rows else [(Submission(id=c.id), c) for c in grid]
     )
+    girls = await persona_accounts(session, campaign_id)
+    available_rows = [
+        (r, c)
+        for r, c in allocation_rows
+        if c.is_active and c.resolution_status == "resolved" and c.vk_group_id
+    ]
     allocations, failures = distribute(
-        [
-            (r, c)
-            for r, c in allocation_rows
-            if c.is_active and c.resolution_status == "resolved" and c.vk_group_id
-        ],
+        available_rows,
         accounts,
         await placements(session, campaign.grid_id),
+        girls,
+        await persona_pins(session, [r for r, _ in available_rows], girls),
     )
     job = await session.scalar(
         select(CampaignPreparationJob).where(CampaignPreparationJob.campaign_id == campaign_id)
@@ -180,10 +197,10 @@ async def report(
         "small_candidate_pools": attention["small_candidate_pool"],
         "unique_media_assets": len(assets),
         "reused_assignments": sum(v - 1 for v in assets.values()),
-        "max_reuse": max(assets.values(), default=0),
+        "max_reuse": max(library.values(), default=0),
         "max_reuse_policy": settings.photo_max_reuse_per_asset,
-        "reuse_policy_respected": max(assets.values(), default=0)
-        <= settings.photo_max_reuse_per_asset,
+        "reuse_policy_respected": settings.photo_max_reuse_per_asset is None
+        or max(library.values(), default=0) <= settings.photo_max_reuse_per_asset,
         "near_duplicate_exclusions": (job.result or {}).get("near_duplicate_exclusions", 0)
         if job
         else 0,
@@ -203,6 +220,9 @@ async def report(
             reason == "account_gender_mismatch" for reason in failures.values()
         ),
         "category_unassigned": sum(reason == CATEGORY_UNASSIGNED for reason in failures.values()),
+        "persona_account_missing": sum(
+            reason == PERSONA_ACCOUNT_MISSING for reason in failures.values()
+        ),
         "write_attempts": sum(r.attempt_count for r, _ in rows),
         "submitted": sum(r.submitted_at is not None for r, _ in rows),
     }

@@ -33,6 +33,7 @@ from dropgrid.integrations.vk.models import (
     VKCommunitySearch,
     VKNotifications,
     VKUser,
+    WallPostDetails,
     WallPostReceipt,
     WallPosts,
     WallPostsById,
@@ -49,7 +50,9 @@ _READ_METHODS = frozenset(
         "notifications.get",
     }
 )
-_WRITE_METHODS = frozenset({"wall.post", "photos.getWallUploadServer", "photos.saveWallPhoto"})
+_WRITE_METHODS = frozenset(
+    {"wall.post", "wall.delete", "photos.getWallUploadServer", "photos.saveWallPhoto"}
+)
 logger = logging.getLogger(__name__)
 
 
@@ -417,7 +420,9 @@ class VKClient:
             chunk = unique[start : start + 25]
             try:
                 groups = await self._groups(
-                    {"group_ids": chunk}, access_token=access_token, account_id=account_id
+                    {"group_ids": chunk, "fields": "description"},
+                    access_token=access_token,
+                    account_id=account_id,
                 )
             except VKError as error:
                 # Invalid/dead entries can reject a whole chunk. Only definitive
@@ -464,7 +469,7 @@ class VKClient:
             "groups.getById",
             access_token=access_token,
             account_id=account_id,
-            params={"group_id": normalized},
+            params={"group_id": normalized, "fields": "description"},
         )
         response = data["response"]
         if not isinstance(response, dict):
@@ -566,6 +571,47 @@ class VKClient:
             params={"posts": f"{owner_id}_{post_id}", "extended": 0},
         )
         return parse_response(TypeAdapter(WallPostsById), data["response"], "wall.getById")
+
+    async def get_own_suggestions(
+        self, group_id: int, *, access_token: str | SecretStr, account_id: UUID
+    ) -> list[WallPostDetails]:
+        """Suggestions VK shows this account in a community: its own pending posts."""
+        if type(group_id) is not int or not 0 < group_id <= 2**63 - 1:
+            raise VKInputError("wall.get", "Invalid community identifier")
+        data = await self.call(
+            "wall.get",
+            access_token=access_token,
+            account_id=account_id,
+            params={"owner_id": -group_id, "filter": "suggests", "count": 100, "extended": 0},
+        )
+        posts = parse_response(TypeAdapter(WallPosts), data["response"], "wall.get")
+        items = []
+        for item in posts.items:
+            try:
+                items.append(WallPostDetails.model_validate(item))
+            except ValidationError:
+                continue
+        return items
+
+    async def delete_wall_post(
+        self, owner_id: int, post_id: int, *, access_token: str | SecretStr, account_id: UUID
+    ) -> None:
+        if (
+            type(owner_id) is not int
+            or not 0 < abs(owner_id) <= 2**63 - 1
+            or type(post_id) is not int
+            or not 0 < post_id <= 2**63 - 1
+        ):
+            raise VKInputError("wall.delete", "Invalid wall post identity")
+        self.require_write("wall.delete")
+        data = await self.call(
+            "wall.delete",
+            access_token=access_token,
+            account_id=account_id,
+            params={"owner_id": owner_id, "post_id": post_id},
+        )
+        if data["response"] != 1:
+            raise VKProtocolError("wall.delete", "Unexpected wall.delete response")
 
     async def get_suggested_posts(
         self,

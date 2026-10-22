@@ -42,11 +42,11 @@ def asset(n: int) -> MediaAsset:
     )
 
 
-async def test_proposed_photos_cover_picks_choices_and_other_campaigns(sessions):
+async def test_proposed_photos_cover_other_campaigns_only(sessions):
     async with sessions() as db, db.begin():
         grid = Grid(name="History")
         community = Community(domain="history1")
-        assets = [asset(n) for n in range(1, 6)]
+        assets = [asset(n) for n in range(1, 7)]
         db.add_all([grid, community, *assets])
         await db.flush()
         earlier, current = (
@@ -95,6 +95,26 @@ async def test_proposed_photos_cover_picks_choices_and_other_campaigns(sessions)
                     selected=selected,
                 )
             )
+        own = PhotoSelectionSession(
+            campaign_id=current.id,
+            submission_id=mine.id,
+            community_id=community.id,
+            baseline_rank=1,
+            proposed_rank=1,
+        )
+        db.add(own)
+        await db.flush()
+        db.add(
+            PhotoSelectionCandidate(
+                selection_session_id=own.id,
+                rank=1,
+                provider="pinterest",
+                source_identity="pin-6",
+                media_asset_id=assets[5].id,
+                features={},
+                candidate={"provider": "pinterest", "provider_asset_id": "pin-6"},
+            )
+        )
         current_id = current.id
     async with sessions() as db:
         seen = await proposed_photos(db, current_id)
@@ -102,9 +122,11 @@ async def test_proposed_photos_cover_picks_choices_and_other_campaigns(sessions)
     assert {("pinterest", "pin-1"), ("pinterest", "pin-3"), ("pinterest", "pin-4")} <= (
         seen.identities
     )
-    # A merely displayed alternative and this campaign's own assignment stay available.
+    # A merely displayed alternative and this campaign's own photos stay available:
+    # within one campaign a photo may repeat across communities.
     assert ("pinterest", "pin-2") not in seen.identities
     assert ("pinterest", "pin-5") not in seen.identities
+    assert ("pinterest", "pin-6") not in seen.identities
     assert f"{1:064x}" in seen.sha256 and f"{2:064x}" not in seen.sha256
 
 
@@ -248,48 +270,24 @@ async def test_planner_never_proposes_the_same_photo_again(sessions, tmp_path):
     await http.aclose()
 
 
-async def test_alternatives_hide_photos_given_to_other_communities(sessions):
-    from sqlalchemy import select
+def test_best_fit_wins_over_an_unused_photo():
+    import math
+    from collections import Counter
+    from uuid import uuid4
 
-    from dropgrid.photos.review import snapshot
-    from dropgrid.photos.visual import RankedPhoto
+    from dropgrid.photos.planner import assign_assets, reuse_limit
 
-    async with sessions() as db, db.begin():
-        grid = Grid(name="Alternatives")
-        community = Community(domain="alternatives1")
-        chosen, other, fresh = asset(11), asset(12), asset(13)
-        db.add_all([grid, community, chosen, other, fresh])
-        await db.flush()
-        campaign = Campaign(
-            name="Run", grid_id=grid.id, track_url="https://vk.ru/audio1_2", status="ready"
-        )
-        db.add(campaign)
-        await db.flush()
-        submission = Submission(
-            campaign_id=campaign.id, community_id=community.id, media_asset_id=chosen.id
-        )
-        db.add(submission)
-        await db.flush()
-        items = [
-            PoolCandidate(
-                candidate(provider="pinterest", provider_asset_id=a.provider_asset_id),
-                "pinterest",
-                asset=a,
-                score=RankedPhoto(1, None, score, None, 0),
-            )
-            for a, score in ((other, 0.9), (chosen, 0.8), (fresh, 0.7))
-        ]
-        taken = ProposedPhotos()
-        taken.remember_asset(other)
-        taken.remember_asset(chosen)
-        plan = PhotoQueryBuilder().build("truck")
-        await snapshot(db, submission, plan, items, items, "deterministic-v1", [], hidden=taken)
-        shown = (
-            await db.scalars(
-                select(PhotoSelectionCandidate.source_identity).order_by(
-                    PhotoSelectionCandidate.rank
-                )
-            )
-        ).all()
-    # The photo given to another community is not offered; the own pick stays.
-    assert shown == ["pin-11", "pin-13"]
+    fit, other = (
+        MediaAsset(id=uuid4(), usage_count=0, width=800, height=800, storage_key=str(n))
+        for n in (1, 2)
+    )
+    first, second = uuid4(), uuid4()
+    scores = {sid: {fit.id: 0.9, other.id: 0.2} for sid in (first, second)}
+    assert reuse_limit(None, None) == math.inf and reuse_limit(None, 3) == 3
+    assigned = assign_assets(
+        [first, second], [fit, other], Counter(), reuse_limit(None, None), Counter(), scores
+    )
+    # The same photo fits both communities best, so both get it.
+    assert assigned == {first: fit.id, second: fit.id}
+    capped = assign_assets([first, second], [fit, other], Counter(), 1, Counter(), scores)
+    assert capped == {first: fit.id, second: other.id}

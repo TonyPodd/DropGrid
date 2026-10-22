@@ -13,6 +13,7 @@ from dropgrid.api.schemas import (
 )
 from dropgrid.db.models import Grid, GridCategoryGender, GridCommunity
 from dropgrid.domain.enums import CategoryGender
+from dropgrid.domain.personas import is_persona_category
 from dropgrid.services.catalog import InvalidGridError, NotFoundError, get_entity
 from dropgrid.services.workflow import grid_categories
 
@@ -25,6 +26,8 @@ class Placement:
     category: str | None
     # None: the operator has not put this category into any column yet.
     gender: CategoryGender | None
+    # Dating/selfie: sent by the campaign's girl accounts, not by gender column.
+    persona: bool = False
 
 
 UNPLACED = Placement(None, None)
@@ -46,7 +49,8 @@ async def placements(session: AsyncSession, grid_id: UUID) -> dict[UUID, Placeme
         )
     )
     return {
-        community_id: Placement(category, genders.get(category)) for community_id, category in rows
+        community_id: Placement(category, genders.get(category), is_persona_category(category))
+        for community_id, category in rows
     }
 
 
@@ -74,7 +78,8 @@ async def read(session: AsyncSession, grid_id: UUID) -> GridCategoryGendersRead:
     suggested = await _suggestions(
         session, grid_id, [c.category for c in counts if c.category and c.category not in saved]
     )
-    present = [saved[c.category] for c in counts if c.category in saved]
+    columns = [c for c in counts if not is_persona_category(c.category)]
+    present = [saved[c.category] for c in columns if c.category in saved]
     return GridCategoryGendersRead(
         grid_id=grid_id,
         categories=[
@@ -83,10 +88,11 @@ async def read(session: AsyncSession, grid_id: UUID) -> GridCategoryGendersRead:
                 count=c.count,
                 gender=saved[c.category].gender if c.category in saved else None,
                 suggested_gender=suggested.get(c.category) if c.category else None,
+                persona=is_persona_category(c.category),
             )
             for c in counts
         ],
-        complete=bool(counts) and len(present) == len(counts),
+        complete=bool(counts) and len(present) == len(columns),
         updated_at=max((row.updated_at for row in present), default=None),
     )
 
@@ -94,11 +100,18 @@ async def read(session: AsyncSession, grid_id: UUID) -> GridCategoryGendersRead:
 async def save(
     session: AsyncSession, grid_id: UUID, items: list[CategoryGenderInput]
 ) -> GridCategoryGendersRead:
-    """Replace the whole distribution; every current grid category must be placed once."""
+    """Replace the whole distribution; every gender-sent grid category must be placed once.
+
+    Dating/selfie categories go to the campaign's girl accounts and need no column.
+    """
     # The grid row lock serializes concurrent saves of the same distribution.
     if await session.get(Grid, grid_id, with_for_update=True) is None:
         raise NotFoundError("Grid not found")
-    present = {c.category for c in await grid_categories(session, grid_id)}
+    present = {
+        c.category
+        for c in await grid_categories(session, grid_id)
+        if not is_persona_category(c.category)
+    }
     chosen = {item.category: item.gender for item in items}
     if len(chosen) != len(items):
         raise InvalidGridError("Each category can be placed into one column only")

@@ -47,6 +47,8 @@ function fixture(domain: string | null = "izh_sueta") {
         const d = JSON.parse(String(init?.body));
         const p = Number(u.match(/items\/(\d+)/)?.[1]);
         ranks[p] = d.rank;
+        // Choosing a disliked photo again lifts its 👎 on the server.
+        if (d.action === "select") ratings[p][d.rank - 1] = null;
         let nextRank: number | null = null;
         if (d.action === "dislike") {
           ratings[p][d.rank - 1] = "dislike";
@@ -169,25 +171,48 @@ it("saves dislike, shows the next alternative in the same community, and restore
   );
 });
 
-it("never approves a disliked photo by button, alternative or keyboard", async () => {
+it("lets the reviewer change their mind and approve a photo they disliked", async () => {
+  const fetch = fixture();
+  mount();
+  await screen.findByRole("heading", { name: "Community 0" });
+  const actions = () =>
+    fetch.mock.calls
+      .filter(([u]) => String(u).endsWith("/action"))
+      .map(([, init]) => {
+        const body = JSON.parse(String(init?.body));
+        return `${body.action}:${body.rank}`;
+      });
+  for (const rank of [2, 3]) {
+    await userEvent.click(screen.getByRole("button", { name: "Не нравится" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("img", { name: "Выбрано: Community 0" }),
+      ).toHaveAttribute("src", expect.stringContaining(`/0-${rank}/content`)),
+    );
+  }
+  await userEvent.click(screen.getByRole("button", { name: "Альтернативы" }));
+  const first = screen.getByRole("button", { name: /1\..*👎/ });
+  expect(first).toBeEnabled();
+  await userEvent.click(first);
+  await screen.findByText("👎 снята. Фото можно одобрить.");
+  expect(
+    screen.getByRole("img", { name: "Выбрано: Community 0" }),
+  ).toHaveAttribute("src", expect.stringContaining("/0-1/content"));
+  await userEvent.click(
+    screen.getByRole("button", { name: /^(Оставить|Выбрать)$/ }),
+  );
+  await waitFor(() =>
+    expect(actions()).toEqual(["dislike:1", "dislike:2", "select:1", "confirm:1"]),
+  );
+});
+
+it("never approves a disliked photo directly", async () => {
   const fetch = fixture();
   mount();
   await screen.findByRole("heading", { name: "Community 0" });
   const actions = () =>
     fetch.mock.calls.filter(([u]) => String(u).endsWith("/action")).length;
-  await userEvent.click(screen.getByRole("button", { name: "Не нравится" }));
-  await waitFor(() =>
-    expect(
-      screen.getByRole("img", { name: "Выбрано: Community 0" }),
-    ).toHaveAttribute("src", expect.stringContaining("/0-2/content")),
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Альтернативы" }));
-  expect(screen.getByRole("button", { name: /1\..*👎/ })).toBeDisabled();
-  const afterDislike = actions();
-  await userEvent.keyboard("1");
-  expect(actions()).toBe(afterDislike);
-  expect(screen.getByRole("status")).toHaveTextContent("нельзя одобрить");
-  for (const rank of [3, null]) {
+  for (const rank of [2, 3, null]) {
     await userEvent.keyboard("d");
     if (rank)
       await waitFor(() =>
@@ -196,8 +221,7 @@ it("never approves a disliked photo by button, alternative or keyboard", async (
         ).toHaveAttribute("src", expect.stringContaining(`/0-${rank}/content`)),
       );
   }
-  await screen.findByText(/Все доступные варианты отклонены — пропустите/);
-  // The remaining photo is disliked too: approving stays impossible.
+  await screen.findByText(/Все доступные варианты отклонены/);
   expect(
     screen.getByRole("button", { name: /^(Оставить|Выбрать)$/ }),
   ).toBeDisabled();

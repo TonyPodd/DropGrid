@@ -16,6 +16,7 @@ from dropgrid.api.schemas import (
     AccountValidationRead,
     CampaignCreate,
     CampaignPatch,
+    CampaignPersonaRead,
     CampaignPreflight,
     CampaignRead,
     CampaignStart,
@@ -38,6 +39,9 @@ from dropgrid.api.schemas import (
     GridRead,
     GridSummary,
     GridText,
+    PersonaPhotoKind,
+    PersonaPhotoPatch,
+    PersonaPhotoRead,
     PrepareRead,
     PublicationCheckRead,
     PublishedResult,
@@ -57,6 +61,7 @@ from dropgrid.services import (
     campaigns,
     catalog,
     category_genders,
+    persona_photos,
     sending,
     vk_accounts,
     workflow,
@@ -140,6 +145,57 @@ async def account_capabilities(
     account_id: UUID, data: CapabilityInput, session: Session, client: VK, tokens: Tokens
 ) -> dict[str, object]:
     return await account_tokens.capabilities(session, account_id, data.community_id, client, tokens)
+
+
+@router.get("/accounts/{account_id}/persona-photos", response_model=list[PersonaPhotoRead])
+async def account_persona_photos(account_id: UUID, session: Session) -> list[PersonaPhotoRead]:
+    return await persona_photos.list_photos(session, account_id)
+
+
+@router.post(
+    "/accounts/{account_id}/persona-photos", response_model=PersonaPhotoRead, status_code=201
+)
+async def account_persona_photo_upload(
+    account_id: UUID,
+    kind: PersonaPhotoKind,
+    request: Request,
+    session: Session,
+    tags: Annotated[list[str] | None, Query(max_length=20)] = None,
+) -> PersonaPhotoRead:
+    """Raw image body (JPEG/PNG/WEBP): one more selfie or other photo of the girl."""
+    labels = [t.strip().casefold() for t in tags or [] if t.strip()]
+    if any(len(t) > 40 for t in labels):
+        raise InvalidGridError("Photo tag must contain at most 40 characters")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > persona_photos.MAX_UPLOAD_BYTES:
+            raise InvalidGridError("Photo is too large")
+        chunks.append(chunk)
+    return await persona_photos.add_photo(
+        session, account_id, kind, b"".join(chunks), request.app.state.photo_engine.storage, labels
+    )
+
+
+@router.patch("/accounts/{account_id}/persona-photos/{asset_id}", response_model=PersonaPhotoRead)
+async def account_persona_photo_patch(
+    account_id: UUID, asset_id: UUID, data: PersonaPhotoPatch, session: Session
+) -> PersonaPhotoRead:
+    return await persona_photos.patch_photo(session, account_id, asset_id, data)
+
+
+@router.delete("/accounts/{account_id}/persona-photos/{asset_id}", status_code=204)
+async def account_persona_photo_delete(account_id: UUID, asset_id: UUID, session: Session) -> None:
+    await persona_photos.remove_photo(session, account_id, asset_id)
+
+
+@router.get("/campaigns/{campaign_id}/persona", response_model=CampaignPersonaRead)
+async def campaign_persona(
+    campaign_id: UUID, session: Session, request: Request
+) -> CampaignPersonaRead:
+    return await persona_photos.campaign_persona(
+        session, campaign_id, request.app.state.vk_client.settings
+    )
 
 
 @router.get("/communities", response_model=list[CommunityRead])

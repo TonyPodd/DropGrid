@@ -32,22 +32,34 @@ class SafeArgumentParser(argparse.ArgumentParser):
 def parser() -> argparse.ArgumentParser:
     root = SafeArgumentParser(description="DropGrid single-account VK diagnostics")
     commands = root.add_subparsers(dest="command", required=True, parser_class=SafeArgumentParser)
-    for name in ("account", "community", "wall", "suggest", "suggest-text", "suggest-media"):
+    for name in (
+        "account",
+        "community",
+        "wall",
+        "suggest",
+        "suggest-text",
+        "suggest-media",
+        "suggest-cleanup",
+    ):
         command = commands.add_parser(name)
+        database = name in {"suggest-media", "suggest-cleanup"}
         command.add_argument(
             "--account-id",
             type=UUID,
-            required=name == "suggest-media",
-            help="Account with imported DB token"
-            if name == "suggest-media"
-            else "Must match VK_TEST_ACCOUNT_ID",
+            required=database,
+            help="Account with imported DB token" if database else "Must match VK_TEST_ACCOUNT_ID",
         )
         if name in {"community", "wall"}:
             command.add_argument("domain")
         if name == "wall":
             command.add_argument("--suggests", action="store_true")
-        if name in {"suggest", "suggest-text", "suggest-media"}:
+        if name in {"suggest", "suggest-text", "suggest-media", "suggest-cleanup"}:
             command.add_argument("--community-id", type=int, required=True)
+        if name == "suggest-cleanup":
+            command.add_argument("--max-age-days", type=int, default=None)
+            command.add_argument(
+                "--dry-run", action="store_true", help="Only list; never delete anything"
+            )
         if name in {"suggest", "suggest-media"}:
             command.add_argument("--track", required=True)
             if name == "suggest":
@@ -61,6 +73,27 @@ def parser() -> argparse.ArgumentParser:
 async def execute(
     args: argparse.Namespace, settings: Settings, client: VKClient
 ) -> dict[str, object]:
+    if args.command == "suggest-cleanup":
+        from dropgrid.db.session import Database
+        from dropgrid.integrations.vk.cleanup_diagnostic import suggestion_cleanup
+        from dropgrid.integrations.vk.token_storage import AccountTokenCipher, DBTokenProvider
+
+        if not args.dry_run:
+            # Refuse a write before opening the database or reading a token.
+            client.require_diagnostic_target(args.community_id)
+        db = Database(settings)
+        try:
+            return await suggestion_cleanup(
+                account_id=args.account_id,
+                community_id=args.community_id,
+                max_age_days=args.max_age_days or settings.vk_stale_suggestion_days,
+                dry_run=args.dry_run,
+                sessions=db.sessions,
+                client=client,
+                tokens=DBTokenProvider(db.sessions, AccountTokenCipher(settings.app_secret_key)),
+            )
+        finally:
+            await db.close()
     if args.command == "suggest-media":
         from dropgrid.db.session import Database
         from dropgrid.integrations.vk.media_diagnostic import require_media_target, suggest_media
