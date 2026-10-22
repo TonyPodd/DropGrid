@@ -77,8 +77,9 @@ choose alternatives and confirm only your actual preferences. AUTO proposals and
 unconfirmed choices do not become final labels. Only confirmed, actually displayed
 alternatives form comparisons; hidden candidates never become negatives.
 
-The compact Campaign dashboard shows confirmed decisions / 100 and latest model.
-Advanced shows temporal training/validation sizes, baseline and learned top-1
-agreement and promotion readiness. Defaults remain 100 choices and retraining
-interval 25. A model is shadow-only until it passes validation and the operator
-explicitly enables it. Preparation and publication outcomes do not train it.
+The compact Campaign dashboard shows what ranks photos: the trained champion model with
+its top-1 agreement against the baseline, or the baseline with confirmed decisions / 100.
+Advanced shows the next training point, the champion's accuracy and the outcome of the
+last training. Defaults remain 100 choices and retraining interval 25. A challenger takes
+over only when it beats the baseline and is not worse than the champion on the same fresh
+decisions; there is no manual switch. Preparation and publication outcomes do not train it.

@@ -14,7 +14,6 @@ from dropgrid.db.models import (
     CommunityPhotoFeedback,
     GridCommunity,
     MediaAsset,
-    PhotoRankingPreference,
     PhotoSelectionCandidate,
     PhotoSelectionSession,
     Submission,
@@ -24,7 +23,7 @@ from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoQueryPlan
 from dropgrid.photos.history import ProposedPhotos
-from dropgrid.photos.learning import latest_model, predict, queue_training, valid_model
+from dropgrid.photos.learning import active_model, predict, queue_training
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, materialize_archive, regional_priority
 from dropgrid.services.catalog import ConflictError, get_entity
@@ -34,16 +33,8 @@ async def rerank(
     planner: CampaignMediaPlanner, items: list[PoolCandidate], plan: PhotoQueryPlan
 ) -> tuple[list[PoolCandidate], str]:
     async with planner.sessions() as session:
-        model = await latest_model(session)
-        preference = await session.get(PhotoRankingPreference, 1)
-    if (
-        not preference
-        or preference.mode != "learned"
-        or not valid_model(model)
-        or not model
-        or not model.metrics
-        or not model.metrics.get("promotion_ready")
-    ):
+        model = await active_model(session)
+    if not model:
         return items, "deterministic-v1"
     from dropgrid.photos.learning import features
 
@@ -146,7 +137,7 @@ async def snapshot(
         )
         session.add(row)
         rows.append(row)
-    context.learned_rank = predict(rows, context, await latest_model(session))
+    context.learned_rank = predict(rows, context, await active_model(session))
     submission.ranking_model_version = model_version
     submission.photo_source = chosen.source
     attention = [flag for flag in submission.photo_attention if flag in {"community_unavailable"}]

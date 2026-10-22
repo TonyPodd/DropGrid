@@ -632,6 +632,8 @@ class PhotoRankingModel(Identity, Base):
 
 
 class PhotoRankingPreference(Base):
+    """Former manual baseline/learned switch; ranking now follows the champion model."""
+
     __tablename__ = "photo_ranking_preferences"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     mode: Mapped[str] = mapped_column(String(20), default="deterministic")
