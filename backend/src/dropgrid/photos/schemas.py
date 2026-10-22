@@ -35,6 +35,9 @@ class MediaPlanRead(Output):
     provider_requests: int = 0
     provider_cache_hits: int = 0
     categories: list[CategoryPlanRead] = Field(default_factory=list)
+    # Dating/selfie publics served from their girl account's own photos.
+    persona_assigned: int = 0
+    persona_missing: int = 0
 
 
 class MediaAssetRead(Output):

@@ -56,6 +56,7 @@ export const sourceNames: Record<string, string> = {
   vk_archive: "VK · архив группы",
   library: "Библиотека",
   pixabay: "Pixabay",
+  persona: "Фото девочки",
 };
 export function imageUrl(path: string | null) {
   return path
@@ -206,10 +207,10 @@ export function PhotoValidationPage() {
       const disliked =
         item.candidates.find((c) => c.rank === rank)?.rating === "dislike";
       if (action === "dislike" && disliked) return;
-      if ((action === "confirm" || action === "select") && disliked) {
-        // A photo marked «Не нравится» can never be approved.
+      if (action === "confirm" && disliked) {
+        // Approving a 👎 photo takes an explicit change of mind in alternatives.
         setNotice(
-          "👎 Это фото отмечено «Не нравится», его нельзя одобрить. Выберите другой вариант или пропустите сообщество.",
+          "👎 Это фото отмечено «Не нравится». Чтобы одобрить его, выберите его в «Альтернативах» — отметка снимется.",
         );
         return;
       }
@@ -248,6 +249,17 @@ export function PhotoValidationPage() {
         if (action === "select") {
           setActive(rank);
           setSeen((previous) => [...new Set([...previous, ...shown])]);
+          if (disliked) {
+            // Choosing a 👎 photo again is a change of mind: the server lifted it.
+            setItem({
+              ...item,
+              active_rank: rank,
+              candidates: item.candidates.map((c) =>
+                c.rank === rank ? { ...c, rating: null } : c,
+              ),
+            });
+            setNotice("👎 снята. Фото можно одобрить.");
+          }
         } else if (action === "dislike") {
           const next = result.next_rank ?? rank;
           setActive(next);
@@ -262,7 +274,7 @@ export function PhotoValidationPage() {
           setNotice(
             result.next_rank != null
               ? "👎 Отметка сохранена. Показан следующий вариант."
-              : "👎 Отметка сохранена. Все доступные варианты отклонены — пропустите сообщество.",
+              : "👎 Отметка сохранена. Все доступные варианты отклонены. Выберите вариант в «Альтернативах» (👎 снимется) или пропустите сообщество.",
           );
         } else if (result.current_position === item.position)
           setRevision((n) => n + 1);
@@ -643,7 +655,7 @@ export function PhotoValidationPage() {
                       }
                       title={
                         chosen?.rating === "dislike"
-                          ? "Фото с «Не нравится» нельзя одобрить"
+                          ? "Чтобы одобрить фото с 👎, выберите его в «Альтернативах»"
                           : undefined
                       }
                       onClick={() => void act("confirm")}
@@ -688,10 +700,10 @@ export function PhotoValidationPage() {
                           c.rating === "dislike" ? "is-disliked" : undefined
                         }
                         aria-pressed={active === c.rank}
-                        disabled={busy || c.rating === "dislike"}
+                        disabled={busy}
                         title={
                           c.rating === "dislike"
-                            ? "Отмечено «Не нравится» — выбрать нельзя"
+                            ? "Выбрать и снять 👎"
                             : undefined
                         }
                         onClick={() => void act("select", c.rank)}

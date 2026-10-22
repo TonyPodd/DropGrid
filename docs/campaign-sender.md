@@ -10,9 +10,40 @@ Accounts send strictly one at a time per Campaign: a later account's upload star
 when no earlier account (by `send_order`) has queued/claimed/uploaded work left. Each account
 sends its own gender's categories first, then unisex ones. Receipt read-back and unknown
 outcomes never hold the next account back; failed rows count as finished.
-Every intended eligible row must have a valid, enabled, assigned local JPEG whose
-hash and dimensions agree with MediaAsset. Preflight never contacts VK. Start
+Before each new suggestion the sender lists the account's own suggestions in that
+community (`wall.get filter=suggests`) and deletes (`wall.delete`) every one VK still
+reports as `post_type=suggest` by this account and older than
+`VK_STALE_SUGGESTION_DAYS` (default 5). A tracked Submission for a deleted post becomes
+`not_found` with `suggestion_withdrawn` and leaves publication monitoring. Cleanup is
+best effort: lookup/delete failures are logged and never block the new suggestion.
+Published posts are never touched: VK does not list them as suggestions.
+The official schema documents `wall.delete` only generically (user token; errors
+`wall_access_post`, `group_need_2fa`, `not_found`), so author deletion of an own pending
+suggestion in a foreign community must be confirmed live. Check one community without
+the sender: `diagnostics suggest-cleanup --account-id UUID --community-id ID --dry-run`
+only lists stale own suggestions; without `--dry-run` it requires `VK_WRITE_ENABLED=true`
+and the community in `VK_TEST_ALLOWED_COMMUNITY_IDS`, deletes with the sender's rule and
+reports deleted IDs and per-post VK error codes. `--max-age-days` overrides the age.
+Every intended row must have a valid, enabled local JPEG whose hash and dimensions
+agree with MediaAsset; rows without an assigned photo are skipped (`media_missing`). Preflight never contacts VK. Start
 only queues work; it does not enable writes or start a process.
+
+## Choosing at preparation: photos only or suggest posts
+
+Preparation asks what to do: **Только подобрать фото** (`auto_send=false`, the
+default; nothing is ever sent unless an operator starts the Campaign explicitly)
+or **Подобрать фото и предложить посты** (`auto_send=true`). Suggesting posts
+requires `ceil(grid communities / ACCOUNT_CAMPAIGN_SEND_QUOTA)` usable accounts in
+the pool, e.g. 6 for 521 communities at 100 each; otherwise preparation is refused
+with `accounts_needed`. Retries keep the choice; dry runs cannot suggest posts.
+
+The sender process starts such a Campaign itself once it is `ready` with
+`preparation_state=ready` (after preparation in AUTO photo mode, after every photo
+is confirmed in review mode), using the same start path and preflight as the
+button. A Campaign whose preflight is not ready yet (accounts, gender, categories,
+girl photos) waits and is rechecked every ten minutes; the page shows what is
+missing. A community without a photo is skipped with `media_missing` instead of
+blocking the whole Campaign.
 
 The dedicated process is `python -m dropgrid.worker.sender`. With Docker:
 

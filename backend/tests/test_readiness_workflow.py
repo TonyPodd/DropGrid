@@ -514,8 +514,9 @@ async def test_review_reuse_limit_is_per_campaign_not_dry_run_reservations(
             )
         )
     if same_campaign:
-        with pytest.raises(ConflictError, match="Photo reuse limit reached"):
+        with pytest.raises(ConflictError, match="Photo reuse limit reached") as refused:
             await confirm(planner, sid)
+        assert getattr(refused.value, "code", None) == "photo_reuse_limit"
     else:
         await confirm(planner, sid)
         async with sessions() as db:

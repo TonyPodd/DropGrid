@@ -457,6 +457,11 @@ export function SubmissionTable({
                   >
                     Публикация ↗
                   </a>
+                ) : s.error_code === "suggestion_withdrawn" ? (
+                  <span className="short-error">
+                    Удалено ботом: не опубликовали вовремя, перед новой
+                    предложкой
+                  </span>
                 ) : s.error_code || s.error_message ? (
                   <span className="short-error">
                     {s.error_code && <strong>{s.error_code}: </strong>}

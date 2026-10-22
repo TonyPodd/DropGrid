@@ -32,7 +32,9 @@ const keyOf = (category: string | null) =>
 
 function initialPlacement(data: GridCategoryGenders): Placement {
   return Object.fromEntries(
-    data.categories.map((row) => [
+    data.categories
+      .filter((row) => !row.persona)
+      .map((row) => [
       keyOf(row.category),
       row.gender ?? row.suggested_gender,
     ]),
@@ -148,7 +150,8 @@ function Board({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const rows = saved.categories;
+  const rows = saved.categories.filter((row) => !row.persona);
+  const dating = saved.categories.filter((row) => row.persona);
   const unplaced = rows.filter((row) => !placement[keyOf(row.category)]);
   const dirty = rows.some(
     (row) => placement[keyOf(row.category)] !== row.gender,
@@ -230,6 +233,16 @@ function Board({
         <p className="note">
           Часть категорий предзаполнена по прошлым сеткам с такими же
           названиями. Проверьте и сохраните.
+        </p>
+      )}
+      {dating.length > 0 && (
+        <p className="note gender-persona">
+          <strong>Знакомства и селфи — фото девочки:</strong>{" "}
+          {dating
+            .map((row) => `${categoryName(row.category)} (${row.count})`)
+            .join(", ")}
+          . Их не нужно раскладывать по столбцам: аккаунты-девочки и их фото
+          выбираются при подготовке кампании.
         </p>
       )}
       <section className="gender-pool" {...dropProps(null)}>

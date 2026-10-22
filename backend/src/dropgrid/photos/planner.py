@@ -31,6 +31,7 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.domain.enums import CampaignStatus, SubmissionStatus
+from dropgrid.domain.personas import PERSONA_PROVIDER, is_persona_category
 from dropgrid.photos.cache import SearchCache
 from dropgrid.photos.discovery import discover
 from dropgrid.photos.domain import (
@@ -352,6 +353,13 @@ class CampaignMediaPlanner:
         exclusion_token = near_duplicate_exclusions.set(0)
         try:
             result = await self._plan(campaign_id, token, data, submission_ids)
+            from dropgrid.photos.persona import plan_personas
+
+            # Dating/selfie publics get the girl's own photos, never library photos.
+            result.persona_assigned, result.persona_missing = await plan_personas(
+                self, campaign_id, submission_ids, data.force
+            )
+            result.unassigned = max(0, result.unassigned - result.persona_assigned)
             result.near_duplicate_exclusions += near_duplicate_exclusions.get()
             return result
         finally:
@@ -395,7 +403,10 @@ class CampaignMediaPlanner:
                         select(MediaAsset)
                         .where(
                             MediaAsset.enabled.is_(True),
-                            or_(MediaAsset.provider.is_(None), MediaAsset.provider != "vk_archive"),
+                            or_(
+                                MediaAsset.provider.is_(None),
+                                MediaAsset.provider.not_in(("vk_archive", PERSONA_PROVIDER)),
+                            ),
                         )
                         .order_by(MediaAsset.id)
                     )
@@ -481,7 +492,10 @@ class CampaignMediaPlanner:
         }
         groups: dict[tuple[str, str | None, str | None, str | None], list[UUID]] = defaultdict(list)
         all_groups: dict[str, list[UUID]] = defaultdict(list)
+        personal = {s.id for s, category in rows if is_persona_category(category)}
         for submission, category in rows:
+            if submission.id in personal:
+                continue
             region = regions.get(submission.community_id)
             key = normalize_category(category)
             all_groups[key].append(submission.id)
@@ -1075,7 +1089,11 @@ class CampaignMediaPlanner:
                     report.source_contributions[
                         source_of_asset.get(submission.media_asset_id, "library")
                     ]["selected"] += 1
-                elif data.force and submission.status == SubmissionStatus.pending:
+                elif (
+                    data.force
+                    and submission.status == SubmissionStatus.pending
+                    and submission.id not in personal
+                ):
                     submission.media_asset_id = None
             from dropgrid.photos.history import ProposedPhotos
             from dropgrid.photos.review import snapshot

@@ -90,6 +90,8 @@ class Community(Identity, Updated, Base):
     domain: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str | None] = mapped_column(String(200))
     category: Mapped[str | None] = mapped_column(String(200))
+    # VK community description, read during resolution; helps choose persona photos.
+    description: Mapped[str | None] = mapped_column(Text)
     required_gender_tag: Mapped[GenderTag | None] = mapped_column(
         Enum(GenderTag, name="gender_tag")
     )
@@ -347,6 +349,8 @@ class Campaign(Identity, Base):
     )
     account_id: Mapped[UUID | None] = mapped_column(ForeignKey("accounts.id"))
     is_dry_run: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Chosen at preparation: False only selects photos, True also suggests the posts.
+    auto_send: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     dry_run_scope: Mapped[list[str] | None] = mapped_column(JSONB)
     photo_review_mode: Mapped[str] = mapped_column(
         String(24), default="AUTO", server_default="AUTO"
@@ -526,6 +530,28 @@ class CampaignAccount(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0)
     max_submissions: Mapped[int] = mapped_column(Integer, default=100)
     assigned_count: Mapped[int] = mapped_column(Integer, default=0)
+    # A girl's account: sends dating/selfie publics with her photos first, then the rest.
+    persona: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class AccountPersonaPhoto(Base):
+    """Photos of the girl behind an account, for its dating/selfie publics.
+
+    Any number of selfies and other photos; at least one of each before sending. A photo
+    belongs to exactly one account (one VK token): it is never sent by another.
+    """
+
+    __tablename__ = "account_persona_photos"
+    __table_args__ = (
+        UniqueConstraint("media_asset_id", name="uq_account_persona_photos_media_asset_id"),
+        CheckConstraint("kind IN ('selfie', 'other')", name="kind_known"),
+    )
+    account_id: Mapped[UUID] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    media_asset_id: Mapped[UUID] = mapped_column(ForeignKey("media_assets.id"), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class CampaignPreparationJob(Identity, Updated, Base):

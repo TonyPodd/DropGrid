@@ -262,3 +262,29 @@ async def test_ready_job_can_refresh_when_target_changes(sessions, tmp_path):
     finally:
         await client.aclose()
         await http.aclose()
+
+
+async def test_dating_public_description_is_read_once(sessions, tmp_path):
+    from dropgrid.integrations.vk.models import VKCommunity
+
+    prep, gid, cid, aid, client, http = await setup(sessions, tmp_path, existing=12)
+    async with sessions() as s, s.begin():
+        (await s.get(GridCommunity, (gid, cid))).category = "ЗНАКОМСТВА"
+        domain = (await s.get(Community, cid)).domain
+    calls = []
+
+    async def resolve(domains, *, access_token, account_id):
+        calls.append(domains)
+        group = VKCommunity(id=123, name="Девушки", screen_name=domain, description="Селфи")
+        return [CommunityResolution(reference=domains[0], status="resolved", group=group)]
+
+    client.resolve_communities = resolve
+    try:
+        await prep.prepare_community_media_context(gid, cid, aid)
+        await prep.prepare_community_media_context(gid, cid, aid)
+        assert calls == [[domain]]
+        async with sessions() as s:
+            assert (await s.get(Community, cid)).description == "Селфи"
+    finally:
+        await client.aclose()
+        await http.aclose()

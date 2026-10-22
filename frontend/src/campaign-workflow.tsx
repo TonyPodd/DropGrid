@@ -9,6 +9,8 @@ import {
 import { accountsApi } from "./api/accounts";
 import type { Campaign } from "./api/types";
 import { date, genderLabel, useLoad, State, Pager } from "./shared";
+import { personaApi } from "./api/persona";
+import { PersonaSetup, personaReady, type PhotoCounts } from "./persona";
 type Job = {
   state: string;
   stage: string;
@@ -64,6 +66,8 @@ const attentionNames: Record<string, string> = {
   category_archive_error: "Недоступен архив категории",
   other: "Подготовка не завершилась",
 };
+// One account suggests up to this many posts per campaign.
+const POSTS_PER_ACCOUNT = 100;
 type Ranking = {
   choices: number;
   minimum: number;
@@ -137,7 +141,8 @@ export function CampaignWorkflow({
     [ids, setIds] = useState<string[] | null>(null),
     [opened, setOpened] = useState<string | null>(null),
     [attentionOnly, setAttentionOnly] = useState(false),
-    [dryRunUrl, setDryRunUrl] = useState("");
+    [dryRunUrl, setDryRunUrl] = useState(""),
+    [autoSend, setAutoSend] = useState(!!campaign.auto_send);
   const accounts = useLoad((signal) => accountsApi.all(signal), []);
   const pool = useLoad(
     (signal) =>
@@ -151,6 +156,14 @@ export function CampaignWorkflow({
         }[]
       >(`/campaigns/${campaign.id}/account-pool`, { signal }),
     [campaign.id, revision],
+  );
+  const persona = useLoad(
+    (signal) => personaApi.campaign(campaign.id, signal),
+    [campaign.id],
+  );
+  const [girlIds, setGirlIds] = useState<string[] | null>(null);
+  const [girlPhotos, setGirlPhotos] = useState<Record<string, PhotoCounts>>(
+    {},
   );
   const job = useLoad(
     (signal) =>
@@ -172,6 +185,7 @@ export function CampaignWorkflow({
         scope: number;
         real_capacity: number;
         capacity_shortfall: number;
+        gender_shortfall?: number;
         category_unassigned?: number;
       }>(`/campaigns/${campaign.id}/readiness-report`, { signal }),
     [campaign.id, revision],
@@ -196,6 +210,26 @@ export function CampaignWorkflow({
       )
       .map((a) => a.id) ??
     [];
+  const usable =
+    accounts.data?.filter(
+      (a) => a.status === "active" && a.token_configured && a.vk_user_id,
+    ) ?? [];
+  const girls =
+    girlIds ?? persona.data?.accounts?.map((a) => a.account_id) ?? [];
+  const photoCounts: Record<string, PhotoCounts> = {
+    ...Object.fromEntries(
+      persona.data?.accounts?.map((a) => [
+        a.account_id,
+        { selfie: a.selfies, other: a.others },
+      ]) ?? [],
+    ),
+    ...girlPhotos,
+  };
+  const dating = !!persona.data?.targets;
+  // Girl accounts lead the queue: their dating/selfie publics, then the rest.
+  const queue = dating
+    ? [...girls, ...selected.filter((id) => !girls.includes(id))]
+    : selected;
   const previousActive = useRef(false);
   const active = job.data && ["queued", "running"].includes(job.data.state);
   useEffect(() => {
@@ -266,6 +300,8 @@ export function CampaignWorkflow({
           : [row.proposed_rank],
     };
   }
+  const neededAccounts = Math.ceil(campaign.community_count / POSTS_PER_ACCOUNT);
+  const enoughAccounts = queue.length >= neededAccounts;
   const stage =
     campaign.status === "draft"
       ? "Настройки"
@@ -291,11 +327,30 @@ export function CampaignWorkflow({
           рабочий pipeline.
         </p>
       )}
+      {!campaign.is_dry_run &&
+        campaign.status === "ready" &&
+        (campaign.auto_send ? (
+          <p role="status">
+            Режим: подобрать фото и предложить посты. Бот начнёт отправку сам,
+            как только всё будет готово; что мешает — в блоке «Отправка».
+          </p>
+        ) : (
+          <p role="status">
+            Режим: только подбор фото — посты не отправляются.
+          </p>
+        ))}
       {!!readiness.data && readiness.data.scope > 0 && (
         <div className="activity-card">
           <p>Нужно отправить: {readiness.data.scope}</p>
           <p>Доступная ёмкость: {readiness.data.real_capacity}</p>
-          <p>Не хватает: {readiness.data.capacity_shortfall}</p>
+          <p>Не хватает ёмкости: {readiness.data.capacity_shortfall}</p>
+          {!!readiness.data.gender_shortfall && (
+            <p>
+              Нет аккаунта нужного пола: {readiness.data.gender_shortfall}{" "}
+              пабликов. Подключите аккаунт под эти категории (например, женский
+              для женских).
+            </p>
+          )}
           {readiness.data.capacity_shortfall > 0 && (
             <p>Подключите дополнительные аккаунты или уменьшите scope.</p>
           )}
@@ -358,12 +413,66 @@ export function CampaignWorkflow({
                   </label>
                 ))}
             </State>
+            {dating && persona.data && (
+              <PersonaSetup
+                summary={persona.data}
+                accounts={usable}
+                girls={girls}
+                photos={photoCounts}
+                onGirls={setGirlIds}
+                onAccountsChanged={accounts.reload}
+                onPhotos={(id, n) =>
+                  setGirlPhotos((current) => ({ ...current, [id]: n }))
+                }
+              />
+            )}
+            {!campaign.is_dry_run && (
+              <fieldset className="send-mode">
+                <legend>Что сделать</legend>
+                <label>
+                  <input
+                    type="radio"
+                    name="send-mode"
+                    checked={!autoSend}
+                    onChange={() => setAutoSend(false)}
+                  />
+                  Только подобрать фото — посты не отправляются
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="send-mode"
+                    checked={autoSend}
+                    onChange={() => setAutoSend(true)}
+                  />
+                  Подобрать фото и предложить посты
+                </label>
+                {autoSend && (
+                  <p role={enoughAccounts ? undefined : "alert"}>
+                    Нужно аккаунтов: ⌈{campaign.community_count} /{" "}
+                    {POSTS_PER_ACCOUNT}⌉ = {neededAccounts}, выбрано:{" "}
+                    {queue.length}.{" "}
+                    {enoughAccounts
+                      ? campaign.photo_review_mode === "REVIEW_BEFORE_SEND"
+                        ? "Бот сам начнёт предлагать посты, когда вы проверите все фото."
+                        : "Бот сам начнёт предлагать посты, как только подберёт фото."
+                      : "Подключите и отметьте ещё аккаунты."}
+                  </p>
+                )}
+              </fieldset>
+            )}
             <button
               className="primary"
-              disabled={!selected.length}
+              disabled={
+                !queue.length ||
+                !personaReady(persona.data, usable, girls, photoCounts) ||
+                (autoSend && !enoughAccounts)
+              }
               onClick={() =>
                 void action(`/campaigns/${campaign.id}/prepare-workflow`, {
-                  account_ids: selected,
+                  account_ids: queue,
+                  ...(dating ? { persona_account_ids: girls } : {}),
+                  auto_send: autoSend && !campaign.is_dry_run,
                 })
               }
             >
@@ -554,8 +663,9 @@ export function CampaignWorkflow({
                       {chosen?.operator_rating === "dislike" &&
                         !row.confirmed && (
                           <p className="short-error">
-                            Вы поставили 👎 этому фото, его нельзя подтвердить.
-                            Выберите другое в «Заменить / альтернативы».
+                            Вы поставили 👎 этому фото. Выберите другое в
+                            «Заменить / альтернативы» или выберите это снова,
+                            чтобы снять 👎.
                           </p>
                         )}
                       {!row.confirmed && campaign.status === "ready" && (
@@ -632,9 +742,7 @@ export function CampaignWorkflow({
                               </figcaption>
                               <button
                                 aria-pressed={c.rank === row.proposed_rank}
-                                disabled={
-                                  busy || c.operator_rating === "dislike"
-                                }
+                                disabled={busy}
                                 onClick={() =>
                                   void action(
                                     `/submissions/${row.submission_id}/photo-choice`,
@@ -649,7 +757,7 @@ export function CampaignWorkflow({
                                 }
                               >
                                 {c.operator_rating === "dislike"
-                                  ? "Отмечено 👎"
+                                  ? "Выбрать (снять 👎)"
                                   : "Выбрать это фото"}
                               </button>
                             </figure>

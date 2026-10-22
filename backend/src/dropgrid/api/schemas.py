@@ -228,6 +228,10 @@ class CampaignPreflight(BaseModel):
     capacity_unassigned: int = 0
     category_unassigned: int = 0
     unassigned_categories: list[str | None] = Field(default_factory=list)
+    persona_targets: int = 0
+    persona_account_missing: int = 0
+    persona_photo_mismatch: int = 0
+    persona_photos_incomplete: int = 0
     assigned_per_account: list[dict[str, object]] = Field(default_factory=list)
     review_pending: int = 0
     ready: bool
@@ -235,6 +239,7 @@ class CampaignPreflight(BaseModel):
 
 class CampaignRead(Output):
     is_dry_run: bool = False
+    auto_send: bool = False
     photo_review_mode: str = "AUTO"
     preparation_state: str = "legacy"
     account_id: UUID | None = None
@@ -282,6 +287,8 @@ class CategoryGenderRead(CategoryCount):
     gender: CategoryGender | None
     # Latest saved choice for the same category name in another grid; never applied implicitly.
     suggested_gender: CategoryGender | None = None
+    # Dating/selfie: sent from the campaign's girl accounts with her photos, no column.
+    persona: bool = False
 
 
 class GridCategoryGendersRead(BaseModel):
@@ -298,6 +305,45 @@ class CategoryGenderInput(Input):
 
 class GridCategoryGendersInput(Input):
     items: list[CategoryGenderInput] = Field(max_length=2000)
+
+
+PersonaPhotoKind = Literal["selfie", "other"]
+
+
+class PersonaPhotoRead(BaseModel):
+    kind: PersonaPhotoKind
+    media_asset_id: UUID
+    tags: list[str]
+    width: int | None
+    height: int | None
+    created_at: datetime
+
+
+class PersonaPhotoPatch(Input):
+    kind: PersonaPhotoKind | None = None
+    tags: list[Annotated[str, Field(min_length=1, max_length=40)]] | None = Field(
+        default=None, max_length=20
+    )
+
+
+class PersonaCategoryRead(BaseModel):
+    category: str
+    count: int
+
+
+class PersonaAccountRead(BaseModel):
+    account_id: UUID
+    name: str
+    quota: int
+    selfies: int
+    others: int
+
+
+class CampaignPersonaRead(BaseModel):
+    categories: list[PersonaCategoryRead]
+    targets: int
+    default_quota: int
+    accounts: list[PersonaAccountRead]
 
 
 class GridCommunityRead(CommunityRead):

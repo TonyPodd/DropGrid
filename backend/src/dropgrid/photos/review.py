@@ -20,8 +20,9 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.domain.enums import SubmissionStatus
+from dropgrid.domain.personas import PERSONA_PROVIDER
 from dropgrid.photos.conflicts import PhotoConflict
-from dropgrid.photos.domain import PhotoCandidate, PhotoError, PhotoQueryPlan
+from dropgrid.photos.domain import PhotoCandidate, PhotoQueryPlan
 from dropgrid.photos.history import ProposedPhotos
 from dropgrid.photos.learning import active_model, predict, queue_training
 from dropgrid.photos.planner import CampaignMediaPlanner
@@ -203,7 +204,13 @@ async def choose(
     shown_ranks: list[int] | None = None,
     *,
     allow_confirmed: bool = False,
+    revise_dislike: bool = False,
 ) -> PhotoSelectionSession:
+    """Propose a displayed candidate, optionally rating it.
+
+    Choosing a disliked photo again is allowed only as an explicit change of mind
+    (`revise_dislike`); approval paths never turn a 👎 into an approved choice.
+    """
     submission = await get_entity(session, Submission, submission_id)
     campaign = await session.scalar(
         select(Campaign).where(Campaign.id == submission.campaign_id).with_for_update()
@@ -220,9 +227,10 @@ async def choose(
     candidate = await session.get(PhotoSelectionCandidate, (selection.id, rank))
     if candidate is None:
         raise ConflictError("Candidate was not displayed in this review")
-    # Only an explicit 👍 revises a 👎; a disliked photo cannot become the choice.
     if rating is None and candidate.operator_rating == "dislike":
-        raise PhotoConflict("photo_disliked")
+        if not revise_dislike:
+            raise PhotoConflict("photo_disliked")
+        candidate.operator_rating = None
     selection.proposed_rank = rank
     campaign.preparation_state = "awaiting_review"
     displayed = (
@@ -316,11 +324,11 @@ async def _confirm(
             from dropgrid.db.models import CommunityReferencePhoto
 
             if not planner.archive or not candidate.reference_id:
-                raise ConflictError("Archive candidate unavailable")
+                raise PhotoConflict("photo_unavailable", "Archive candidate unavailable")
             async with planner.sessions() as session:
                 reference = await session.get(CommunityReferencePhoto, candidate.reference_id)
             if not reference:
-                raise ConflictError("Archive candidate unavailable")
+                raise PhotoConflict("photo_unavailable", "Archive candidate unavailable")
             item = PoolCandidate(photo, candidate.provider, reference=reference)
             asset, _ = await materialize_archive(
                 planner.archive,
@@ -333,9 +341,9 @@ async def _confirm(
         else:
             asset, _, error = await planner._import(photo, selection.category or "", False)
             if not asset:
-                raise PhotoError(error or "candidate_unavailable")
+                raise PhotoConflict("photo_unavailable", error or "candidate_unavailable")
     if not planner.eligible(asset):
-        raise ConflictError("Selected media is no longer usable")
+        raise PhotoConflict("photo_unavailable", "Selected media is no longer usable")
     async with planner.sessions() as session, session.begin():
         row = await get_entity(session, Submission, submission_id)
         campaign = await session.scalar(
@@ -393,7 +401,9 @@ async def _confirm(
                 != candidate.features["context_desired_content"]
             ):
                 raise ConflictError("Photo context changed; prepare again")
-        if row.media_asset_id != asset.id:
+        # A girl's own photos are meant for many dating/selfie publics: no library limits.
+        personal = asset.provider == PERSONA_PROVIDER
+        if row.media_asset_id != asset.id and not personal:
             reused = (
                 await session.scalar(
                     select(func.count())
@@ -408,11 +418,11 @@ async def _confirm(
                 or 0
             )
             if reused >= planner.settings.photo_max_reuse_per_asset:
-                raise ConflictError("Photo reuse limit reached")
+                raise PhotoConflict("photo_reuse_limit", "Photo reuse limit reached")
         from dropgrid.photos.rotation import community_usage, recently_used
 
         usage = await community_usage(session, row.community_id, utcnow())
-        if recently_used(
+        if not personal and recently_used(
             usage,
             asset.provider or "library",
             asset.provider_asset_id or str(asset.id),
@@ -421,7 +431,7 @@ async def _confirm(
             utcnow(),
             asset.id,
         ):
-            raise ConflictError("Photo was recently used in this community")
+            raise PhotoConflict("photo_recently_used", "Photo was recently used in this community")
         row.media_asset_id = asset.id
         row.photo_source = candidate.provider
         row.photo_attention = [flag for flag in row.photo_attention if flag != "operator_disliked"]

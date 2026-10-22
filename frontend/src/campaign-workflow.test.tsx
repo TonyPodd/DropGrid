@@ -131,7 +131,67 @@ it("selects multiple accounts, prepares once on click and shows per-account quot
         )?.[1]?.body,
       ),
     ),
-  ).toEqual({ account_ids: ["a", "b"] });
+  ).toEqual({ account_ids: ["a", "b"], auto_send: false });
+});
+it("asks for ceil(publics / 100) accounts before suggesting posts", async () => {
+  const fetch = mock();
+  const { rerender } = render(
+    <CampaignWorkflow
+      campaign={{
+        ...campaign,
+        status: "draft",
+        photo_review_mode: "AUTO",
+        community_count: 521,
+      }}
+      onChanged={vi.fn()}
+    />,
+  );
+  await screen.findByLabelText(/Anton · без пола · квота/);
+  expect(
+    screen.getByLabelText("Только подобрать фото — посты не отправляются"),
+  ).toBeChecked();
+  await userEvent.click(
+    screen.getByLabelText("Подобрать фото и предложить посты"),
+  );
+  expect(
+    screen.getByText(/Нужно аккаунтов: ⌈521 \/ 100⌉ = 6, выбрано: 2/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Подготовить кампанию" }),
+  ).toBeDisabled();
+  rerender(
+    <CampaignWorkflow
+      campaign={{
+        ...campaign,
+        status: "draft",
+        photo_review_mode: "AUTO",
+        community_count: 150,
+      }}
+      onChanged={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByText(/Бот сам начнёт предлагать посты, как только подберёт фото/),
+  ).toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Подготовить кампанию" }),
+  );
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.filter(([url]) =>
+        String(url).endsWith("prepare-workflow"),
+      ),
+    ).toHaveLength(1),
+  );
+  expect(
+    JSON.parse(
+      String(
+        fetch.mock.calls.find(([url]) =>
+          String(url).endsWith("prepare-workflow"),
+        )?.[1]?.body,
+      ),
+    ),
+  ).toEqual({ account_ids: ["a", "b"], auto_send: true });
 });
 it("replacement remains unconfirmed until approval and only displayed choices are sent", async () => {
   const fetch = mock();
@@ -224,7 +284,7 @@ it("shows full-grid capacity and compact learning readiness", async () => {
   );
   expect(await screen.findByText("Нужно отправить: 514")).toBeInTheDocument();
   expect(screen.getByText("Доступная ёмкость: 100")).toBeInTheDocument();
-  expect(screen.getByText("Не хватает: 414")).toBeInTheDocument();
+  expect(screen.getByText("Не хватает ёмкости: 414")).toBeInTheDocument();
   expect(
     screen.getByText("Подключите дополнительные аккаунты или уменьшите scope."),
   ).toBeInTheDocument();
@@ -358,7 +418,9 @@ it("never offers to approve a photo the operator disliked", async () => {
   await userEvent.click(
     screen.getByRole("button", { name: "Заменить / альтернативы" }),
   );
-  expect(screen.getByRole("button", { name: "Отмечено 👎" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Выбрать (снять 👎)" }),
+  ).toBeEnabled();
   expect(
     screen.getByRole("button", { name: "Выбрать это фото" }),
   ).toBeEnabled();

@@ -17,19 +17,27 @@ export class ApiError extends Error {
 }
 export async function request<T>(
   path: string,
-  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    signal?: AbortSignal;
+    /** A file sent as the raw request body instead of JSON. */
+    file?: Blob;
+  } = {},
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${baseUrl}/api/v1${path}`, {
       method: options.method ?? "GET",
       signal: options.signal,
-      headers:
-        options.body === undefined
+      headers: options.file
+        ? { "Content-Type": options.file.type || "application/octet-stream" }
+        : options.body === undefined
           ? undefined
           : { "Content-Type": "application/json" },
       body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
+        options.file ??
+        (options.body === undefined ? undefined : JSON.stringify(options.body)),
     });
   } catch (error) {
     if (options.signal?.aborted) throw error;
@@ -56,7 +64,20 @@ export async function request<T>(
         preview_in_progress:
           "Сравнение фото уже выполняется. Дождитесь завершения.",
         photo_disliked:
-          "Это фото отмечено «Не нравится» — его нельзя одобрить. Выберите другой вариант или пропустите сообщество.",
+          "Это фото отмечено «Не нравится». Чтобы одобрить его, сначала выберите его снова — отметка снимется.",
+        photo_reuse_limit:
+          "Это фото уже выбрано для максимального числа пабликов этой кампании. Выберите другое.",
+        photo_recently_used:
+          "Это фото недавно отправлялось в этот паблик. Выберите другое.",
+        photo_unavailable:
+          "Это фото не удалось загрузить. Выберите другой вариант.",
+        persona_photo_taken:
+          "Это фото уже привязано к другому аккаунту. Фото девочки уходят только с её аккаунта.",
+        persona_photo_duplicate: "Это фото уже загружено для этой девочки.",
+        persona_photo_limit:
+          "У аккаунта уже слишком много фото. Удалите лишние, чтобы добавить новые.",
+        persona_photo_in_library:
+          "Это фото уже есть в общей библиотеке. Загрузите личное фото девочки.",
       };
       const payload: unknown = await response.json().catch(() => null);
       if (payload && typeof payload === "object" && "detail" in payload) {
@@ -78,6 +99,7 @@ export async function request<T>(
         `Запрос не выполнен (HTTP ${response.status}).`,
     );
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 export function errorMessage(error: unknown): string {

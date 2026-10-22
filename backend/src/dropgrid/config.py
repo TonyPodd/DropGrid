@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     vk_api_version: str = "5.199"
     vk_write_enabled: bool = False
     vk_send_interval_seconds: float = Field(default=60, ge=1, le=86400)
+    # Before a new suggestion the sender deletes this account's older unpublished ones there.
+    vk_stale_suggestion_days: int = Field(default=5, ge=1, le=365)
     vk_test_allowed_community_ids: Annotated[frozenset[int], NoDecode] = frozenset()
     vk_test_access_token: SecretStr | None = None
     vk_test_account_id: UUID | None = None
