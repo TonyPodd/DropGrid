@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import io
 import logging
+import math
 from collections import Counter, defaultdict
 from dataclasses import replace
 from datetime import timedelta
@@ -58,16 +59,22 @@ from dropgrid.services.catalog import ConflictError
 logger = logging.getLogger(__name__)
 
 
+def reuse_limit(requested: int | None, configured: int | None) -> float:
+    """How often one photo may serve communities of one campaign; unlimited by default."""
+    return requested or configured or math.inf
+
+
 def assign_assets(
     submissions: list[UUID],
     assets: list[MediaAsset],
     counts: Counter[UUID],
-    reuse: int,
+    reuse: float,
     pending: Counter[UUID],
     visual_scores: dict[UUID, dict[UUID, float]] | None = None,
     allowed_assets: dict[UUID, set[UUID]] | None = None,
 ) -> dict[UUID, UUID]:
-    """Unique first, balanced reuse, creator/history/current-reference penalties."""
+    """Best fit for the community first; among equals unique first and balanced reuse,
+    then creator/history/current-reference penalties."""
     assigned: dict[UUID, UUID] = {}
     creators: Counter[str] = Counter()
     previous: UUID | None = None
@@ -83,10 +90,10 @@ def assign_assets(
         chosen = min(
             available,
             key=lambda a: (
-                counts[a.id],
                 -(visual_scores[submission].get(a.id, 0))
                 if visual_scores and submission in visual_scores
                 else 0,
+                counts[a.id],
                 a.id == previous,
                 creators[a.creator_name or ""],
                 a.usage_count * 0.5 + pending[a.id] * 0.25 + (1 if a.last_used_at else 0),
@@ -476,7 +483,7 @@ class CampaignMediaPlanner:
         from dropgrid.photos.history import proposed_photos
 
         async with self.sessions() as session:
-            # A photo the bot has proposed once is never proposed again; look for new ones.
+            # A photo proposed in another campaign is never proposed again; look for new ones.
             seen = await proposed_photos(session, campaign_id)
         total = len(rows)
         previously = sum(s.media_asset_id is not None for s, _ in rows)
@@ -522,7 +529,7 @@ class CampaignMediaPlanner:
             for key, ids in sorted(all_groups.items())
         }
         imported_ids: set[UUID] = set()
-        reuse = data.max_reuse_per_asset or self.settings.photo_max_reuse_per_asset
+        reuse = reuse_limit(data.max_reuse_per_asset, self.settings.photo_max_reuse_per_asset)
         preserved_counts: Counter[UUID] = Counter(
             s.media_asset_id
             for s, _ in rows
@@ -759,7 +766,7 @@ class CampaignMediaPlanner:
                                 report.source_contributions["vk_category_archive"]["retrieved"] += (
                                     len(category_pool)
                                 )
-                            # Already proposed photos are neither picked nor shown as alternatives.
+                            # Other campaigns' photos are neither picked nor shown as alternatives.
                             fresh_pool = [item for item in pool if item not in seen]
                             exhaustion[sid]["repeat"] += len(pool) - len(fresh_pool)
                             pool = fresh_pool
@@ -798,9 +805,9 @@ class CampaignMediaPlanner:
                                 target_usage = await community_usage(db, community_id, utcnow())
                             for item in sorted(
                                 mixed_ranked,
+                                # Fit decides; a photo may repeat within the campaign.
                                 key=lambda candidate: (
                                     regional_priority(candidate, plan),
-                                    reserved_counts[candidate.asset.id] if candidate.asset else 0,
                                     -(candidate.score.final_score if candidate.score else 0),
                                     candidate.identity,
                                 ),
@@ -983,7 +990,7 @@ class CampaignMediaPlanner:
                 for s in current
                 if s.media_asset_id and not (data.force and s.status == SubmissionStatus.pending)
             )
-            reuse = data.max_reuse_per_asset or self.settings.photo_max_reuse_per_asset
+            reuse = reuse_limit(data.max_reuse_per_asset, self.settings.photo_max_reuse_per_asset)
             assignments: dict[UUID, UUID] = {}
             for context, submission_ids in sorted(groups.items(), key=lambda item: str(item[0])):
                 category, hint, wanted, region_key = context
@@ -1095,25 +1102,11 @@ class CampaignMediaPlanner:
                     and submission.id not in personal
                 ):
                     submission.media_asset_id = None
-            from dropgrid.photos.history import ProposedPhotos
             from dropgrid.photos.review import snapshot
 
-            # Alternatives must not offer a photo that another community already got.
-            taken = ProposedPhotos()
-            assigned = {s.media_asset_id for s in current if s.media_asset_id}
-            for asset in await session.scalars(
-                select(MediaAsset).where(MediaAsset.id.in_(assigned))
-            ):
-                taken.remember_asset(asset)
-            for submission in current:
-                if submission.id not in snapshots:
-                    continue
-                for item in snapshots[submission.id][1]:
-                    if item.asset and item.asset.id == submission.media_asset_id:
-                        taken.remember_item(item)
             for submission in current:
                 if submission.id in snapshots and submission.id in assignments:
-                    await snapshot(session, submission, *snapshots[submission.id], hidden=taken)
+                    await snapshot(session, submission, *snapshots[submission.id])
                 elif submission.media_asset_id is None:
                     from dropgrid.photos.failures import reason
 

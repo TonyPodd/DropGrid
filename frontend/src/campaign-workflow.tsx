@@ -60,7 +60,8 @@ const attentionNames: Record<string, string> = {
   materialization_failed: "Не удалось импортировать фото",
   dedup_exhausted: "Кандидаты исчерпаны после dedup / rotation",
   cooldown_exhausted: "Фото недавно использованы в этой группе",
-  repeats_exhausted: "Новых фото не нашлось: все варианты уже предлагались",
+  repeats_exhausted:
+    "Новых фото не нашлось: все варианты уже предлагались в других кампаниях",
   download_error: "Не удалось скачать фото",
   storage_error: "Недоступно хранилище фото",
   category_archive_error: "Недоступен архив категории",

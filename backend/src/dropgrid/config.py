@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     apify_api_token: SecretStr | None = None
     pinterest_apify_actor: str = ""
     media_storage_dir: Path = Path("media")
-    photo_max_reuse_per_asset: int = Field(default=1, ge=1, le=20)
+    # None: within one campaign a photo may serve any number of communities it fits.
+    photo_max_reuse_per_asset: int | None = Field(default=None, ge=1, le=10000)
     photo_search_cache_hours: int = Field(default=24, ge=24, le=168)
     photo_download_concurrency: int = Field(default=4, ge=1, le=6)
     campaign_reference_warmup_target: int = Field(default=12, ge=1, le=20)

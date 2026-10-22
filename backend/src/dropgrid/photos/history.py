@@ -1,4 +1,7 @@
-"""Photos the bot has already proposed, so a new preparation looks for fresh ones."""
+"""Photos proposed in other campaigns, so a new campaign looks for fresh ones.
+
+Within one campaign a photo may repeat across communities up to the reuse limit.
+"""
 
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -42,13 +45,6 @@ class ProposedPhotos:
         if perceptual_hash:
             self.perceptual_hashes.add(perceptual_hash)
 
-    def remember_item(self, item: PoolCandidate) -> None:
-        self.remember(
-            item.identity, item.asset.id if item.asset else None, item.sha256, item.perceptual_hash
-        )
-        if item.asset:
-            self.remember_asset(item.asset)
-
     def remember_asset(self, asset: MediaAsset) -> None:
         self.remember(
             (asset.provider or "", asset.provider_asset_id or ""),
@@ -78,11 +74,9 @@ class ProposedPhotos:
 
 
 async def proposed_photos(session: AsyncSession, campaign_id: UUID) -> ProposedPhotos:
-    """Every photo the bot proposed or an operator chose before this planning run.
+    """Every photo the bot proposed, an operator chose or a submission got in OTHER campaigns.
 
-    Earlier selection sessions of the same campaign count too: preparing again
-    must bring new photos. Photos still assigned in this campaign are governed
-    by the per-campaign reuse limit instead.
+    The campaign's own photos are governed by the per-campaign reuse limit instead.
     """
     seen = ProposedPhotos()
     rows = await session.execute(
@@ -107,10 +101,11 @@ async def proposed_photos(session: AsyncSession, campaign_id: UUID) -> ProposedP
             CommunityReferencePhoto.id == PhotoSelectionCandidate.reference_id,
         )
         .where(
+            PhotoSelectionSession.campaign_id != campaign_id,
             or_(
                 PhotoSelectionCandidate.rank == PhotoSelectionSession.proposed_rank,
                 PhotoSelectionCandidate.selected.is_(True),
-            )
+            ),
         )
     )
     for candidate, asset_id, *hashes in rows.tuples():

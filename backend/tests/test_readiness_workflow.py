@@ -514,11 +514,15 @@ async def test_review_reuse_limit_is_per_campaign_not_dry_run_reservations(
             )
         )
     if same_campaign:
+        # An optional configured limit still applies within the campaign...
+        default = planner.settings
+        planner.settings = default.model_copy(update={"photo_max_reuse_per_asset": 3})
         with pytest.raises(ConflictError, match="Photo reuse limit reached") as refused:
             await confirm(planner, sid)
         assert getattr(refused.value, "code", None) == "photo_reuse_limit"
-    else:
-        await confirm(planner, sid)
-        async with sessions() as db:
-            assert (await db.get(Submission, sid)).media_asset_id == asset.id
+        # ...but by default one photo may serve any number of communities it fits.
+        planner.settings = default
+    await confirm(planner, sid)
+    async with sessions() as db:
+        assert (await db.get(Submission, sid)).media_asset_id == asset.id
     await http.aclose()

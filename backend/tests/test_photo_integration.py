@@ -147,7 +147,7 @@ async def test_partial_reuse_ceiling(sessions, tmp_path):
     assert report.newly_assigned == 3 and report.unassigned == 1 and report.unique_assets == 1
 
 
-async def test_one_photo_per_community_by_default(sessions, tmp_path):
+async def test_photo_repeats_within_campaign_by_default(sessions, tmp_path):
     cid = await prepared(sessions, count=4)
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -159,7 +159,8 @@ async def test_one_photo_per_community_by_default(sessions, tmp_path):
         report = await make_planner(
             sessions, tmp_path, FakePhotoProvider((candidate(),)), client
         ).plan(cid, MediaPlanInput())
-    assert report.newly_assigned == 1 and report.unassigned == 3 and report.unique_assets == 1
+    # Within one campaign a photo may serve any number of communities.
+    assert report.newly_assigned == 4 and report.unassigned == 0 and report.unique_assets == 1
 
 
 async def prepared(sessions, count=8, category="ГРУЗОВИКИ"):
@@ -216,7 +217,7 @@ async def test_plan_category_idempotent_balanced_and_no_usage_increment(sessions
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = make_planner(sessions, tmp_path, provider, client)
-        report = await planner.plan(cid, MediaPlanInput(max_reuse_per_asset=3))
+        report = await planner.plan(cid, MediaPlanInput())
         assert report.total_submissions == report.newly_assigned == 8
         assert report.unassigned == 0 and report.unique_assets == 3
         assert report.downloaded_assets == len(downloads) == 3
@@ -229,7 +230,7 @@ async def test_plan_category_idempotent_balanced_and_no_usage_increment(sessions
                 for a in (await db.scalars(select(MediaAsset))).all()
             )
         requests = len(provider.calls)
-        again = await planner.plan(cid, MediaPlanInput(max_reuse_per_asset=3))
+        again = await planner.plan(cid, MediaPlanInput())
         assert again.previously_assigned == 8 and again.newly_assigned == 0
         assert len(provider.calls) == requests and len(downloads) == 3
         async with sessions() as db:
@@ -378,7 +379,7 @@ async def test_exact_near_provider_alias_dedup(sessions, tmp_path):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         planner = make_planner(sessions, tmp_path, provider, client)
-        report = await planner.plan(cid, MediaPlanInput(max_reuse_per_asset=3))
+        report = await planner.plan(cid, MediaPlanInput())
     assert report.unique_assets == 1 and report.newly_assigned == 3
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(MediaAsset)) == 1

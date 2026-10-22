@@ -23,7 +23,6 @@ from dropgrid.domain.enums import SubmissionStatus
 from dropgrid.domain.personas import PERSONA_PROVIDER
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.domain import PhotoCandidate, PhotoQueryPlan
-from dropgrid.photos.history import ProposedPhotos
 from dropgrid.photos.learning import active_model, predict, queue_training
 from dropgrid.photos.planner import CampaignMediaPlanner
 from dropgrid.photos.pool import PoolCandidate, materialize_archive, regional_priority
@@ -71,17 +70,11 @@ async def snapshot(
     baseline: list[PoolCandidate],
     model_version: str,
     warnings: list[str],
-    hidden: ProposedPhotos | None = None,
 ) -> None:
     viable = [
         item
         for item in items
-        if (item.photo.publication_eligible or item.photo.provider == "pinterest")
-        and (
-            hidden is None
-            or (item.asset is not None and item.asset.id == submission.media_asset_id)
-            or item not in hidden
-        )
+        if item.photo.publication_eligible or item.photo.provider == "pinterest"
     ]
     chosen = next(
         (item for item in viable if item.asset and item.asset.id == submission.media_asset_id), None
@@ -403,7 +396,9 @@ async def _confirm(
                 raise ConflictError("Photo context changed; prepare again")
         # A girl's own photos are meant for many dating/selfie publics: no library limits.
         personal = asset.provider == PERSONA_PROVIDER
-        if row.media_asset_id != asset.id and not personal:
+        limit = planner.settings.photo_max_reuse_per_asset
+        # Without a configured limit a photo may serve any number of communities it fits.
+        if row.media_asset_id != asset.id and not personal and limit is not None:
             reused = (
                 await session.scalar(
                     select(func.count())
@@ -417,7 +412,7 @@ async def _confirm(
                 )
                 or 0
             )
-            if reused >= planner.settings.photo_max_reuse_per_asset:
+            if reused >= limit:
                 raise PhotoConflict("photo_reuse_limit", "Photo reuse limit reached")
         from dropgrid.photos.rotation import community_usage, recently_used
 

@@ -465,7 +465,8 @@ async def test_girl_photo_choices_can_be_confirmed_in_review(sessions, tmp_path)
         async with sessions() as db, db.begin():
             selfies = await submission_for(db, data["campaign"], data["communities"]["selfies"])
             sid = selfies.id
-            # One girl's photo is meant to go to many publics: far beyond the library limit.
+            # One girl's photo is meant to go to many publics: far beyond any library limit.
+            planner.settings = planner.settings.model_copy(update={"photo_max_reuse_per_asset": 3})
             for i in range(planner.settings.photo_max_reuse_per_asset + 1):
                 other = Community(domain=f"more_dating_{i}", resolution_status="resolved")
                 db.add(other)

@@ -7,7 +7,7 @@ from dropgrid.api.schemas import Input, Output
 
 
 class MediaPlanInput(Input):
-    max_reuse_per_asset: int | None = Field(default=None, ge=1, le=20)
+    max_reuse_per_asset: int | None = Field(default=None, ge=1, le=10000)
     force: bool = False
 
 

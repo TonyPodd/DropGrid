@@ -199,8 +199,8 @@ async def report(
         "reused_assignments": sum(v - 1 for v in assets.values()),
         "max_reuse": max(library.values(), default=0),
         "max_reuse_policy": settings.photo_max_reuse_per_asset,
-        "reuse_policy_respected": max(library.values(), default=0)
-        <= settings.photo_max_reuse_per_asset,
+        "reuse_policy_respected": settings.photo_max_reuse_per_asset is None
+        or max(library.values(), default=0) <= settings.photo_max_reuse_per_asset,
         "near_duplicate_exclusions": (job.result or {}).get("near_duplicate_exclusions", 0)
         if job
         else 0,
