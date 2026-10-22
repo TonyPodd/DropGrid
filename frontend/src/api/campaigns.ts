@@ -34,6 +34,8 @@ export const campaignsApi = {
   ) => request<Campaign>(`/campaigns/${id}/start`, { method: "POST", body }),
   cancel: (id: string) =>
     request<Campaign>(`/campaigns/${id}/cancel`, { method: "POST" }),
+  remove: (id: string) =>
+    request<void>(`/campaigns/${id}`, { method: "DELETE" }),
   list: (page: number, signal?: AbortSignal) =>
     request<Campaign[]>(`/campaigns?limit=25&offset=${(page - 1) * 25}`, {
       signal,

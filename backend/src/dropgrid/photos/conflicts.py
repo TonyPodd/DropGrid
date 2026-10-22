@@ -18,6 +18,8 @@ CODES = frozenset(
         "persona_photo_limit",
         # Suggesting posts needs one account per quota (100) communities of the grid.
         "accounts_needed",
+        # A campaign that is preparing, sending or monitoring is stopped before deletion.
+        "campaign_in_progress",
     }
 )
 

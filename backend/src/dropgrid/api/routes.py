@@ -386,6 +386,11 @@ async def campaign_cancel(entity_id: UUID, session: Session) -> Campaign:
     return await sending.cancel_campaign(session, entity_id)
 
 
+@router.delete("/campaigns/{entity_id}", status_code=204)
+async def campaign_delete(entity_id: UUID, session: Session) -> None:
+    await campaigns.delete_campaign(session, entity_id)
+
+
 @router.get("/account-usage")
 async def account_usage(session: Session, request: Request) -> dict[str, object]:
     from dropgrid.db.models import Account, CampaignAccount
@@ -398,6 +403,7 @@ async def account_usage(session: Session, request: Request) -> dict[str, object]
             .where(
                 CampaignAccount.enabled.is_(True),
                 Campaign.status.in_(("ready", "running", "monitoring")),
+                Campaign.deleted_at.is_(None),
             )
             .order_by(Campaign.created_at.desc())
         )

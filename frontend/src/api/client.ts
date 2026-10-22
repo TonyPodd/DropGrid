@@ -78,6 +78,10 @@ export async function request<T>(
           "У аккаунта уже слишком много фото. Удалите лишние, чтобы добавить новые.",
         persona_photo_in_library:
           "Это фото уже есть в общей библиотеке. Загрузите личное фото девочки.",
+        accounts_needed:
+          "Чтобы предложить посты, нужно по аккаунту на каждые 100 пабликов сетки.",
+        campaign_in_progress:
+          "Кампания выполняется. Сначала остановите её, потом удалите.",
       };
       const payload: unknown = await response.json().catch(() => null);
       if (payload && typeof payload === "object" && "detail" in payload) {

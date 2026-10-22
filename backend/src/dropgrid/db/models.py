@@ -361,6 +361,9 @@ class Campaign(Identity, Base):
     publication_check_hours: Mapped[int] = mapped_column(Integer, default=72)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Deleted campaigns disappear from the product but keep their rows: their photos
+    # still count as used, so photos never repeat across campaigns.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Submission(Identity, Updated, Base):

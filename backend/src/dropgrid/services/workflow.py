@@ -152,6 +152,7 @@ async def campaign_list(
         .join(Grid, Grid.id == Campaign.grid_id)
         .outerjoin(members, members.c.grid_id == Campaign.grid_id)
         .outerjoin(submissions, submissions.c.campaign_id == Campaign.id)
+        .where(Campaign.deleted_at.is_(None))
         .order_by(Campaign.created_at.desc(), Campaign.id)
         .limit(limit)
         .offset(offset)
@@ -178,13 +179,18 @@ async def dashboard(session: AsyncSession) -> DashboardRead:
                 select(func.count()).select_from(Account).scalar_subquery(),
                 select(func.count()).select_from(Community).scalar_subquery(),
                 select(func.count()).select_from(Grid).scalar_subquery(),
-                select(func.count()).select_from(Campaign).scalar_subquery(),
+                select(func.count())
+                .select_from(Campaign)
+                .where(Campaign.deleted_at.is_(None))
+                .scalar_subquery(),
             )
         )
     ).one()
     statuses = dict.fromkeys(CampaignStatus, 0)
     for status, count in await session.execute(
-        select(Campaign.status, func.count()).group_by(Campaign.status)
+        select(Campaign.status, func.count())
+        .where(Campaign.deleted_at.is_(None))
+        .group_by(Campaign.status)
     ):
         statuses[status] = count
     return DashboardRead(

@@ -60,7 +60,8 @@ async def get_entity[Model: Base](
     session: AsyncSession, model: type[Model], entity_id: UUID | tuple[UUID, int]
 ) -> Model:
     entity = await session.get(model, entity_id)
-    if entity is None:
+    # A deleted campaign is gone for every API path.
+    if entity is None or getattr(entity, "deleted_at", None) is not None:
         raise NotFoundError(f"{model.__name__} not found")
     return entity
 

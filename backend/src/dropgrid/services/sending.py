@@ -56,7 +56,7 @@ from dropgrid.services.account_pools import (
     save_pool,
 )
 from dropgrid.services.campaigns import locked_campaign
-from dropgrid.services.catalog import ConflictError, get_entity
+from dropgrid.services.catalog import ConflictError, NotFoundError, get_entity
 from dropgrid.services.category_genders import UNPLACED, Placement, placements
 from dropgrid.services.publication import attachments, record_suggested_submission
 
@@ -419,6 +419,7 @@ async def autostart(
                 .where(
                     Campaign.auto_send.is_(True),
                     Campaign.is_dry_run.is_(False),
+                    Campaign.deleted_at.is_(None),
                     Campaign.status == CampaignStatus.ready,
                     Campaign.preparation_state == "ready",
                 )
@@ -442,6 +443,8 @@ async def autostart(
                 await start_campaign(session, campaign_id, None, None, storage, settings)
                 started += 1
                 logger.info("campaign.autostart.started", extra={"campaign_id": str(campaign_id)})
+        except NotFoundError:
+            continue  # deleted meanwhile
         except ConflictError:
             # Preflight is not ready yet; the campaign page shows what is missing.
             logger.info("campaign.autostart.waiting", extra={"campaign_id": str(campaign_id)})

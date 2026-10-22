@@ -5,7 +5,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dropgrid.api.schemas import CampaignCreate, CampaignPatch, PrepareRead
-from dropgrid.db.models import Campaign, Grid, GridCommunity, Submission
+from dropgrid.db.models import (
+    Campaign,
+    CampaignPreparationJob,
+    Grid,
+    GridCommunity,
+    Submission,
+    utcnow,
+)
 from dropgrid.domain.enums import CampaignStatus
 from dropgrid.integrations.vk.helpers import parse_vk_audio_reference
 from dropgrid.services.catalog import ConflictError, NotFoundError, get_entity
@@ -26,9 +33,26 @@ async def locked_campaign(session: AsyncSession, campaign_id: UUID) -> Campaign:
     campaign = await session.scalar(
         select(Campaign).where(Campaign.id == campaign_id).with_for_update()
     )
-    if campaign is None:
+    if campaign is None or campaign.deleted_at is not None:
         raise NotFoundError("Campaign not found")
     return campaign
+
+
+async def delete_campaign(session: AsyncSession, campaign_id: UUID) -> None:
+    """Delete a draft or a finished campaign; one in progress must be stopped first."""
+    from dropgrid.photos.conflicts import PhotoConflict
+
+    campaign = await locked_campaign(session, campaign_id)
+    preparing = await session.scalar(
+        select(CampaignPreparationJob.id).where(
+            CampaignPreparationJob.campaign_id == campaign_id,
+            CampaignPreparationJob.state.in_(("queued", "running")),
+        )
+    )
+    if preparing or campaign.status in {CampaignStatus.running, CampaignStatus.monitoring}:
+        raise PhotoConflict("campaign_in_progress", "Stop the campaign before deleting it")
+    campaign.deleted_at = utcnow()
+    await session.flush()
 
 
 async def patch_campaign(session: AsyncSession, campaign_id: UUID, data: CampaignPatch) -> Campaign:
