@@ -6,10 +6,12 @@ import httpx
 
 from dropgrid.config import Settings
 from dropgrid.db.session import Database
+from dropgrid.integrations.instagram import InstagramGraphClient
 from dropgrid.photos.cache import SearchCache
 from dropgrid.photos.domain import PhotoPolicy
 from dropgrid.photos.download import PhotoDownloader, PinnedPhotoTransport
 from dropgrid.photos.images import LocalMediaStorage
+from dropgrid.photos.instagram import InstagramPhotoProvider, InstagramPolicy, InstagramSync
 from dropgrid.photos.pinterest import ApifyPinterestBackend, PinterestPhotoProvider, PinterestPolicy
 from dropgrid.photos.pinterest_direct import PinterestAnonymousTransport, PinterestDirectBackend
 from dropgrid.photos.pinterest_preview import PinterestPreview
@@ -135,8 +137,37 @@ class PhotoEngine:
         )
         self.planner.pinterest_preview = self.pinterest
         self.planner.pinterest_status = self.pinterest_status
+        # Listed Instagram profiles: official Graph API reads and their CDN images.
+        self.instagram_api_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(20, connect=5), trust_env=False, follow_redirects=False
+        )
+        self.instagram = InstagramGraphClient(
+            settings.instagram_access_token,
+            settings.instagram_business_account_id,
+            settings.instagram_graph_version,
+            self.instagram_api_client,
+        )
+        instagram_policy = InstagramPolicy(timeout_seconds=settings.photo_download_timeout_seconds)
+        self.instagram_download_client = httpx.AsyncClient(
+            transport=PinnedPhotoTransport(instagram_policy),
+            timeout=httpx.Timeout(15, connect=5),
+            trust_env=False,
+            follow_redirects=False,
+            headers={"Accept-Encoding": "identity"},
+        )
+        self.instagram_sync = InstagramSync(
+            db.sessions,
+            self.instagram,
+            PhotoDownloader(self.instagram_download_client, instagram_policy, slots=download_slots),
+            self.storage,
+            self.embedder,
+            settings,
+        )
+        self.planner.instagram = InstagramPhotoProvider(self.visual) if self.embedder else None
 
     async def aclose(self) -> None:
+        await self.instagram_api_client.aclose()
+        await self.instagram_download_client.aclose()
         await self.search_client.aclose()
         await self.download_client.aclose()
         await self.reference_client.aclose()

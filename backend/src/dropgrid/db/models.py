@@ -476,6 +476,39 @@ class ReferenceSyncJob(Identity, Updated, Base):
     error_code: Mapped[str | None] = mapped_column(String(80))
 
 
+class InstagramProfile(Identity, Updated, Base):
+    """An Instagram profile an operator listed as a photo source."""
+
+    __tablename__ = "instagram_profiles"
+    username: Mapped[str] = mapped_column(String(30), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # pending -> ready | error (error_code says why); syncing while being read.
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    added_by: Mapped[str | None] = mapped_column(String(16))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sync_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    photo_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Mean CLIP embedding of the profile's photos: which communities it fits.
+    centroid: Mapped[bytes | None] = mapped_column(LargeBinary)
+    centroid_model: Mapped[str | None] = mapped_column(String(200))
+    centroid_dimensions: Mapped[int | None] = mapped_column(Integer)
+
+
+class InstagramPhoto(Identity, Base):
+    """One photo of a listed profile, stored as a MediaAsset (provider "instagram")."""
+
+    __tablename__ = "instagram_photos"
+    profile_id: Mapped[UUID] = mapped_column(
+        ForeignKey("instagram_profiles.id", ondelete="CASCADE"), index=True
+    )
+    # Post id, or "post:child" for a carousel photo.
+    media_id: Mapped[str] = mapped_column(String(100), unique=True)
+    permalink: Mapped[str] = mapped_column(Text)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    media_asset_id: Mapped[UUID] = mapped_column(ForeignKey("media_assets.id"), index=True)
+
+
 class PhotoPreviewCache(Identity, Updated, Base):
     """Preview bytes only; no FK to MediaAsset, Campaign or Submission."""
 

@@ -132,6 +132,10 @@ class CampaignMediaPlanner:
 
         self.pinterest_preview: PinterestPreview | None = None
         self.pinterest_status = "disabled"
+        from dropgrid.photos.instagram import InstagramPhotoProvider
+
+        # Photos of the Instagram profiles operators listed; needs the visual engine.
+        self.instagram: InstagramPhotoProvider | None = None
         self.builder, self.ranker = PhotoQueryBuilder(), PhotoRanker()
         self.semaphore = asyncio.Semaphore(settings.photo_download_concurrency)
 
@@ -495,7 +499,14 @@ class CampaignMediaPlanner:
             source: dict.fromkeys(
                 ("retrieved", "deduplicated", "materialized", "embedded", "top_10", "selected"), 0
             )
-            for source in ("pinterest", "pixabay", "library", "vk_archive", "vk_category_archive")
+            for source in (
+                "pinterest",
+                "pixabay",
+                "library",
+                "vk_archive",
+                "vk_category_archive",
+                "instagram",
+            )
         }
         groups: dict[tuple[str, str | None, str | None, str | None], list[UUID]] = defaultdict(list)
         all_groups: dict[str, list[UUID]] = defaultdict(list)
@@ -766,6 +777,16 @@ class CampaignMediaPlanner:
                                 report.source_contributions["vk_category_archive"]["retrieved"] += (
                                     len(category_pool)
                                 )
+                            if self.instagram:
+                                instagram = [
+                                    item
+                                    for item in await self.instagram.candidates(community_id)
+                                    if item.asset and self.eligible(item.asset, plan.sensitive)
+                                ]
+                                report.source_contributions["instagram"]["retrieved"] += len(
+                                    instagram
+                                )
+                                pool += instagram
                             # Other campaigns' photos are neither picked nor shown as alternatives.
                             fresh_pool = [item for item in pool if item not in seen]
                             exhaustion[sid]["repeat"] += len(pool) - len(fresh_pool)
@@ -883,6 +904,12 @@ class CampaignMediaPlanner:
                                 if item.asset and reserved_counts[item.asset.id] >= reuse:
                                     exhaustion[sid]["reuse"] += 1
                                     continue
+                                if item.source == "instagram" and item.asset:
+                                    # Synced Instagram photos are assets already; make them
+                                    # assignable in this retrieval context.
+                                    source_of_asset[item.asset.id] = "instagram"
+                                    if all(a.id != item.asset.id for a in available[context]):
+                                        available[context].append(item.asset)
                                 materialized.append(item)
                                 # A better existing/Pixabay candidate requires no archive import.
                                 if item.asset and reserved_counts[item.asset.id] < reuse:

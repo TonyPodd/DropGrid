@@ -62,6 +62,8 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                 if not processed:
                     processed = await discovery.tick()
                 if not processed:
+                    processed = await engine.instagram_sync.tick()
+                if not processed:
                     processed = int(await train_one(db.sessions, settings))
             except (SQLAlchemyError, PostgresError, OSError, TimeoutError):
                 logger.warning("Reference study worker temporarily unavailable")

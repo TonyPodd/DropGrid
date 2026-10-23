@@ -18,6 +18,7 @@ import {
 } from "./shared";
 import { personaApi } from "./api/persona";
 import { PersonaSetup, personaReady, type PhotoCounts } from "./persona";
+import { sourceNames } from "./validation";
 type Job = {
   state: string;
   stage: string;
@@ -746,7 +747,7 @@ export function CampaignWorkflow({
                                 loading="lazy"
                               />
                               <figcaption>
-                                {c.provider} · итог{" "}
+                                {sourceNames[c.provider] ?? c.provider} · итог{" "}
                                 {Number(c.features.final_score ?? 0).toFixed(3)}
                               </figcaption>
                               <button

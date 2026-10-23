@@ -160,7 +160,7 @@ async def snapshot(
 DISPLAY_LIMIT = 24
 # Alternatives keep room for Pinterest pins and the community's own old photos when the
 # pool has them, instead of filling up with the highest-scored source only.
-DISPLAY_QUOTAS = {"pinterest": 8, "vk_archive": 8}
+DISPLAY_QUOTAS = {"pinterest": 8, "vk_archive": 8, "instagram": 6}
 
 
 def display_set(items: list[PoolCandidate], chosen: PoolCandidate) -> list[PoolCandidate]:

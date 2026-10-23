@@ -57,6 +57,7 @@ export const sourceNames: Record<string, string> = {
   library: "Библиотека",
   pixabay: "Pixabay",
   persona: "Фото девочки",
+  instagram: "Instagram",
 };
 export function imageUrl(path: string | null) {
   return path
