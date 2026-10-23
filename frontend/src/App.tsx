@@ -18,6 +18,7 @@ const VkAuthHelper =
 import { CommunityReviewPage } from "./discovery-review";
 import { DiscoveryPage } from "./discovery";
 import { PhotoValidationPage } from "./validation";
+import { InstagramPage } from "./instagram";
 export function App() {
   const location = useLocation();
   if (location.pathname.startsWith("/discovery/review/"))
@@ -52,6 +53,7 @@ export function App() {
             <NavLink to="/communities">Communities</NavLink>
             <NavLink to="/accounts">Accounts</NavLink>
             <NavLink to="/media">Media</NavLink>
+            <NavLink to="/instagram">Instagram</NavLink>
             <NavLink to="/discovery">Discovery</NavLink>
             <NavLink to="/activity">Activity Center</NavLink>
           </nav>
@@ -92,6 +94,7 @@ export function App() {
             <Route path="/communities" element={<CommunitiesPage />} />
             <Route path="/communities/:id" element={<CommunityDetailPage />} />
             <Route path="/media" element={<MediaPage />} />
+            <Route path="/instagram" element={<InstagramPage />} />
             <Route
               path="*"
               element={

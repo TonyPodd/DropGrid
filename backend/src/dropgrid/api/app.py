@@ -29,6 +29,7 @@ from dropgrid.logging import configure_logging
 from dropgrid.photos.archive import VKArchivePhotoProvider
 from dropgrid.photos.conflicts import PhotoConflict
 from dropgrid.photos.engine import PhotoEngine
+from dropgrid.photos.instagram_routes import router as instagram_router
 from dropgrid.photos.preparation import MediaPreparation
 from dropgrid.photos.preparation_routes import router as preparation_router
 from dropgrid.photos.reference_routes import router as reference_router
@@ -100,6 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(photo_router)
     app.include_router(reference_router)
     app.include_router(preparation_router)
+    app.include_router(instagram_router)
 
     @app.get("/health")
     async def health(db: Annotated[Database, Depends(database)]) -> JSONResponse:

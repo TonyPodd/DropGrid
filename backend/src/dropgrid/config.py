@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     cross_community_reuse_enabled: bool = False
     apify_api_token: SecretStr | None = None
     pinterest_apify_actor: str = ""
+    # Instagram profiles as a photo source, read via the official Graph API
+    # (Business Discovery) on behalf of our own Business/Creator account.
+    instagram_access_token: SecretStr | None = None
+    instagram_business_account_id: str | None = Field(default=None, pattern=r"^\d{1,32}$")
+    instagram_graph_version: str = Field(default="v23.0", pattern=r"^v\d{1,3}\.\d$")
+    instagram_posts_per_profile: int = Field(default=50, ge=1, le=100)
+    instagram_sync_hours: int = Field(default=24, ge=1, le=720)
     media_storage_dir: Path = Path("media")
     # None: within one campaign a photo may serve any number of communities it fits.
     photo_max_reuse_per_asset: int | None = Field(default=None, ge=1, le=10000)
