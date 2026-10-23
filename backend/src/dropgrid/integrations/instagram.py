@@ -1,8 +1,8 @@
-"""Read-only Instagram Graph API client: recent posts of a listed profile.
+"""Read-only Instagram readers: recent posts of a listed profile.
 
-Business Discovery reads another Business/Creator profile by username on behalf of
-our own Instagram Business/Creator account. Personal profiles cannot be read this
-way. Tokens never appear in logs, errors or URLs we return.
+The official Graph API (Business Discovery) reads Business/Creator profiles on behalf
+of our own professional account. Personal public profiles are read by an Apify
+Instagram scraper instead. Tokens never appear in logs, errors or URLs we return.
 """
 
 import re
@@ -164,3 +164,108 @@ def parse_post(item: object) -> InstagramPost | None:
                 )
     # Videos and reels are skipped: only photos are suggested.
     return post if post.images else None
+
+
+class ApifyInstagramClient:
+    """Any public profile via an Apify Instagram post scraper (no Instagram login)."""
+
+    def __init__(self, token: SecretStr | None, actor: str, http: httpx.AsyncClient) -> None:
+        self.token, self.actor, self.http = token, actor.replace("/", "~"), http
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.token and self.token.get_secret_value())
+
+    async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]:
+        if not self.configured:
+            raise InstagramError("instagram_not_configured")
+        assert self.token
+        try:
+            response = await self.http.post(
+                f"https://api.apify.com/v2/acts/{self.actor}/run-sync-get-dataset-items",
+                params={"timeout": 240, "clean": "true"},
+                headers={"Authorization": "Bearer " + self.token.get_secret_value()},
+                json={"username": [username], "resultsLimit": limit},
+                timeout=260,
+                follow_redirects=False,
+            )
+        except httpx.HTTPError:
+            raise InstagramError("instagram_unavailable") from None
+        if response.status_code in {401, 403}:
+            raise InstagramError("instagram_token_invalid")
+        if response.status_code == 429:
+            raise InstagramError("instagram_rate_limited")
+        if response.status_code not in {200, 201} or len(response.content) > 20 * 1024 * 1024:
+            raise InstagramError("instagram_unavailable")
+        try:
+            items: Any = response.json()
+        except ValueError:
+            raise InstagramError("instagram_unavailable") from None
+        if not isinstance(items, list):
+            raise InstagramError("instagram_unavailable")
+        posts = [post for item in items if (post := parse_scraped_post(item)) is not None]
+        if not posts and any(isinstance(i, dict) and i.get("error") for i in items):
+            # Unknown, private or blocked profile.
+            raise InstagramError("instagram_profile_unavailable")
+        return posts
+
+
+def parse_scraped_post(item: object) -> InstagramPost | None:
+    if not isinstance(item, dict) or item.get("error"):
+        return None
+    post_id = item.get("id") or item.get("shortCode")
+    permalink = item.get("url")
+    if not isinstance(post_id, str) or not isinstance(permalink, str):
+        return None
+    if not permalink.startswith("https://www.instagram.com/"):
+        return None
+    timestamp = item.get("timestamp")
+    posted_at = None
+    if isinstance(timestamp, str):
+        try:
+            posted_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            posted_at = None
+    caption = item.get("caption")
+    post = InstagramPost(
+        post_id, permalink, posted_at, caption[:2000] if isinstance(caption, str) else ""
+    )
+    kind = item.get("type")
+    if kind == "Image" and isinstance(item.get("displayUrl"), str):
+        post.images.append(InstagramImage(post_id, item["displayUrl"]))
+    elif kind == "Sidecar":
+        children = item.get("childPosts") or []
+        for index, child in enumerate(children):
+            if (
+                isinstance(child, dict)
+                and child.get("type") == "Image"
+                and isinstance(child.get("displayUrl"), str)
+            ):
+                child_id = child.get("id") if isinstance(child.get("id"), str) else str(index)
+                post.images.append(InstagramImage(f"{post_id}:{child_id}", child["displayUrl"]))
+        if not children:
+            # Basic output lists carousel images without child metadata.
+            for index, url in enumerate(item.get("images") or []):
+                if isinstance(url, str):
+                    post.images.append(InstagramImage(f"{post_id}:{index}", url))
+    return post if post.images else None
+
+
+class InstagramReader:
+    """Official API first; profiles it cannot read (personal ones) go to the scraper."""
+
+    def __init__(self, graph: InstagramGraphClient, scraper: ApifyInstagramClient) -> None:
+        self.graph, self.scraper = graph, scraper
+
+    @property
+    def configured(self) -> bool:
+        return self.graph.configured or self.scraper.configured
+
+    async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]:
+        if self.graph.configured:
+            try:
+                return await self.graph.recent_posts(username, limit)
+            except InstagramError as error:
+                if error.code != "instagram_profile_unavailable" or not self.scraper.configured:
+                    raise
+        return await self.scraper.recent_posts(username, limit)

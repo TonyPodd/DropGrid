@@ -12,6 +12,7 @@ import re
 import statistics
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -22,7 +23,6 @@ from dropgrid.config import Settings
 from dropgrid.db.models import InstagramPhoto, InstagramProfile, MediaAsset, utcnow
 from dropgrid.integrations.instagram import (
     InstagramError,
-    InstagramGraphClient,
     InstagramImage,
     InstagramPost,
 )
@@ -48,6 +48,16 @@ PHOTOS_PER_COMMUNITY = 24
 # how close the community's own photos are to each other.
 FIT_SHARE = 0.9
 SYNC_LEASE = timedelta(minutes=15)
+# After the first read only the newest posts are fetched: they are what is new, and
+# the scraper is paid per post.
+REFRESH_POSTS = 12
+
+
+class InstagramClient(Protocol):
+    @property
+    def configured(self) -> bool: ...
+
+    async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]: ...
 
 
 @dataclass(frozen=True)
@@ -79,7 +89,7 @@ class InstagramSync:
     def __init__(
         self,
         sessions: async_sessionmaker[AsyncSession],
-        client: InstagramGraphClient,
+        client: InstagramClient,
         downloader: PhotoDownloader,
         storage: LocalMediaStorage,
         embedder: VisualEmbedder | None,
@@ -118,11 +128,12 @@ class InstagramSync:
                 return 0
             profile.status, profile.sync_lease_until = "syncing", now + SYNC_LEASE
             profile_id, username = profile.id, profile.username
+            limit = self.settings.instagram_posts_per_profile
+            if profile.photo_count:
+                limit = min(limit, REFRESH_POSTS)
         error = None
         try:
-            posts = await self.client.recent_posts(
-                username, self.settings.instagram_posts_per_profile
-            )
+            posts = await self.client.recent_posts(username, limit)
         except InstagramError as exc:
             posts, error = [], exc.code
         for post in posts:

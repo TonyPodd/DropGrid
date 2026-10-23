@@ -19,10 +19,13 @@ from dropgrid.db.models import (
     utcnow,
 )
 from dropgrid.integrations.instagram import (
+    ApifyInstagramClient,
     InstagramError,
     InstagramGraphClient,
     InstagramImage,
     InstagramPost,
+    InstagramReader,
+    parse_scraped_post,
     parse_username,
 )
 from dropgrid.photos.domain import FakePhotoProvider, PhotoPolicy
@@ -153,13 +156,12 @@ async def test_unconfigured_client_reads_nothing():
 
 
 class FakeGraph:
-    configured = True
-
-    def __init__(self, posts=None, error=None):
-        self.posts, self.error, self.calls = posts or [], error, 0
+    def __init__(self, posts=None, error=None, configured=True):
+        self.posts, self.error, self.configured = posts or [], error, configured
+        self.limits = []
 
     async def recent_posts(self, username, limit):
-        self.calls += 1
+        self.limits.append(limit)
         if self.error:
             raise InstagramError(self.error)
         return self.posts
@@ -202,9 +204,10 @@ async def add_profile(sessions, username="cars.daily", **values):
 async def test_sync_stores_new_photos_once_and_a_centroid(sessions, tmp_path):
     pid = await add_profile(sessions)
     settings = Settings(_env_file=None)
+    reader = FakeGraph([post("A", 11), post("B", 12, 13)])
     sync = InstagramSync(
         sessions,
-        FakeGraph([post("A", 11), post("B", 12, 13)]),
+        reader,
         downloader(),
         LocalMediaStorage(tmp_path),
         FakeVisualEmbedder(),
@@ -230,6 +233,8 @@ async def test_sync_stores_new_photos_once_and_a_centroid(sessions, tmp_path):
     assert await sync.tick() == 1
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(InstagramPhoto)) == 3
+    # The first read takes 50 posts, later reads only the newest.
+    assert reader.limits == [50, 12]
 
 
 @pytest.mark.integration
@@ -386,3 +391,128 @@ async def test_profiles_api(client, sessions):
     assert (await client.delete(f"/api/v1/instagram-profiles/{cars['id']}")).status_code == 204
     profiles = (await client.get("/api/v1/instagram-profiles")).json()["profiles"]
     assert [p["username"] for p in profiles] == ["cats.daily"]
+
+
+def test_scraped_posts_keep_photos_and_carousels():
+    image = parse_scraped_post(
+        {
+            "id": "1",
+            "type": "Image",
+            "url": "https://www.instagram.com/p/A/",
+            "displayUrl": "https://scontent.cdninstagram.com/1.jpg",
+            "timestamp": "2026-10-01T12:00:00.000Z",
+            "caption": "My car",
+        }
+    )
+    assert image.images == [InstagramImage("1", "https://scontent.cdninstagram.com/1.jpg")]
+    assert image.posted_at.year == 2026 and image.caption == "My car"
+    carousel = parse_scraped_post(
+        {
+            "id": "2",
+            "type": "Sidecar",
+            "url": "https://www.instagram.com/p/B/",
+            "childPosts": [
+                {"id": "21", "type": "Image", "displayUrl": "https://scontent.cdninstagram.com/a"},
+                {"id": "22", "type": "Video", "displayUrl": "https://scontent.cdninstagram.com/b"},
+            ],
+        }
+    )
+    assert [i.media_id for i in carousel.images] == ["2:21"]
+    basic = parse_scraped_post(
+        {
+            "shortCode": "C3",
+            "type": "Sidecar",
+            "url": "https://www.instagram.com/p/C3/",
+            "images": [
+                "https://scontent.cdninstagram.com/x",
+                "https://scontent.cdninstagram.com/y",
+            ],
+        }
+    )
+    assert [i.media_id for i in basic.images] == ["C3:0", "C3:1"]
+    assert (
+        parse_scraped_post({"id": "4", "type": "Video", "url": "https://www.instagram.com/p/D/"})
+        is None
+    )
+    assert parse_scraped_post({"error": "not_found"}) is None
+
+
+async def test_scraper_reads_any_public_profile():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(
+            201,
+            json=[
+                {
+                    "id": "1",
+                    "type": "Image",
+                    "url": "https://www.instagram.com/p/A/",
+                    "displayUrl": "https://scontent.cdninstagram.com/1.jpg",
+                }
+            ],
+        )
+
+    scraper = ApifyInstagramClient(
+        SecretStr("apify-token"),
+        "apify/instagram-post-scraper",
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    posts = await scraper.recent_posts("my.personal", 12)
+    assert [p.post_id for p in posts] == ["1"]
+    request = seen[0]
+    assert request.url.path == "/v2/acts/apify~instagram-post-scraper/run-sync-get-dataset-items"
+    assert request.headers["authorization"] == "Bearer apify-token"
+    assert "apify-token" not in str(request.url)
+    import json
+
+    assert json.loads(request.content) == {"username": ["my.personal"], "resultsLimit": 12}
+
+
+@pytest.mark.parametrize(
+    "status,body,expected",
+    [
+        (
+            201,
+            [{"error": "not_found", "errorDescription": "Private"}],
+            "instagram_profile_unavailable",
+        ),
+        (401, {"error": {}}, "instagram_token_invalid"),
+        (429, {}, "instagram_rate_limited"),
+        (500, {}, "instagram_unavailable"),
+    ],
+)
+async def test_scraper_failures_become_fixed_codes(status, body, expected):
+    scraper = ApifyInstagramClient(
+        SecretStr("apify-token"),
+        "apify~instagram-post-scraper",
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(status, json=body))
+        ),
+    )
+    with pytest.raises(InstagramError) as error:
+        await scraper.recent_posts("someone", 12)
+    assert error.value.code == expected
+
+
+async def test_personal_profiles_fall_back_to_the_scraper():
+    found = [post("S", 1)]
+    official = FakeGraph(error="instagram_profile_unavailable")
+    scraper = FakeGraph(found)
+    reader = InstagramReader(official, scraper)
+    assert reader.configured and await reader.recent_posts("my.personal", 50) == found
+    assert official.limits == [50] and scraper.limits == [50]
+    # Other official errors are reported, not hidden behind the scraper.
+    broken = InstagramReader(FakeGraph(error="instagram_token_invalid"), FakeGraph(found))
+    with pytest.raises(InstagramError, match="instagram_token_invalid"):
+        await broken.recent_posts("cars.daily", 50)
+    # Without the official API every profile goes to the scraper.
+    only_scraper = InstagramReader(FakeGraph(configured=False), FakeGraph(found))
+    assert await only_scraper.recent_posts("cars.daily", 50) == found
+    business = FakeGraph(found)
+    unused = FakeGraph()
+    assert await InstagramReader(business, unused).recent_posts("cars.daily", 50) == found
+    assert unused.limits == []
+    nothing = InstagramReader(FakeGraph(configured=False), FakeGraph(configured=False))
+    assert not nothing.configured
