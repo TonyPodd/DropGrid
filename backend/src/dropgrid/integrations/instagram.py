@@ -1,13 +1,15 @@
 """Read-only Instagram readers: recent posts of a listed profile.
 
-The official Graph API (Business Discovery) reads Business/Creator profiles on behalf
-of our own professional account. Personal public profiles are read by an Apify
-Instagram scraper instead. Tokens never appear in logs, errors or URLs we return.
+By default public profiles are opened directly, like Pinterest: no token, no login,
+an honest client name; when Instagram asks to log in or slows us down we stop and try
+later, never work around it. Optional readers: the official Graph API (Business
+Discovery; Business/Creator profiles on behalf of our professional account) and an
+Apify scraper. Tokens never appear in logs, errors or URLs we return.
 """
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -251,21 +253,121 @@ def parse_scraped_post(item: object) -> InstagramPost | None:
     return post if post.images else None
 
 
-class InstagramReader:
-    """Official API first; profiles it cannot read (personal ones) go to the scraper."""
+class InstagramWebClient:
+    """Public profile pages without login: the newest 12 posts of an open profile."""
 
-    def __init__(self, graph: InstagramGraphClient, scraper: ApifyInstagramClient) -> None:
-        self.graph, self.scraper = graph, scraper
+    def __init__(self, http: httpx.AsyncClient, enabled: bool = True) -> None:
+        self.http, self.enabled = http, enabled
 
     @property
     def configured(self) -> bool:
-        return self.graph.configured or self.scraper.configured
+        return self.enabled
 
     async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]:
+        if not self.enabled:
+            raise InstagramError("instagram_not_configured")
+        try:
+            response = await self.http.get(
+                "https://www.instagram.com/api/v1/users/web_profile_info/",
+                params={"username": username},
+                # The public web app's id; the endpoint answers only with it.
+                headers={"X-IG-App-ID": WEB_APP_ID, "Accept": "application/json"},
+                timeout=20,
+                follow_redirects=False,
+            )
+        except httpx.HTTPError:
+            raise InstagramError("instagram_unavailable") from None
+        if response.status_code == 404:
+            raise InstagramError("instagram_profile_unavailable")
+        if response.status_code == 429:
+            raise InstagramError("instagram_rate_limited")
+        if response.status_code in {301, 302, 303, 307, 308, 401, 403}:
+            # Login wall or this address is not served anonymously: stop, try later.
+            raise InstagramError("instagram_login_required")
+        if response.status_code != 200 or len(response.content) > 10 * 1024 * 1024:
+            raise InstagramError("instagram_unavailable")
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            raise InstagramError("instagram_login_required") from None
+        user = (payload.get("data") or {}).get("user") if isinstance(payload, dict) else None
+        if not isinstance(user, dict):
+            if isinstance(payload, dict) and payload.get("require_login"):
+                raise InstagramError("instagram_login_required")
+            raise InstagramError("instagram_profile_unavailable")
+        if user.get("is_private"):
+            raise InstagramError("instagram_profile_private")
+        edges = (user.get("edge_owner_to_timeline_media") or {}).get("edges") or []
+        posts = []
+        for edge in edges[:limit]:
+            node = edge.get("node") if isinstance(edge, dict) else None
+            if (post := parse_web_node(node)) is not None:
+                posts.append(post)
+        return posts
+
+
+WEB_APP_ID = "936619743392459"
+
+
+def parse_web_node(node: object) -> InstagramPost | None:
+    if not isinstance(node, dict) or not isinstance(node.get("shortcode"), str):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9_-]{5,64}", node["shortcode"]):
+        return None
+    raw_id = node.get("id")
+    post_id: str = raw_id if isinstance(raw_id, str) else node["shortcode"]
+    taken = node.get("taken_at_timestamp")
+    posted_at = (
+        datetime.fromtimestamp(taken, tz=UTC) if isinstance(taken, int) and taken > 0 else None
+    )
+    captions = ((node.get("edge_media_to_caption") or {}).get("edges")) or []
+    caption = ""
+    if captions and isinstance(captions[0], dict):
+        text = (captions[0].get("node") or {}).get("text")
+        caption = text[:2000] if isinstance(text, str) else ""
+    post = InstagramPost(
+        post_id, f"https://www.instagram.com/p/{node['shortcode']}/", posted_at, caption
+    )
+    children = ((node.get("edge_sidecar_to_children") or {}).get("edges")) or []
+    if children:
+        for index, child in enumerate(children):
+            item = child.get("node") if isinstance(child, dict) else None
+            if (
+                isinstance(item, dict)
+                and not item.get("is_video")
+                and isinstance(item.get("display_url"), str)
+            ):
+                raw_child = item.get("id")
+                child_id = raw_child if isinstance(raw_child, str) else str(index)
+                post.images.append(InstagramImage(f"{post_id}:{child_id}", item["display_url"]))
+    elif not node.get("is_video") and isinstance(node.get("display_url"), str):
+        post.images.append(InstagramImage(post_id, node["display_url"]))
+    return post if post.images else None
+
+
+class InstagramReader:
+    """Official API for Business/Creator profiles when connected; everything else is
+    opened directly (or by the Apify scraper when its token is set)."""
+
+    def __init__(
+        self,
+        graph: InstagramGraphClient,
+        scraper: ApifyInstagramClient,
+        web: InstagramWebClient | None = None,
+    ) -> None:
+        self.graph, self.scraper = graph, scraper
+        self.web = web or InstagramWebClient(httpx.AsyncClient(), enabled=False)
+
+    @property
+    def configured(self) -> bool:
+        return self.graph.configured or self.scraper.configured or self.web.configured
+
+    async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]:
+        fallback = self.scraper if self.scraper.configured else self.web
         if self.graph.configured:
             try:
                 return await self.graph.recent_posts(username, limit)
             except InstagramError as error:
-                if error.code != "instagram_profile_unavailable" or not self.scraper.configured:
+                if error.code != "instagram_profile_unavailable" or not fallback.configured:
                     raise
-        return await self.scraper.recent_posts(username, limit)
+        return await fallback.recent_posts(username, limit)

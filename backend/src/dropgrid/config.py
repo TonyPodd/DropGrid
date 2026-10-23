@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     instagram_business_account_id: str | None = Field(default=None, pattern=r"^\d{1,32}$")
     instagram_graph_version: str = Field(default="v23.0", pattern=r"^v\d{1,3}\.\d$")
     instagram_posts_per_profile: int = Field(default=50, ge=1, le=100)
+    # Like Pinterest: open public profile pages directly, without any token.
+    instagram_direct_enabled: bool = True
     # Profiles the official API cannot read (personal ones) go through an Apify
     # Instagram scraper with APIFY_API_TOKEN; it can also be the only reader.
     instagram_apify_actor: str = Field(
