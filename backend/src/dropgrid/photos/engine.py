@@ -10,6 +10,7 @@ from dropgrid.integrations.instagram import (
     ApifyInstagramClient,
     InstagramGraphClient,
     InstagramReader,
+    InstagramWebClient,
 )
 from dropgrid.photos.cache import SearchCache
 from dropgrid.photos.domain import PhotoPolicy
@@ -145,6 +146,13 @@ class PhotoEngine:
         self.instagram_api_client = httpx.AsyncClient(
             timeout=httpx.Timeout(20, connect=5), trust_env=False, follow_redirects=False
         )
+        # Same honest client name as the direct Pinterest search.
+        self.instagram_web_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(20, connect=5),
+            trust_env=False,
+            follow_redirects=False,
+            headers={"User-Agent": "DropGrid-PhotoLab/0.1", "Accept-Language": "en-US,en;q=0.9"},
+        )
         self.instagram = InstagramReader(
             InstagramGraphClient(
                 settings.instagram_access_token,
@@ -155,6 +163,7 @@ class PhotoEngine:
             ApifyInstagramClient(
                 settings.apify_api_token, settings.instagram_apify_actor, self.instagram_api_client
             ),
+            InstagramWebClient(self.instagram_web_client, settings.instagram_direct_enabled),
         )
         instagram_policy = InstagramPolicy(timeout_seconds=settings.photo_download_timeout_seconds)
         self.instagram_download_client = httpx.AsyncClient(
@@ -176,6 +185,7 @@ class PhotoEngine:
 
     async def aclose(self) -> None:
         await self.instagram_api_client.aclose()
+        await self.instagram_web_client.aclose()
         await self.instagram_download_client.aclose()
         await self.search_client.aclose()
         await self.download_client.aclose()

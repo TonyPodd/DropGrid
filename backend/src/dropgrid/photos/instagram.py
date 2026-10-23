@@ -51,6 +51,8 @@ SYNC_LEASE = timedelta(minutes=15)
 # After the first read only the newest posts are fetched: they are what is new, and
 # the scraper is paid per post.
 REFRESH_POSTS = 12
+# Errors read again sooner than the daily cycle: slowed down / asked to log in.
+RETRY_HOURS = {"instagram_rate_limited": 1, "instagram_login_required": 6}
 
 
 class InstagramClient(Protocol):
@@ -212,10 +214,11 @@ class InstagramSync:
                 return  # removed while syncing
             profile.sync_lease_until = None
             profile.last_synced_at = utcnow()
-            if error == "instagram_rate_limited":
-                # Try again in about an hour rather than tomorrow.
+            retry = RETRY_HOURS.get(error or "")
+            if retry is not None:
+                # Try again sooner than tomorrow, without hammering a refusing Instagram.
                 profile.last_synced_at -= timedelta(
-                    hours=max(0, self.settings.instagram_sync_hours - 1)
+                    hours=max(0, self.settings.instagram_sync_hours - retry)
                 )
             rows = (
                 await session.execute(

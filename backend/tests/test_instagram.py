@@ -25,6 +25,7 @@ from dropgrid.integrations.instagram import (
     InstagramImage,
     InstagramPost,
     InstagramReader,
+    InstagramWebClient,
     parse_scraped_post,
     parse_username,
 )
@@ -367,7 +368,8 @@ async def test_planner_can_choose_an_instagram_photo(sessions, tmp_path):
 @pytest.mark.integration
 async def test_profiles_api(client, sessions):
     status = (await client.get("/api/v1/instagram-profiles")).json()
-    assert status["configured"] is False and status["profiles"] == []
+    # Public profiles are opened directly, like Pinterest: nothing to connect.
+    assert status["configured"] is True and status["profiles"] == []
     added = (
         await client.post(
             "/api/v1/instagram-profiles",
@@ -516,3 +518,140 @@ async def test_personal_profiles_fall_back_to_the_scraper():
     assert unused.limits == []
     nothing = InstagramReader(FakeGraph(configured=False), FakeGraph(configured=False))
     assert not nothing.configured
+
+
+def web(handler):
+    return InstagramWebClient(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+
+async def test_public_profile_is_read_without_any_token():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "user": {
+                        "username": "my.personal",
+                        "is_private": False,
+                        "edge_owner_to_timeline_media": {
+                            "edges": [
+                                {
+                                    "node": {
+                                        "id": "1",
+                                        "shortcode": "AAAAA1",
+                                        "display_url": "https://scontent.cdninstagram.com/1.jpg",
+                                        "is_video": False,
+                                        "taken_at_timestamp": 1790000000,
+                                        "edge_media_to_caption": {
+                                            "edges": [{"node": {"text": "Мой котик"}}]
+                                        },
+                                    }
+                                },
+                                {
+                                    "node": {
+                                        "id": "2",
+                                        "shortcode": "BBBBB2",
+                                        "is_video": False,
+                                        "display_url": "https://scontent.cdninstagram.com/c.jpg",
+                                        "edge_sidecar_to_children": {
+                                            "edges": [
+                                                {
+                                                    "node": {
+                                                        "id": "21",
+                                                        "is_video": False,
+                                                        "display_url": "https://scontent.cdninstagram.com/21.jpg",
+                                                    }
+                                                },
+                                                {"node": {"id": "22", "is_video": True}},
+                                            ]
+                                        },
+                                    }
+                                },
+                                {"node": {"id": "3", "shortcode": "CCCCC3", "is_video": True}},
+                            ]
+                        },
+                    }
+                }
+            },
+        )
+
+    posts = await web(handler).recent_posts("my.personal", 12)
+    assert [p.post_id for p in posts] == ["1", "2"]
+    assert posts[0].permalink == "https://www.instagram.com/p/AAAAA1/"
+    assert posts[0].caption == "Мой котик" and posts[0].posted_at.year == 2026
+    assert [i.media_id for i in posts[1].images] == ["2:21"]
+    request = seen[0]
+    assert request.url.path == "/api/v1/users/web_profile_info/"
+    assert request.url.params["username"] == "my.personal"
+    assert "authorization" not in request.headers and "cookie" not in request.headers
+
+
+@pytest.mark.parametrize(
+    "status,body,expected",
+    [
+        (404, {}, "instagram_profile_unavailable"),
+        (429, {}, "instagram_rate_limited"),
+        (401, {"message": "Please wait"}, "instagram_login_required"),
+        (302, {}, "instagram_login_required"),
+        (200, {"require_login": True}, "instagram_login_required"),
+        (200, {"data": {"user": None}}, "instagram_profile_unavailable"),
+        (200, {"data": {"user": {"is_private": True}}}, "instagram_profile_private"),
+        (500, {}, "instagram_unavailable"),
+    ],
+)
+async def test_refusals_are_reported_not_worked_around(status, body, expected):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(status, json=body)
+
+    with pytest.raises(InstagramError) as error:
+        await web(handler).recent_posts("someone", 12)
+    assert error.value.code == expected and len(calls) == 1
+
+
+async def test_direct_reading_is_the_default_fallback():
+    found = [post("W", 1)]
+    business = FakeGraph(error="instagram_profile_unavailable")
+    direct = FakeGraph(found)
+    reader = InstagramReader(business, FakeGraph(configured=False), direct)
+    assert await reader.recent_posts("my.personal", 12) == found
+    assert direct.limits == [12]
+    # Without the official API every profile is opened directly.
+    alone = FakeGraph(found)
+    assert (
+        await InstagramReader(
+            FakeGraph(configured=False), FakeGraph(configured=False), alone
+        ).recent_posts("cars.daily", 12)
+    ) == found
+    # An Apify token, when set, is preferred over direct reading.
+    scraper, unused = FakeGraph(found), FakeGraph()
+    assert (
+        await InstagramReader(FakeGraph(configured=False), scraper, unused).recent_posts("x", 12)
+    ) == found
+    assert unused.limits == []
+
+
+@pytest.mark.integration
+async def test_login_wall_is_retried_hours_later_not_hammered(sessions, tmp_path):
+    pid = await add_profile(sessions)
+    sync = InstagramSync(
+        sessions,
+        FakeGraph(error="instagram_login_required"),
+        downloader(),
+        LocalMediaStorage(tmp_path),
+        FakeVisualEmbedder(),
+        Settings(_env_file=None),
+    )
+    assert await sync.tick() == 1
+    async with sessions() as db:
+        profile = await db.get(InstagramProfile, pid)
+    assert profile.status == "error" and profile.error_code == "instagram_login_required"
+    # Due again in about six hours, not in the next worker cycle.
+    assert await sync.tick() == 0
+    due_in = profile.last_synced_at + timedelta(hours=24) - utcnow()
+    assert timedelta(hours=5) < due_in <= timedelta(hours=6)

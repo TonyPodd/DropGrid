@@ -66,10 +66,8 @@ it("lists profiles with who added them and why one cannot be read", async () => 
   );
   expect(screen.getByText("42")).toBeInTheDocument();
   expect(screen.getByText("Тима")).toBeInTheDocument();
-  expect(
-    screen.getByText(/Профиль не найден или закрытый/),
-  ).toBeInTheDocument();
-  expect(screen.queryByText(/Instagram не подключён/)).not.toBeInTheDocument();
+  expect(screen.getByText("Профиль не найден")).toBeInTheDocument();
+  expect(screen.queryByText(/Чтение Instagram выключено/)).not.toBeInTheDocument();
 });
 
 it("adds links and reports duplicates and unrecognized ones", async () => {
@@ -104,8 +102,10 @@ it("removes a profile after confirmation", async () => {
   );
 });
 
-it("explains that Instagram is not connected yet", async () => {
+it("explains that reading Instagram is switched off", async () => {
   mock(false);
   render(<InstagramPage />);
-  expect(await screen.findByText(/Instagram не подключён/)).toBeInTheDocument();
+  expect(
+    await screen.findByText(/Чтение Instagram выключено/),
+  ).toBeInTheDocument();
 });

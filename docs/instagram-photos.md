@@ -7,13 +7,16 @@ community.
 ## How it works
 
 - **Sync (reference worker, read-only).** Once per `INSTAGRAM_SYNC_HOURS` (24 h) each
-  enabled profile is read: the first time its last `INSTAGRAM_POSTS_PER_PROFILE` (50)
-  posts, afterwards only the newest 12. Two readers exist: the official Graph API
-  *Business Discovery* (free; Business/Creator profiles only) and an Apify Instagram
-  post scraper (`INSTAGRAM_APIFY_ACTOR`, default `apify~instagram-post-scraper`, paid per
-  post; any public profile, no Instagram login). With both configured the official API
-  is tried first and profiles it cannot read (personal ones) go to the scraper; with
-  only `APIFY_API_TOKEN` every profile is scraped. Photos and carousel photos are kept, videos
+  enabled profile is read: the first time up to `INSTAGRAM_POSTS_PER_PROFILE` (50)
+  posts, afterwards only the newest 12. By default, like Pinterest, public profiles are
+  opened directly (`INSTAGRAM_DIRECT_ENABLED=true`): the public profile page data, no
+  token, no login, the honest `DropGrid-PhotoLab` client name, at most the newest 12
+  posts per read. When Instagram asks to log in or refuses this address we stop and
+  read again in about 6 hours (`instagram_login_required`); slowed down, in about an
+  hour. Nothing is worked around. Optional readers: the official Graph API *Business
+  Discovery* (free; Business/Creator profiles; tried first when connected) and an Apify
+  scraper (`APIFY_API_TOKEN`, `INSTAGRAM_APIFY_ACTOR`; preferred over direct reading
+  when set). Photos and carousel photos are kept, videos
   and reels are skipped. Each new photo is downloaded once from the Instagram CDN
   (`*.cdninstagram.com`, `*.fbcdn.net` only, public addresses, size limits, no
   redirects to other hosts), normalized like every other photo, analysed with CLIP and
@@ -26,16 +29,18 @@ community.
   the learned model treat them like any candidate. Alternatives reserve up to 6 places
   for them. Without wall references (or without CLIP) no Instagram photo is used.
 - Statuses: `pending` → `syncing` → `ready`, or `error` with a code
-  (`instagram_profile_unavailable`: unknown or private profile, or a personal one
-  without the scraper;
+  (`instagram_profile_unavailable`: unknown profile; `instagram_profile_private`;
+  `instagram_login_required`: Instagram did not serve the profile anonymously to this
+  address;
   `instagram_token_invalid`; `instagram_permission_missing`; `instagram_rate_limited`,
   retried after about an hour; `instagram_no_photos`; `instagram_unavailable`).
   "Загрузить заново" schedules a new read; deleting a profile stops its photos being
   candidates (history of photos already proposed is kept).
 
-Private profiles cannot be read at all. The scraper reads public pages outside
-Instagram's API terms; Instagram may change or block it, so readings can fail now
-and then.
+Private profiles cannot be read at all. Direct reading and the scraper read public
+pages outside Instagram's API terms; Instagram often refuses anonymous reads from
+data-centre addresses, so readings can fail. The official API is the reliable path for
+Business/Creator profiles.
 
 ## Connecting the scraper (any public profile)
 
