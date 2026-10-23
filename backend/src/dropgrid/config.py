@@ -47,7 +47,8 @@ class Settings(BaseSettings):
     instagram_access_token: SecretStr | None = None
     instagram_business_account_id: str | None = Field(default=None, pattern=r"^\d{1,32}$")
     instagram_graph_version: str = Field(default="v23.0", pattern=r"^v\d{1,3}\.\d$")
-    instagram_posts_per_profile: int = Field(default=50, ge=1, le=100)
+    # The whole history of a profile is read once, up to this many photos (~250 KB each).
+    instagram_max_photos_per_profile: int = Field(default=1000, ge=1, le=5000)
     # Like Pinterest: open public profile pages directly, without any token.
     instagram_direct_enabled: bool = True
     # Profiles the official API cannot read (personal ones) go through an Apify
@@ -57,6 +58,9 @@ class Settings(BaseSettings):
     )
     instagram_sync_hours: int = Field(default=24, ge=1, le=720)
     media_storage_dir: Path = Path("media")
+    # A photo used in one campaign is not offered to others until this long after its
+    # last use (3 months), then it is available again.
+    photo_reuse_after_days: int = Field(default=90, ge=1, le=3650)
     # None: within one campaign a photo may serve any number of communities it fits.
     photo_max_reuse_per_asset: int | None = Field(default=None, ge=1, le=10000)
     photo_search_cache_hours: int = Field(default=24, ge=24, le=168)

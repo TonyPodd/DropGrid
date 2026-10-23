@@ -1,14 +1,17 @@
-"""Photos proposed in other campaigns, so a new campaign looks for fresh ones.
+"""Photos used in other campaigns, so a new campaign looks for fresh ones.
 
-Within one campaign a photo may repeat across communities up to the reuse limit.
+Within one campaign a photo may repeat across communities. A photo whose last use in
+another campaign is older than PHOTO_REUSE_AFTER_DAYS (3 months) is available again.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dropgrid.config import Settings
 from dropgrid.db.models import (
     CommunityReferencePhoto,
     MediaAsset,
@@ -16,6 +19,7 @@ from dropgrid.db.models import (
     PhotoSelectionCandidate,
     PhotoSelectionSession,
     Submission,
+    utcnow,
 )
 from dropgrid.photos.domain import PhotoCandidate
 from dropgrid.photos.pool import PoolCandidate
@@ -73,7 +77,14 @@ class ProposedPhotos:
         )
 
 
-async def proposed_photos(session: AsyncSession, campaign_id: UUID) -> ProposedPhotos:
+def reuse_since(settings: Settings) -> datetime:
+    """Photos last used before this moment may be proposed again (3 months by default)."""
+    return utcnow() - timedelta(days=settings.photo_reuse_after_days)
+
+
+async def proposed_photos(
+    session: AsyncSession, campaign_id: UUID, since: datetime | None = None
+) -> ProposedPhotos:
     """Every photo the bot proposed, an operator chose or a submission got in OTHER campaigns.
 
     The campaign's own photos are governed by the per-campaign reuse limit instead.
@@ -106,6 +117,10 @@ async def proposed_photos(session: AsyncSession, campaign_id: UUID) -> ProposedP
                 PhotoSelectionCandidate.rank == PhotoSelectionSession.proposed_rank,
                 PhotoSelectionCandidate.selected.is_(True),
             ),
+            func.coalesce(PhotoSelectionSession.confirmed_at, PhotoSelectionSession.created_at)
+            >= since
+            if since
+            else true(),
         )
     )
     for candidate, asset_id, *hashes in rows.tuples():
@@ -121,9 +136,43 @@ async def proposed_photos(session: AsyncSession, campaign_id: UUID) -> ProposedP
     assets = await session.scalars(
         select(MediaAsset)
         .join(Submission, Submission.media_asset_id == MediaAsset.id)
-        .where(Submission.campaign_id != campaign_id)
+        .where(
+            Submission.campaign_id != campaign_id,
+            func.coalesce(Submission.submitted_at, Submission.created_at) >= since
+            if since
+            else true(),
+        )
         .distinct()
     )
     for asset in assets:
         seen.remember_asset(asset)
     return seen
+
+
+async def used_assets(session: AsyncSession, asset_ids: list[UUID], since: datetime) -> set[UUID]:
+    """Which of these assets some campaign used since `since` (not available right now)."""
+    if not asset_ids:
+        return set()
+    proposed = await session.scalars(
+        select(PhotoSelectionCandidate.media_asset_id)
+        .join(
+            PhotoSelectionSession,
+            PhotoSelectionSession.id == PhotoSelectionCandidate.selection_session_id,
+        )
+        .where(
+            PhotoSelectionCandidate.media_asset_id.in_(asset_ids),
+            or_(
+                PhotoSelectionCandidate.rank == PhotoSelectionSession.proposed_rank,
+                PhotoSelectionCandidate.selected.is_(True),
+            ),
+            func.coalesce(PhotoSelectionSession.confirmed_at, PhotoSelectionSession.created_at)
+            >= since,
+        )
+    )
+    assigned = await session.scalars(
+        select(Submission.media_asset_id).where(
+            Submission.media_asset_id.in_(asset_ids),
+            func.coalesce(Submission.submitted_at, Submission.created_at) >= since,
+        )
+    )
+    return {a for a in [*proposed, *assigned] if a is not None}

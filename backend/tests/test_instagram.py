@@ -10,6 +10,7 @@ from test_photo_integration import make_planner, prepared, public
 
 from dropgrid.config import Settings
 from dropgrid.db.models import (
+    Campaign,
     CommunityReferencePhoto,
     InstagramPhoto,
     InstagramProfile,
@@ -157,15 +158,27 @@ async def test_unconfigured_client_reads_nothing():
 
 
 class FakeGraph:
-    def __init__(self, posts=None, error=None, configured=True):
-        self.posts, self.error, self.configured = posts or [], error, configured
-        self.limits = []
+    """A reader whose history is `pages` (cursor = page index), newest first."""
+
+    def __init__(self, posts=None, error=None, configured=True, pages=None):
+        self.pages = pages if pages is not None else [posts or []]
+        self.posts = [p for page in self.pages for p in page]
+        self.error, self.configured = error, configured
+        self.limits, self.cursors = [], []
 
     async def recent_posts(self, username, limit):
         self.limits.append(limit)
         if self.error:
             raise InstagramError(self.error)
         return self.posts
+
+    async def posts_page(self, username, cursor, limit):
+        self.limits.append(limit)
+        self.cursors.append(cursor)
+        if self.error:
+            raise InstagramError(self.error)
+        index = int(cursor) if cursor else 0
+        return self.pages[index], str(index + 1) if index + 1 < len(self.pages) else None
 
 
 def downloader():
@@ -234,8 +247,9 @@ async def test_sync_stores_new_photos_once_and_a_centroid(sessions, tmp_path):
     assert await sync.tick() == 1
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(InstagramPhoto)) == 3
-    # The first read takes 50 posts, later reads only the newest.
-    assert reader.limits == [50, 12]
+    # The first read takes the whole history (up to the photo cap), later reads a page
+    # of the newest posts and stop at known ones.
+    assert reader.limits == [1000, 50]
 
 
 @pytest.mark.integration
@@ -655,3 +669,92 @@ async def test_login_wall_is_retried_hours_later_not_hammered(sessions, tmp_path
     assert await sync.tick() == 0
     due_in = profile.last_synced_at + timedelta(hours=24) - utcnow()
     assert timedelta(hours=5) < due_in <= timedelta(hours=6)
+
+
+@pytest.mark.integration
+async def test_whole_history_is_read_over_several_ticks(sessions, tmp_path, monkeypatch):
+    import itertools
+
+    clock = itertools.count()
+    monkeypatch.setattr("dropgrid.photos.instagram._clock", lambda: next(clock))
+    monkeypatch.setattr("dropgrid.photos.instagram.TICK_SECONDS", 3)
+    pid = await add_profile(sessions)
+    reader = FakeGraph(pages=[[post("A", 1, 2)], [post("B", 3, 4)], [post("C", 5)]])
+    sync = InstagramSync(
+        sessions,
+        reader,
+        downloader(),
+        LocalMediaStorage(tmp_path),
+        FakeVisualEmbedder(),
+        Settings(_env_file=None),
+    )
+    assert await sync.tick() == 1
+    async with sessions() as db:
+        profile = await db.get(InstagramProfile, pid)
+    # Out of time inside page "1": the reading continues there, at once.
+    assert profile.status == "syncing" and profile.history_cursor == "1"
+    assert profile.photo_count == 3 and profile.full_read_at is None
+    assert await sync.tick() == 1
+    async with sessions() as db:
+        profile = await db.get(InstagramProfile, pid)
+    assert profile.status == "ready" and profile.photo_count == 5
+    assert profile.full_read_at is not None and profile.history_cursor is None
+    assert reader.cursors == [None, "1", "1", "2"]
+    # A daily read stops at the first page of known posts.
+    async with sessions() as db, db.begin():
+        (await db.get(InstagramProfile, pid)).last_synced_at = utcnow() - timedelta(days=2)
+    assert await sync.tick() == 1
+    assert reader.cursors[4:] == [None]
+
+
+async def used_in(sessions, asset_id, days_ago):
+    async with sessions() as db, db.begin():
+        grid = (await db.scalars(select(Submission))).first()
+        other = Campaign(
+            name="Earlier",
+            grid_id=(await db.get(Campaign, grid.campaign_id)).grid_id,
+            track_url="https://vk.ru/audio1_2",
+            status="ready",
+        )
+        db.add(other)
+        await db.flush()
+        db.add(
+            Submission(
+                campaign_id=other.id,
+                community_id=grid.community_id,
+                media_asset_id=asset_id,
+                created_at=utcnow() - timedelta(days=days_ago),
+            )
+        )
+
+
+@pytest.mark.integration
+async def test_used_photos_wait_three_months(client, sessions, tmp_path):
+    from dropgrid.photos.history import proposed_photos, reuse_since
+
+    cid, community_id = await community_with_wall(sessions, tmp_path, WALL)
+    storage = LocalMediaStorage(tmp_path / "assets")
+    await instagram_photos(
+        sessions, storage, "cars.daily", [vec(0.97, 0.03, 0), vec(0.9, 0.05, 0)], 50
+    )
+    async with sessions() as db, db.begin():
+        assets = (
+            await db.scalars(select(MediaAsset).where(MediaAsset.provider == "instagram"))
+        ).all()
+        recent, old = sorted(assets, key=lambda a: a.provider_asset_id)
+        profile = await db.scalar(select(InstagramProfile))
+        profile.photo_count = 2
+        recent_id, old_id = recent.id, old.id
+    await used_in(sessions, recent_id, 10)  # used ten days ago: not available
+    await used_in(sessions, old_id, 100)  # used more than three months ago: available again
+    settings = Settings(_env_file=None)
+    async with sessions() as db:
+        seen = await proposed_photos(db, cid, reuse_since(settings))
+    assert recent_id in seen.asset_ids and old_id not in seen.asset_ids
+    provider = InstagramPhotoProvider(VisualLibrary(sessions, storage, FakeVisualEmbedder()))
+    found = await provider.candidates(community_id, seen)
+    assert [c.asset.id for c in found] == [old_id]
+    listed = (await client.get("/api/v1/instagram-profiles")).json()
+    assert listed["reuse_after_days"] == 90
+    assert listed["profiles"][0]["photo_count"] == 2
+    assert listed["profiles"][0]["available_count"] == 1

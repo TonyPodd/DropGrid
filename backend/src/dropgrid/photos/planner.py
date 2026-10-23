@@ -484,11 +484,11 @@ class CampaignMediaPlanner:
                     )
                 ).all()
             }
-        from dropgrid.photos.history import proposed_photos
+        from dropgrid.photos.history import proposed_photos, reuse_since
 
         async with self.sessions() as session:
-            # A photo proposed in another campaign is never proposed again; look for new ones.
-            seen = await proposed_photos(session, campaign_id)
+            # A photo used in another campaign in the last 3 months is not proposed again.
+            seen = await proposed_photos(session, campaign_id, reuse_since(self.settings))
         total = len(rows)
         previously = sum(s.media_asset_id is not None for s, _ in rows)
         report = MediaPlanRead(
@@ -780,7 +780,7 @@ class CampaignMediaPlanner:
                             if self.instagram:
                                 instagram = [
                                     item
-                                    for item in await self.instagram.candidates(community_id)
+                                    for item in await self.instagram.candidates(community_id, seen)
                                     if item.asset and self.eligible(item.asset, plan.sensitive)
                                 ]
                                 report.source_contributions["instagram"]["retrieved"] += len(

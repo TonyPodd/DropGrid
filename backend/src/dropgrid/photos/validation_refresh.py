@@ -81,10 +81,10 @@ async def refresh_snapshot(
         )
     # Keep the original winner's identity/source/score; this is display exploration only.
     from dropgrid.photos.domain import Deduplicator
-    from dropgrid.photos.history import proposed_photos
+    from dropgrid.photos.history import proposed_photos, reuse_since
 
     async with planner.sessions() as db:
-        seen = await proposed_photos(db, campaign.id)
+        seen = await proposed_photos(db, campaign.id, reuse_since(planner.settings))
     pool = [
         i
         for i in pool

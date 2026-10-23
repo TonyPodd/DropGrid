@@ -83,21 +83,48 @@ class InstagramGraphClient:
         return bool(self.token and self.token.get_secret_value() and self.account_id)
 
     async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]:
+        """Newest first, page by page (50 per page) until `limit` posts or the end."""
+        posts: list[InstagramPost] = []
+        cursor = None
+        while len(posts) < limit:
+            page, cursor = await self.posts_page(username, cursor, limit - len(posts))
+            posts.extend(page)
+            if cursor is None:
+                break
+        return posts[:limit]
+
+    async def posts_page(
+        self, username: str, cursor: str | None, limit: int
+    ) -> tuple[list[InstagramPost], str | None]:
+        """One page of up to 50 posts after `cursor`, and the cursor of the next one."""
         if not self.configured:
             raise InstagramError("instagram_not_configured")
-        assert self.token
-        media = (
-            f"media.limit({limit})"
+        after = f".after({cursor})" if cursor and CURSOR.fullmatch(cursor) else ""
+        fields = (
+            f"business_discovery.username({username}){{username,"
+            f"media{after}.limit({max(1, min(50, limit))})"
             "{id,media_type,media_url,permalink,timestamp,caption,"
-            "children{id,media_type,media_url}}"
+            "children{id,media_type,media_url}}}"
         )
+        media = await self._media(fields)
+        items = media.get("data") or []
+        paging = media.get("paging") or {}
+        following = (paging.get("cursors") or {}).get("after")
+        if (
+            not items
+            or not paging.get("next")
+            or not isinstance(following, str)
+            or not CURSOR.fullmatch(following)
+        ):
+            following = None
+        return [post for item in items if (post := parse_post(item)) is not None], following
+
+    async def _media(self, fields: str) -> dict[str, Any]:
+        assert self.token
         try:
             response = await self.http.get(
                 f"https://graph.facebook.com/{self.version}/{self.account_id}",
-                params={
-                    "fields": f"business_discovery.username({username}){{username,{media}}}",
-                    "access_token": self.token.get_secret_value(),
-                },
+                params={"fields": fields, "access_token": self.token.get_secret_value()},
                 timeout=20,
                 follow_redirects=False,
             )
@@ -115,8 +142,12 @@ class InstagramGraphClient:
         discovery = payload.get("business_discovery")
         if response.status_code != 200 or not isinstance(discovery, dict):
             raise InstagramError("instagram_unavailable")
-        items = (discovery.get("media") or {}).get("data") or []
-        return [post for item in items if (post := parse_post(item)) is not None]
+        media = discovery.get("media") or {}
+        return media if isinstance(media, dict) else {}
+
+
+# Paging cursors are opaque base64-like tokens; anything else is not put into a query.
+CURSOR = re.compile(r"[A-Za-z0-9_=-]{1,1024}")
 
 
 def error_code(error: object) -> str:
@@ -168,7 +199,19 @@ def parse_post(item: object) -> InstagramPost | None:
     return post if post.images else None
 
 
-class ApifyInstagramClient:
+class SinglePage:
+    """Readers without cursors return everything they can in one page."""
+
+    async def recent_posts(self, username: str, limit: int) -> list[InstagramPost]:
+        raise NotImplementedError
+
+    async def posts_page(
+        self, username: str, cursor: str | None, limit: int
+    ) -> tuple[list[InstagramPost], str | None]:
+        return await self.recent_posts(username, limit), None
+
+
+class ApifyInstagramClient(SinglePage):
     """Any public profile via an Apify Instagram post scraper (no Instagram login)."""
 
     def __init__(self, token: SecretStr | None, actor: str, http: httpx.AsyncClient) -> None:
@@ -253,7 +296,7 @@ def parse_scraped_post(item: object) -> InstagramPost | None:
     return post if post.images else None
 
 
-class InstagramWebClient:
+class InstagramWebClient(SinglePage):
     """Public profile pages without login: the newest 12 posts of an open profile."""
 
     def __init__(self, http: httpx.AsyncClient, enabled: bool = True) -> None:
@@ -371,3 +414,15 @@ class InstagramReader:
                 if error.code != "instagram_profile_unavailable" or not fallback.configured:
                     raise
         return await fallback.recent_posts(username, limit)
+
+    async def posts_page(
+        self, username: str, cursor: str | None, limit: int
+    ) -> tuple[list[InstagramPost], str | None]:
+        fallback = self.scraper if self.scraper.configured else self.web
+        if self.graph.configured:
+            try:
+                return await self.graph.posts_page(username, cursor, limit)
+            except InstagramError as error:
+                if error.code != "instagram_profile_unavailable" or not fallback.configured:
+                    raise
+        return await fallback.posts_page(username, None, limit)

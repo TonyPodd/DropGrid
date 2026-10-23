@@ -15,6 +15,8 @@ function mock(configured = true) {
       status: "ready",
       error_code: null,
       photo_count: 42,
+      available_count: 30,
+      full_read: true,
       last_synced_at: "2026-10-23T10:00:00Z",
       added_by: "tima",
     },
@@ -26,6 +28,8 @@ function mock(configured = true) {
       status: "error",
       error_code: "instagram_profile_unavailable",
       photo_count: 0,
+      available_count: 0,
+      full_read: false,
       last_synced_at: "2026-10-23T10:00:00Z",
       added_by: "tony",
     },
@@ -65,6 +69,7 @@ it("lists profiles with who added them and why one cannot be read", async () => 
     "https://www.instagram.com/cars.daily/",
   );
   expect(screen.getByText("42")).toBeInTheDocument();
+  expect(screen.getByText("доступно 30")).toBeInTheDocument();
   expect(screen.getByText("Тима")).toBeInTheDocument();
   expect(screen.getByText("Профиль не найден")).toBeInTheDocument();
   expect(screen.queryByText(/Чтение Instagram выключено/)).not.toBeInTheDocument();

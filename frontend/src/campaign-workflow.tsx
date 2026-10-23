@@ -69,7 +69,7 @@ const attentionNames: Record<string, string> = {
   dedup_exhausted: "Кандидаты исчерпаны после dedup / rotation",
   cooldown_exhausted: "Фото недавно использованы в этой группе",
   repeats_exhausted:
-    "Новых фото не нашлось: все варианты уже предлагались в других кампаниях",
+    "Новых фото не нашлось: все варианты уже использовались в других кампаниях за последние 3 месяца",
   download_error: "Не удалось скачать фото",
   storage_error: "Недоступно хранилище фото",
   category_archive_error: "Недоступен архив категории",

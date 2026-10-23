@@ -487,6 +487,10 @@ class InstagramProfile(Identity, Updated, Base):
     error_code: Mapped[str | None] = mapped_column(String(80))
     added_by: Mapped[str | None] = mapped_column(String(16))
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When all of the profile's posts were read once; later reads take only new posts.
+    full_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Where an unfinished reading of the history continues (official API paging).
+    history_cursor: Mapped[str | None] = mapped_column(String(1024))
     sync_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     photo_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Mean CLIP embedding of the profile's photos: which communities it fits.
