@@ -6,25 +6,34 @@ community.
 
 ## How it works
 
-- **Sync (reference worker, read-only).** Once per `INSTAGRAM_SYNC_HOURS` (24 h) each
-  enabled profile is read: the first time up to `INSTAGRAM_POSTS_PER_PROFILE` (50)
-  posts, afterwards only the newest 12. By default, like Pinterest, public profiles are
-  opened directly (`INSTAGRAM_DIRECT_ENABLED=true`): the public profile page data, no
-  token, no login, the honest `DropGrid-PhotoLab` client name, at most the newest 12
-  posts per read. When Instagram asks to log in or refuses this address we stop and
-  read again in about 6 hours (`instagram_login_required`); slowed down, in about an
-  hour. Nothing is worked around. Optional readers: the official Graph API *Business
-  Discovery* (free; Business/Creator profiles; tried first when connected) and an Apify
-  scraper (`APIFY_API_TOKEN`, `INSTAGRAM_APIFY_ACTOR`; preferred over direct reading
-  when set). Photos and carousel photos are kept, videos
-  and reels are skipped. Each new photo is downloaded once from the Instagram CDN
-  (`*.cdninstagram.com`, `*.fbcdn.net` only, public addresses, size limits, no
-  redirects to other hosts), normalized like every other photo, analysed with CLIP and
-  stored as a `MediaAsset` with provider `instagram`, the post link as source and
-  license "Publication rights unverified". The profile keeps a centroid of its photos.
+- **Sync (reference worker, read-only).** The first time a profile's **whole history**
+  is read, up to `INSTAGRAM_MAX_PHOTOS_PER_PROFILE` (1000) photos; afterwards once per
+  `INSTAGRAM_SYNC_HOURS` (24 h) a page of the newest posts, stopping at known ones. A
+  tick stores photos for at most two minutes, so campaign preparation never waits
+  behind a large history; the reading continues on the next tick from the saved page
+  cursor (`history_cursor`), and `full_read_at` marks a finished history. How much
+  history is reachable depends on the reader: the official Graph API *Business
+  Discovery* pages through all posts (free; Business/Creator profiles; tried first
+  when connected); the Apify scraper (`APIFY_API_TOKEN`, `INSTAGRAM_APIFY_ACTOR`) reads
+  as many posts as asked; direct reading (default, like Pinterest: no token, no login,
+  the honest `DropGrid-PhotoLab` client name) only ever gets the newest 12 posts of an
+  open profile, so its history grows day by day. When Instagram asks to log in or
+  refuses this address we stop and read again in about 6 hours
+  (`instagram_login_required`); slowed down, in about an hour. Nothing is worked
+  around. Photos and carousel photos are kept, videos and reels are skipped. Each new
+  photo is downloaded once from the Instagram CDN (`*.cdninstagram.com`, `*.fbcdn.net`
+  only, public addresses, size limits, no redirects to other hosts), normalized like
+  every other photo, analysed with CLIP and stored as a `MediaAsset` with provider
+  `instagram`, the post link as source and license "Publication rights unverified".
+  The profile keeps a centroid of its photos.
+- **Used photos.** A photo proposed, chosen or assigned in a campaign is not offered to
+  any other campaign for `PHOTO_REUSE_AFTER_DAYS` (90) after its last use, then it is
+  available again (this rule holds for every photo source). Within one campaign it may
+  repeat. The page shows, per profile, all photos and those available right now.
 - **Choice per community (planner).** Using the community's own wall photos, the bot
   takes the 3 profiles whose centroid is closest, then only those photos that are at
-  least 90 % as close to the wall as the wall photos are to each other (at most 24).
+  least 90 % as close to the wall as the wall photos are to each other and not used
+  lately by another campaign (at most 24).
   They join the usual pool: ranking, "never repeat across campaigns", cooldown and
   the learned model treat them like any candidate. Alternatives reserve up to 6 places
   for them. Without wall references (or without CLIP) no Instagram photo is used.

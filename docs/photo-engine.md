@@ -191,15 +191,17 @@ photos are spread). `max_reuse_per_asset` / `PHOTO_MAX_REUSE_PER_ASSET` is an
 optional per-campaign ceiling, unset by default; girl photos are never capped.
 Never lower quality to fill every submission.
 
-Between campaigns a photo never repeats: a photo proposed in another campaign
-(dry runs included) is never proposed again, for any community. "Proposed" means
+Between campaigns a photo does not repeat for `PHOTO_REUSE_AFTER_DAYS` (90 days): a
+photo used in another campaign (dry runs included) is not proposed again, for any
+community, until that long after its last use (proposal or confirmation time, or the
+submission's send time); then it is available again. "Proposed" means
 the bot's pick or the operator's choice in a selection session of another
 campaign, or a photo assigned to a submission of another campaign; matching uses
 provider identity, asset, SHA-256 and the exact perceptual hash. Such photos are
 dropped before ranking, so they are neither picked nor shown as alternatives.
 When retrieval drops them it also searches the next result page of every query
 (`page=2`, 25 more Pinterest pins per query) to find fresh ones. A community
-whose candidates were all proposed in other campaigns gets `repeats_exhausted`. The shortlist downloads at most the number of
+whose candidates were all used by other campaigns lately gets `repeats_exhausted`. The shortlist downloads at most the number of
 missing unique assets plus `PHOTO_DOWNLOAD_SPARE` (default three) per category.
 Library assets are used first; a sufficiently sized library makes no provider
 request. At most four downloads/normalizations run at once across plans in a

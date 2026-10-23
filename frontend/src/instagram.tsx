@@ -10,10 +10,17 @@ type Profile = {
   status: string;
   error_code: string | null;
   photo_count: number;
+  available_count: number;
+  full_read: boolean;
   last_synced_at: string | null;
   added_by: string | null;
 };
-type Profiles = { configured: boolean; visual: boolean; profiles: Profile[] };
+type Profiles = {
+  configured: boolean;
+  visual: boolean;
+  reuse_after_days?: number;
+  profiles: Profile[];
+};
 
 const statuses: Record<string, string> = {
   pending: "Ждёт загрузки",
@@ -95,9 +102,11 @@ export function InstagramPage() {
         <div>
           <h1>Instagram</h1>
           <p>
-            Профили, из которых бот берёт фото. Раз в сутки он загружает фото из
-            последних постов, сам выбирает, какие профили подходят каждому
-            паблику, и предлагает самые похожие на то, что паблик публикует.
+            Профили, из которых бот берёт фото. Сначала он загружает все фото
+            профиля, потом раз в сутки добавляет новые. Для каждого паблика бот сам
+            выбирает подходящие профили и предлагает самые похожие фото. Фото,
+            использованное в кампании, другим кампаниям не предлагается{" "}
+            {state.data?.reuse_after_days ?? 90} дней, потом снова доступно.
           </p>
         </div>
       </div>
@@ -168,7 +177,13 @@ export function InstagramPage() {
                         </p>
                       )}
                     </td>
-                    <td>{p.photo_count}</td>
+                    <td>
+                      {p.photo_count}
+                      <p className="note">доступно {p.available_count}</p>
+                      {!p.full_read && p.status === "syncing" && (
+                        <p className="note">загружается вся история…</p>
+                      )}
+                    </td>
                     <td>{p.last_synced_at ? date(p.last_synced_at) : "—"}</td>
                     <td>
                       {p.added_by ? (owners[p.added_by] ?? p.added_by) : "—"}
