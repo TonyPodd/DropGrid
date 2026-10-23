@@ -23,8 +23,9 @@ const statuses: Record<string, string> = {
 };
 const errors: Record<string, string> = {
   instagram_profile_unavailable:
-    "Профиль не найден или личный: читаются только бизнес- и авторские профили",
-  instagram_token_invalid: "Токен Instagram недействителен, обновите его на сервере",
+    "Профиль не найден или закрытый. Личные профили читаются, если подключён Apify",
+  instagram_token_invalid:
+    "Токен Instagram или Apify недействителен, обновите его на сервере",
   instagram_permission_missing: "У токена Instagram нет нужных прав",
   instagram_rate_limited: "Instagram ограничил запросы, повторим примерно через час",
   instagram_no_photos: "В последних постах нет подходящих фото",
@@ -101,8 +102,9 @@ export function InstagramPage() {
       <State {...state} retry={state.reload}>
         {state.data && !state.data.configured && (
           <p role="alert">
-            Instagram не подключён: на сервере нужно задать
-            INSTAGRAM_ACCESS_TOKEN и INSTAGRAM_BUSINESS_ACCOUNT_ID. Ссылки можно
+            Instagram не подключён: на сервере нужен APIFY_API_TOKEN (любые
+            открытые профили) или INSTAGRAM_ACCESS_TOKEN и
+            INSTAGRAM_BUSINESS_ACCOUNT_ID (бизнес- и авторские). Ссылки можно
             добавить уже сейчас, бот загрузит их после подключения.
           </p>
         )}
@@ -125,8 +127,7 @@ export function InstagramPage() {
             />
           </label>
           <p className="note">
-            Читаются только бизнес- и авторские профили, личные Instagram не
-            отдаёт.
+            Подходят любые открытые профили. Закрытые прочитать нельзя.
           </p>
           <button
             className="primary"

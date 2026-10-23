@@ -67,7 +67,7 @@ it("lists profiles with who added them and why one cannot be read", async () => 
   expect(screen.getByText("42")).toBeInTheDocument();
   expect(screen.getByText("Тима")).toBeInTheDocument();
   expect(
-    screen.getByText(/читаются только бизнес- и авторские профили$/),
+    screen.getByText(/Профиль не найден или закрытый/),
   ).toBeInTheDocument();
   expect(screen.queryByText(/Instagram не подключён/)).not.toBeInTheDocument();
 });

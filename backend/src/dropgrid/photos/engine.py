@@ -6,7 +6,11 @@ import httpx
 
 from dropgrid.config import Settings
 from dropgrid.db.session import Database
-from dropgrid.integrations.instagram import InstagramGraphClient
+from dropgrid.integrations.instagram import (
+    ApifyInstagramClient,
+    InstagramGraphClient,
+    InstagramReader,
+)
 from dropgrid.photos.cache import SearchCache
 from dropgrid.photos.domain import PhotoPolicy
 from dropgrid.photos.download import PhotoDownloader, PinnedPhotoTransport
@@ -141,11 +145,16 @@ class PhotoEngine:
         self.instagram_api_client = httpx.AsyncClient(
             timeout=httpx.Timeout(20, connect=5), trust_env=False, follow_redirects=False
         )
-        self.instagram = InstagramGraphClient(
-            settings.instagram_access_token,
-            settings.instagram_business_account_id,
-            settings.instagram_graph_version,
-            self.instagram_api_client,
+        self.instagram = InstagramReader(
+            InstagramGraphClient(
+                settings.instagram_access_token,
+                settings.instagram_business_account_id,
+                settings.instagram_graph_version,
+                self.instagram_api_client,
+            ),
+            ApifyInstagramClient(
+                settings.apify_api_token, settings.instagram_apify_actor, self.instagram_api_client
+            ),
         )
         instagram_policy = InstagramPolicy(timeout_seconds=settings.photo_download_timeout_seconds)
         self.instagram_download_client = httpx.AsyncClient(

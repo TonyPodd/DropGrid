@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     instagram_business_account_id: str | None = Field(default=None, pattern=r"^\d{1,32}$")
     instagram_graph_version: str = Field(default="v23.0", pattern=r"^v\d{1,3}\.\d$")
     instagram_posts_per_profile: int = Field(default=50, ge=1, le=100)
+    # Profiles the official API cannot read (personal ones) go through an Apify
+    # Instagram scraper with APIFY_API_TOKEN; it can also be the only reader.
+    instagram_apify_actor: str = Field(
+        default="apify~instagram-post-scraper", pattern=r"^[A-Za-z0-9_-]+(?:[~/][A-Za-z0-9_-]+)?$"
+    )
     instagram_sync_hours: int = Field(default=24, ge=1, le=720)
     media_storage_dir: Path = Path("media")
     # None: within one campaign a photo may serve any number of communities it fits.
